@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 mod n64;
 mod cpu;
 mod interconnect;
@@ -14,10 +16,9 @@ fn main() {
     let pif = read_bin(pif_file_name);
     let rom = read_bin(rom_file_name);
 
-    let mut n64 = n64::N64::new(pif);
+    let mut n64 = n64::N64::new(pif, rom);
     n64.power_on_reset();
-    println!("Before: {:#?}", &n64);
-    n64.run_instruction();
+    n64.run();
     println!("After: {:#?}", &n64);
 }
 
