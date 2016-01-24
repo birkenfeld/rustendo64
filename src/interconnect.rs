@@ -6,10 +6,28 @@ const PIF_ROM_SIZE: usize = 2048;
 
 const RAM_SIZE: usize = 4 * 1024 * 1024;
 
+#[derive(Default, Debug)]
+struct Rd {
+    reg_config: u32,
+    reg_device_id: u32,
+    reg_delay: u32,
+    reg_mode: u32,
+    reg_ref_interval: u32,
+    reg_ref_row: u32,
+    reg_ras_interval: u32,
+    reg_min_interval: u32,
+    reg_addr_select: u32,
+    reg_device_manuf: u32,
+}
+
 #[derive(Default)]
-struct Sp {
+struct SpRam {
     dmem: Vec<u32>,
     imem: Vec<u32>,
+}
+
+#[derive(Default, Debug)]
+struct Sp {
     reg_mem_addr: u32,
     reg_dram_addr: u32,
     reg_rd_len: u32,
@@ -22,7 +40,7 @@ struct Sp {
     reg_ibist: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Dp {
     // command regs
     reg_start: u32,
@@ -41,7 +59,7 @@ struct Dp {
     reg_buftest_data: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Mi {
     reg_mode: u32,
     reg_version: u32,
@@ -49,7 +67,7 @@ struct Mi {
     reg_intr_mask: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Vi {
     reg_status: u32,
     reg_origin: u32,
@@ -67,7 +85,7 @@ struct Vi {
     reg_y_scale: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Ai {
     reg_dram_addr: u32,
     reg_len: u32,
@@ -77,7 +95,7 @@ struct Ai {
     reg_bitrate: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Pi {
     reg_dram_addr: u32,
     reg_cart_addr: u32,
@@ -94,7 +112,7 @@ struct Pi {
     reg_bsd_dom2_rls: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Ri {
     reg_mode: u32,
     reg_config: u32,
@@ -106,7 +124,7 @@ struct Ri {
     reg_werror: u32,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct Si {
     reg_dram_addr: u32,
     reg_pif_addr_rd64b: u32,
@@ -117,8 +135,11 @@ struct Si {
 pub struct Interconnect {
     pif_rom: Vec<u8>,
     pif_ram: Vec<u32>,
+    pif_status: u32,
     cart_rom: Vec<u8>,
     ram: Vec<u16>,
+    spram: SpRam,
+    rd: Rd,
     sp: Sp,
     dp: Dp,
     mi: Mi,
@@ -134,9 +155,12 @@ impl Interconnect {
         Interconnect {
             pif_rom: pif_rom,
             pif_ram: vec![0; 16],
+            pif_status: 0,
             cart_rom: cart_rom,
             ram: vec![0; RAM_SIZE],
-            sp: Sp { dmem: vec![0; 1024], imem: vec![0; 1024], ..Sp::default() },
+            spram: SpRam { dmem: vec![0; 1024], imem: vec![0; 1024] },
+            rd: Rd::default(),
+            sp: Sp::default(),
             dp: Dp::default(),
             mi: Mi::default(),
             vi: Vi::default(),
@@ -149,10 +173,16 @@ impl Interconnect {
 
     pub fn power_on_reset(&mut self) {
         self.sp.reg_status |= 0x1;
+        self.pif_ram[(0x07fc - 0x7c0) / 4] = 0x00;
+        // from cen64
+        self.ri.reg_mode = 0xE;
+        self.ri.reg_config = 0x40;
+        self.ri.reg_select = 0x14;
+        self.ri.reg_refresh = 0x63634;
     }
 
-    pub fn read_word(&self, addr: u32) -> u32 {
-        match addr {
+    pub fn read_word(&mut self, addr: u32) -> Result<u32, &'static str> {
+        let res = match addr {
             // TODO: Replace constants with useful names
             0x0000_0000 ... 0x03ef_ffff => {
                 // RAM
@@ -176,16 +206,42 @@ impl Interconnect {
             0x1fc0_07c0 ... 0x1fc0_07ff => {
                 // PIF RAM
                 let rel_addr = addr as usize - 0x1fc0_07c0;
-                self.pif_ram[rel_addr / 4]
+                if rel_addr == 0x3c {
+                    self.pif_status
+                } else {
+                    if rel_addr == 0x24 {
+                        // hack to avoid looping at the end of the PIF rom
+                        self.pif_status = 0x80;
+                    }
+                    self.pif_ram[rel_addr / 4]
+                }
+            }
+            0x03f0_0000 ... 0x03ff_ffff => {
+                // RDRAM register area
+                match addr {
+                    0x03f0_0000 => self.rd.reg_config,
+                    0x03f0_0004 => self.rd.reg_device_id,
+                    0x03f0_0008 => self.rd.reg_delay,
+                    0x03f0_000c => self.rd.reg_mode,
+                    0x03f0_0010 => self.rd.reg_ref_interval,
+                    0x03f0_0014 => self.rd.reg_ref_row,
+                    0x03f0_0018 => self.rd.reg_ras_interval,
+                    0x03f0_001c => self.rd.reg_min_interval,
+                    0x03f0_0020 => self.rd.reg_addr_select,
+                    0x03f0_0024 => self.rd.reg_device_manuf,
+                    _ => {
+                        return Err("Unsupported RDreg read address");
+                    }
+                }
             }
             0x0400_0000 ... 0x040f_ffff => {
                 // SP area
                 match addr {
                     0x0400_0000 ... 0x0400_0fff => {
-                        self.sp.dmem[(addr as usize - 0x0400_0000) / 4]
+                        self.spram.dmem[(addr as usize - 0x0400_0000) / 4]
                     }
                     0x0400_1000 ... 0x0400_1fff => {
-                        self.sp.imem[(addr as usize - 0x0400_1000) / 4]
+                        self.spram.imem[(addr as usize - 0x0400_1000) / 4]
                     }
                     0x0404_0000 => self.sp.reg_mem_addr,
                     0x0404_0004 => self.sp.reg_dram_addr,
@@ -198,7 +254,7 @@ impl Interconnect {
                     0x0408_0000 => self.sp.reg_pc,
                     0x0408_0004 => self.sp.reg_ibist,
                     _ => {
-                        panic!("Unsupported SP read address: {:#x}", addr);
+                        return Err("Unsupported SP read address");
                     }
                 }
             }
@@ -218,7 +274,19 @@ impl Interconnect {
                     0x0420_0008 => self.dp.reg_buftest_addr,
                     0x0420_000c => self.dp.reg_buftest_data,
                     _ => {
-                        panic!("Unsupported DP read address: {:#x}", addr);
+                        return Err("Unsupported DP read address");
+                    }
+                }
+            }
+            0x0430_0000 ... 0x043f_ffff => {
+                // MI area
+                match addr {
+                    0x0430_0000 => self.mi.reg_mode,
+                    0x0430_0004 => self.mi.reg_version,
+                    0x0430_0008 => self.mi.reg_intr,
+                    0x0430_000c => self.mi.reg_intr_mask,
+                    _ => {
+                        return Err("Unsupported MI read address");
                     }
                 }
             }
@@ -229,7 +297,7 @@ impl Interconnect {
                     0x0440_0010 => self.vi.reg_current,
                     0x0440_0024 => self.vi.reg_h_start,
                     _ => {
-                        panic!("Unsupported VI read address: {:#x}", addr);
+                        return Err("Unsupported VI read address");
                     }
                 }
             }
@@ -238,8 +306,9 @@ impl Interconnect {
                 match addr {
                     0x0450_0000 => self.ai.reg_dram_addr,
                     0x0450_0004 => self.ai.reg_len,
+                    0x0450_000c => self.ai.reg_status,
                     _ => {
-                        panic!("Unsupported AI read address: {:#x}", addr);
+                        return Err("Unsupported AI read address");
                     }
                 }
             }
@@ -260,7 +329,22 @@ impl Interconnect {
                     0x0460_002c => self.pi.reg_bsd_dom2_pgs,
                     0x0460_0030 => self.pi.reg_bsd_dom2_rls,
                     _ => {
-                        panic!("Unsupported PI read address: {:#x}", addr);
+                        return Err("Unsupported PI read address");
+                    }
+                }
+            }
+            0x0470_0000 ... 0x047f_ffff => {
+                // RI area
+                match addr {
+                    0x0470_0000 => self.ri.reg_mode,
+                    0x0470_0004 => self.ri.reg_config,
+                    0x0470_0008 => self.ri.reg_current_load,
+                    0x0470_000c => self.ri.reg_select,
+                    0x0470_0010 => self.ri.reg_refresh,
+                    0x0470_0014 => self.ri.reg_latency,
+                    0x0470_0018 => self.ri.reg_rerror,
+                    _ => {
+                        return Err("Unsupported RI read address");
                     }
                 }
             }
@@ -272,18 +356,29 @@ impl Interconnect {
                     0x0480_0010 => self.si.reg_pif_addr_wr64b,
                     0x0480_0018 => self.si.reg_status,
                     _ => {
-                        panic!("Unsupported SI read address: {:#x}", addr);
+                        return Err("Unsupported SI read address");
                     }
                 }
             }
             _ => {
                 // TODO
-                panic!("No memory to read at: {:#x}", addr);
+                return Err("Unsupported read memory area");
+            }
+        };
+        if addr > 0x03ef_ffff {
+            if addr < 0x0400_0000 || addr > 0x0400_1fff {
+                if addr < 0x1000_0000 || addr > 0x1fc0_07bf {
+                    println!("R: {:#10x} -> {:#10x}", addr, res);
+                }
             }
         }
+        Ok(res)
     }
 
-    pub fn write_word(&mut self, addr: u32, mut word: u32) {
+    pub fn write_word(&mut self, addr: u32, mut word: u32) -> Result<(), &'static str> {
+        if addr > (0x03ef_ffff - 0x03ef_ffff) && (addr < 0x0400_0000 || addr > 0x0400_1fff) {
+            println!("W: {:#10x} -> {:#10x}", addr, word);
+        }
         match addr {
             0x0000_0000 ... 0x03ef_ffff => {
                 // RAM
@@ -303,14 +398,31 @@ impl Interconnect {
                 // XXX assumes alignment
                 self.pif_ram[rel_addr / 4] = word;
             }
+            0x03f0_0000 ... 0x03ff_ffff => {
+                // RDRAM register area
+                match addr {
+                    0x03f0_0000 => self.rd.reg_config = word,
+                    0x03f0_0004 => self.rd.reg_device_id = word,
+                    0x03f0_0008 => self.rd.reg_delay = word,
+                    0x03f0_000c => self.rd.reg_mode = word,
+                    0x03f0_0010 => self.rd.reg_ref_interval = word,
+                    0x03f0_0014 => self.rd.reg_ref_row = word,
+                    0x03f0_0018 => self.rd.reg_ras_interval = word,
+                    0x03f0_001c => self.rd.reg_min_interval = word,
+                    0x03f0_0020 => self.rd.reg_addr_select = word,
+                    _ => {
+                        return Err("Unsupported RDreg write address");
+                    }
+                }
+            }
             0x0400_0000 ... 0x040f_ffff => {
                 // SP area
                 match addr {
                     0x0400_0000 ... 0x0400_0fff => {
-                        self.sp.dmem[(addr as usize - 0x0400_0000) / 4] = word;
+                        self.spram.dmem[(addr as usize - 0x0400_0000) / 4] = word;
                     }
                     0x0400_1000 ... 0x0400_1fff => {
-                        self.sp.imem[(addr as usize - 0x0400_1000) / 4] = word;
+                        self.spram.imem[(addr as usize - 0x0400_1000) / 4] = word;
                     }
                     0x0404_0000 => self.sp.reg_mem_addr = word,
                     0x0404_0004 => self.sp.reg_dram_addr = word,
@@ -321,7 +433,7 @@ impl Interconnect {
                     0x0408_0000 => self.sp.reg_pc = word,
                     0x0408_0004 => self.sp.reg_ibist = word,
                     _ => {
-                        panic!("Unsupported SP write address: {:#x}", addr);
+                        return Err("Unsupported SP write address");
                     }
                 }
             }
@@ -336,7 +448,17 @@ impl Interconnect {
                     0x0420_0008 => self.dp.reg_buftest_addr = word,
                     0x0420_000c => self.dp.reg_buftest_data = word,
                     _ => {
-                        panic!("Unsupported DP write address: {:#x}", addr);
+                        return Err("Unsupported DP write address");
+                    }
+                }
+            }
+            0x0430_0000 ... 0x043f_ffff => {
+                // MI area
+                match addr {
+                    0x0430_0000 => self.mi.reg_mode = word,
+                    0x0430_000c => self.mi.reg_intr_mask = word,
+                    _ => {
+                        return Err("Unsupported MI write address");
                     }
                 }
             }
@@ -347,7 +469,7 @@ impl Interconnect {
                     0x0440_0010 => self.vi.reg_current = word,
                     0x0440_0024 => self.vi.reg_h_start = word,
                     _ => {
-                        panic!("Unsupported VI write address: {:#x}", addr);
+                        return Err("Unsupported VI write address");
                     }
                 }
             }
@@ -356,8 +478,12 @@ impl Interconnect {
                 match addr {
                     0x0450_0000 => self.ai.reg_dram_addr = word,
                     0x0450_0004 => self.ai.reg_len = word,
+                    0x0450_0008 => self.ai.reg_control = word,
+                    0x0450_000c => { }, // TODO: clear intr
+                    0x0450_0010 => self.ai.reg_dacrate = word,
+                    0x0450_0014 => self.ai.reg_bitrate = word,
                     _ => {
-                        panic!("Unsupported AI write address: {:#x}", addr);
+                        return Err("Unsupported AI write address");
                     }
                 }
             }
@@ -367,8 +493,17 @@ impl Interconnect {
                     0x0460_0000 => self.pi.reg_dram_addr = word,
                     0x0460_0004 => self.pi.reg_cart_addr = word,
                     0x0460_0008 => self.pi.reg_rd_len = word,
-                    0x0460_000c => self.pi.reg_wr_len = word,
-                    0x0460_0010 => self.pi.reg_status = word,
+                    0x0460_000c => {
+                        self.pi.reg_wr_len = word;
+                        // DMA transfer ROM -> main memory
+                        let ram_start = self.pi.reg_dram_addr as usize;  // offset is 0
+                        let rom_start = self.pi.reg_cart_addr as usize - 0x1000_0000;
+                        let length = (word + 1) as usize;
+                        for i in 0..length {
+                            self.ram[ram_start + i] = self.cart_rom[rom_start + i] as u16;
+                        }
+                    },
+                    0x0460_0010 => { }, // TODO: self.pi.reg_status = word,
                     0x0460_0014 => self.pi.reg_bsd_dom1_lat = word,
                     0x0460_0018 => self.pi.reg_bsd_dom1_pwd = word,
                     0x0460_001c => self.pi.reg_bsd_dom1_pgs = word,
@@ -378,7 +513,22 @@ impl Interconnect {
                     0x0460_002c => self.pi.reg_bsd_dom2_pgs = word,
                     0x0460_0030 => self.pi.reg_bsd_dom2_rls = word,
                     _ => {
-                        panic!("Unsupported PI write address: {:#x}", addr);
+                        return Err("Unsupported PI write address");
+                    }
+                }
+            }
+            0x0470_0000 ... 0x047f_ffff => {
+                // RI area
+                match addr {
+                    0x0470_0000 => self.ri.reg_mode = word,
+                    0x0470_0004 => self.ri.reg_config = word,
+                    0x0470_0008 => self.ri.reg_current_load = word,
+                    0x0470_000c => self.ri.reg_select = word,
+                    0x0470_0010 => self.ri.reg_refresh = word,
+                    0x0470_0014 => self.ri.reg_latency = word,
+                    0x0470_001c => self.ri.reg_werror = word,
+                    _ => {
+                        return Err("Unsupported RI read address");
                     }
                 }
             }
@@ -390,19 +540,32 @@ impl Interconnect {
                     0x0480_0010 => self.si.reg_pif_addr_wr64b = word,
                     0x0480_0018 => self.si.reg_status = word,
                     _ => {
-                        panic!("Unsupported SI write address: {:#x}", addr);
+                        return Err("Unsupported SI write address");
                     }
                 }
             }
             _ => {
-                panic!("No memory to write at: {:#x}", addr);
+                return Err("Unsupported memory write area");
             }
         }
+        Ok(())
     }
 }
 
 impl fmt::Debug for Interconnect {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "TODO: Impl Debug for Interconnect")
+        f.debug_struct("Interconnect")
+         .field("pif_ram", &self.pif_ram)
+         .field("pif_status", &self.pif_status)
+         .field("rd", &self.rd)
+         .field("sp", &self.sp)
+         .field("dp", &self.dp)
+         .field("mi", &self.mi)
+         .field("vi", &self.vi)
+         .field("ai", &self.ai)
+         .field("pi", &self.pi)
+         .field("ri", &self.ri)
+         .field("si", &self.si)
+         .finish()
     }
 }

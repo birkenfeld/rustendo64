@@ -35,6 +35,7 @@ pub const LD:      u32 = 0b110111;
 pub const SB:      u32 = 0b101000;
 pub const SH:      u32 = 0b101001;
 pub const SD:      u32 = 0b111111;
+pub const CACHE:   u32 = 0b101111;
 pub const SPECIAL: u32 = 0b000000;
 pub const REGIMM:  u32 = 0b000001;
 pub const COP0:    u32 = 0b010000;
@@ -169,15 +170,16 @@ impl fmt::Debug for Instr {
             (mtreg) => { self.mt_reg() };
             (sa)    => { self.sa() };
             (targ)  => { self.j_target() << 2 };
+            (cop)   => { self.rt() };
+        }
+        macro_rules! ins {
+            ($fmt:expr, $($a:tt),+) => { write!(f, $fmt, $(iex!($a)),+) }
         }
         macro_rules! ins1 {
             ($name:expr, $a1:tt) => { write!(f, "{:5} {}", $name, iex!($a1)) }
         }
         macro_rules! ins2 {
             ($name:expr, $a1:tt, $a2:tt) => { write!(f, "{:5} {}, {}", $name, iex!($a1), iex!($a2)) }
-        }
-        macro_rules! ins2x {
-            ($name:expr, $a1:tt, $a2:tt) => { write!(f, "{:5} {}, {:#x}", $name, iex!($a1), iex!($a2)) }
         }
         macro_rules! ins2s {
             ($name:expr, $a1:tt, $a2:tt) => { write!(f, "{:5} {}, {:+}", $name, iex!($a1), iex!($a2)) }
@@ -198,12 +200,9 @@ impl fmt::Debug for Instr {
             ($name:expr, $a1:tt, $a2:tt, $a3:tt) => {
                 write!(f, "{:5} {}, {}({})", $name, iex!($a1), iex!($a2), iex!($a3)) }
         }
-        macro_rules! insc {
-            ($fmt:expr, $($a:tt),+) => { write!(f, $fmt, $(iex!($a)),+) }
-        }
 
         match self.opcode() {
-            LUI     => ins2x!("lui", rt, imm),
+            LUI     => ins!  ("lui   {}, {:#x}", rt, imm),
             LW      => ins3m!("lw", rt, ims, base),
             LWU     => ins3m!("lwu", rt, ims, base),
             SW      => ins3m!("sw", rt, ims, base),
@@ -214,8 +213,8 @@ impl fmt::Debug for Instr {
             XORI    => ins3x!("xori", rt, rs, imm),
             SLTI    => ins3x!("slti", rt, rs, imm),
             SLTIU   => ins3x!("sltiu", rt, rs, imm),
-            J       => insc! ("j     {:#x}", targ),
-            JAL     => insc! ("jal   {:#x}", targ),
+            J       => ins!  ("j     {:#x}", targ),
+            JAL     => ins!  ("jal   {:#x}", targ),
             BEQ     => if self.rt() == 0 { ins2s!("beqz", rs, iof) } else { ins3s!("beq", rs, rt, iof) },
             BEQL    => if self.rt() == 0 { ins2s!("beqzl", rs, iof) } else { ins3s!("beql", rs, rt, iof) },
             BNE     => if self.rt() == 0 { ins2s!("bnez", rs, iof) } else { ins3s!("bne", rs, rt, iof) },
@@ -232,6 +231,7 @@ impl fmt::Debug for Instr {
             SB      => ins3m!("sb", rt, ims, base),
             SH      => ins3m!("sh", rt, ims, base),
             SD      => ins3m!("sd", rt, ims, base),
+            CACHE   => ins3m!("cache", cop, ims, base),
             SPECIAL => match self.special_op() {
                 JR      => ins1!("jr", rs),
                 JALR    => if self.rd() == 31 { ins1!("jalr", rs) } else { ins2!("jalr", rd, rs) },
@@ -239,7 +239,9 @@ impl fmt::Debug for Instr {
                 OR      => if self.rt() == 0 { ins2!("move", rd, rs) } else { ins3!("or", rd, rs, rt) },
                 XOR     => ins3!("xor", rd, rs, rt),
                 NOR     => ins3!("nor", rd, rs, rt),
+                ADD     => ins3!("add", rd, rs, rt),
                 ADDU    => ins3!("addu", rd, rs, rt),
+                SUB     => ins3!("sub", rd, rs, rt),
                 SUBU    => ins3!("subu", rd, rs, rt),
                 SRLV    => ins3!("srlv", rd, rt, rs),
                 SRAV    => ins3!("srav", rd, rt, rs),
@@ -270,8 +272,8 @@ impl fmt::Debug for Instr {
                 x       => panic!("unsupported reg-imm opcode for display: {:#07b}", x),
             },
             COP0    => match self.cop_op() {
-                MT      => insc! ("mtc0  {}, ${}", rt, mtreg),
-                MF      => insc! ("mfc0  {}, ${}", rt, mtreg),
+                MT      => ins!("mtc0  {}, ${}", rt, mtreg),
+                MF      => ins!("mfc0  {}, ${}", rt, mtreg),
                 ERET    => write!(f, "eret"),
                 x       => panic!("unsupported cop0 opcode for display: {:#07b}", x),
             },
