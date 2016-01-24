@@ -1,3 +1,5 @@
+use super::byteorder::{BigEndian, ByteOrder};
+
 use std::fmt;
 
 const PIF_ROM_SIZE: usize = 2048;
@@ -155,6 +157,7 @@ impl Interconnect {
             0x0000_0000 ... 0x03ef_ffff => {
                 // RAM
                 let addr = addr as usize;
+                // Cannot use byteorder: RAM is 16bits
                 ((self.ram[addr] as u32) << 24) |
                 ((self.ram[addr + 1] as u32) << 16) |
                 ((self.ram[addr + 2] as u32) << 8) |
@@ -163,19 +166,12 @@ impl Interconnect {
             0x1000_0000 ... 0x1fbf_ffff => {
                 // Cartridge ROM
                 let rel_addr = addr as usize - 0x1000_0000;
-                ((self.cart_rom[rel_addr + 3] as u32) << 24) |
-                ((self.cart_rom[rel_addr + 2] as u32) << 16) |
-                ((self.cart_rom[rel_addr + 1] as u32) << 8) |
-                 (self.cart_rom[rel_addr + 0] as u32)
+                BigEndian::read_u32(&self.cart_rom[rel_addr..])
             }
             0x1fc0_0000 ... 0x1fc0_07bf => {
                 // PIF ROM
                 let rel_addr = addr as usize - 0x1fc0_0000;
-                // TODO: Check out byteorder crate
-                ((self.pif_rom[rel_addr] as u32) << 24) |
-                ((self.pif_rom[rel_addr + 1] as u32) << 16) |
-                ((self.pif_rom[rel_addr + 2] as u32) << 8) |
-                 (self.pif_rom[rel_addr + 3] as u32)
+                BigEndian::read_u32(&self.pif_rom[rel_addr..])
             }
             0x1fc0_07c0 ... 0x1fc0_07ff => {
                 // PIF RAM
@@ -290,8 +286,9 @@ impl Interconnect {
     pub fn write_word(&mut self, addr: u32, mut word: u32) {
         match addr {
             0x0000_0000 ... 0x03ef_ffff => {
-                let addr = addr as usize;
                 // RAM
+                let addr = addr as usize;
+                // Cannot use byteorder: RAM is 16bits
                 self.ram[addr + 3] = word as u16 & 0xff;
                 word >>= 8;
                 self.ram[addr + 2] = word as u16 & 0xff;
@@ -303,6 +300,7 @@ impl Interconnect {
             0x1fc0_07c0 ... 0x1fc0_07ff => {
                 // PIF RAM
                 let rel_addr = addr as usize - 0x1fc0_07c0;
+                // XXX assumes alignment
                 self.pif_ram[rel_addr / 4] = word;
             }
             0x0400_0000 ... 0x040f_ffff => {

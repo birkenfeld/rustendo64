@@ -253,11 +253,11 @@ impl Cpu {
             COP0 => {
                 match instr.cop_op() {
                     MT => {
-                        // TODO: self.cp0...
+                        let data = self.read_gpr(instr.rt());
+                        self.cp0.write_reg(instr.rd(), data);
                     }
-                    MF => {
-                        // TODO: self.cp0...
-                    }
+                    // MF
+                    // ERET
                     _ => {
                         unimpl!(self, "#UD at {:#x}: I {:#b} -- Op COP0 -- Sub {:#b}",
                                 self.reg_pc, instr.0, instr.base());
@@ -359,6 +359,7 @@ impl Cpu {
     }
 
     fn read_gpr(&self, index: usize) -> u64 {
+        // Reg 0 is always 0 since we never write it
         self.reg_gpr[index]
     }
 }
