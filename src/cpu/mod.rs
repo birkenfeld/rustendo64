@@ -36,8 +36,8 @@ pub struct Cpu {
 }
 
 macro_rules! unimpl {
-    (cpu, $args:expr,+) => {
-        println!("{:?}", cpu);
+    ($cpu:expr, $($args:expr),+) => {
+        println!("{:?}", $cpu);
         panic!($($args),+);
     }
 }
@@ -94,55 +94,48 @@ impl Cpu {
 
     pub fn run_instruction(&mut self) {
         let instr = Instr(self.read_word_q(self.reg_pc));
-        //println!("op: {:#x}   {:?}", self.reg_pc, instr);
+        println!("op: {:#x}   {:?}", self.reg_pc & 0xffff_ffff, instr);
         if self.reg_pc == 0xffff_ffff_a400_15f8 {
             if self.tmp_i >= 30 {
-                println!("{:?}", self);
-                panic!("...");
+                unimpl!(self, "...");
             }
             self.tmp_i += 1;
         }
 
         match instr.opcode() {
-            LUI => {
-                // TODO: Check 32 vs 64 bit mode for sign extend
-                // (currently 64 bit mode is assumed)
-                self.write_gpr(instr.rt(), instr.imm_se() << 16);
-            }
-            ADDI => {
-                // TODO: overflow exception
-                let new_value = self.read_gpr(instr.rs()).wrapping_add(instr.imm_se());
-                // result is 32-bit, sign-extended
-                self.write_gpr(instr.rt(), new_value as i32 as u64);
-            }
-            ADDIU => {
-                let new_value = self.read_gpr(instr.rs()).wrapping_add(instr.imm_se());
-                // result is 32-bit, sign-extended
-                self.write_gpr(instr.rt(), new_value as i32 as u64);
-            }
-            ANDI => {
-                let new_value = self.read_gpr(instr.rs()) & instr.imm();
-                self.write_gpr(instr.rt(), new_value);
-            }
-            ORI => {
-                let new_value = self.read_gpr(instr.rs()) | instr.imm();
-                self.write_gpr(instr.rt(), new_value);
-            }
-            XORI => {
-                let new_value = self.read_gpr(instr.rs()) ^ instr.imm();
-                self.write_gpr(instr.rt(), new_value);
-            }
-            LW => {
+            LUI   => self.write_gpr(instr.rt(), instr.imm_se() << 16),
+            LW    => {
                 let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
-                // TODO: Check alignment
+                if addr & 0b11 != 0 {
+                    unimpl!(self, "Unaligned address in LW: {:#x}", addr);
+                }
                 let word = self.read_word(addr);
                 self.write_gpr(instr.rt(), word as i32 as u64);
             }
-            SW => {
+            LWU   => {
                 let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                if addr & 0b11 != 0 {
+                    unimpl!(self, "Unaligned address in LWU: {:#x}", addr);
+                }
+                let word = self.read_word(addr);
+                self.write_gpr(instr.rt(), word as u64);
+            }
+            SW    => {
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                if addr & 0b11 != 0 {
+                    unimpl!(self, "Unaligned address in SW: {:#x}", addr);
+                }
                 let word = self.read_gpr(instr.rt());
                 self.write_word(addr, word as u32);
             }
+            // TODO: overflow exception
+            ADDI  => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_se()) as i32 as u64),
+            ADDIU => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_se()) as i32 as u64),
+            ANDI  => self.arithi(&instr, |rs| rs & instr.imm()),
+            ORI   => self.arithi(&instr, |rs| rs | instr.imm()),
+            XORI  => self.arithi(&instr, |rs| rs ^ instr.imm()),
+            SLTI  => self.arithi(&instr, |rs| ((rs as i64) < instr.imm_se() as i64) as u64),
+            SLTIU => self.arithi(&instr, |rs| (rs < instr.imm_se()) as u64),
             BEQ   => self.branch(&instr, false, false, |cpu|
                                  cpu.read_gpr(instr.rs()) == cpu.read_gpr(instr.rt())),
             BEQL  => self.branch(&instr, true, false, |cpu|
@@ -159,74 +152,89 @@ impl Cpu {
                                  let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
             BLEZL => self.branch(&instr, true, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
+            // LB, LBU, LH, LHU
+            LD    => {
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                if addr & 0b111 != 0 {
+                    unimpl!(self, "Unaligned address in SD: {:#x}", addr);
+                }
+                // TODO: Check endianness
+                let dword = (self.read_word(addr) as u64) << 32 | self.read_word(addr + 4) as u64;
+                self.write_gpr(instr.rt(), dword);
+            }
+            // SB, SH
+            SD    => {
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                if addr & 0b111 != 0 {
+                    unimpl!(self, "Unaligned address in SD: {:#x}", addr);
+                }
+                let dword = self.read_gpr(instr.rt());
+                // TODO: Check endianness
+                self.write_word(addr, (dword >> 32) as u32);
+                self.write_word(addr + 4, dword as u32);
+            }
             SPECIAL => match instr.special_op() {
                 JR => {
-                    // TODO: Check alignment
                     let addr = self.read_gpr(instr.rs());
+                    if addr & 0b11 != 0 {
+                        unimpl!(self, "Unaligned address in JR: {:#x}", addr);
+                    }
                     self.reg_pc += 4;
                     self.run_instruction();
                     self.reg_pc = addr - 4;  // absolute jump
                 }
-                AND => {
-                    let new_value = self.read_gpr(instr.rs()) & self.read_gpr(instr.rt());
-                    self.write_gpr(instr.rd(), new_value);
+                JALR => {
+                    let addr = self.read_gpr(instr.rs());
+                    if addr & 0b11 != 0 {
+                        unimpl!(self, "Unaligned address in JALR: {:#x}", addr);
+                    }
+                    let return_addr = self.reg_pc + 8;
+                    self.write_gpr(instr.rd(), return_addr);  // usually rd = 31
+                    self.reg_pc += 4;
+                    self.run_instruction();
+                    self.reg_pc = addr - 4;  // absolute jump
                 }
-                OR => {
-                    let new_value = self.read_gpr(instr.rs()) | self.read_gpr(instr.rt());
-                    self.write_gpr(instr.rd(), new_value);
-                }
-                XOR => {
-                    let new_value = self.read_gpr(instr.rs()) ^ self.read_gpr(instr.rt());
-                    self.write_gpr(instr.rd(), new_value);
-                }
-                ADDU => {
-                    let new_value = self.read_gpr(instr.rs()).wrapping_add(self.read_gpr(instr.rt()));
-                    self.write_gpr(instr.rd(), new_value);
-                }
-                SUBU => {
-                    let new_value = self.read_gpr(instr.rs()).wrapping_sub(self.read_gpr(instr.rt()));
-                    self.write_gpr(instr.rd(), new_value);
-                }
-                SLTU => {
-                    let is_lt = self.read_gpr(instr.rs()) < self.read_gpr(instr.rt());
-                    self.write_gpr(instr.rd(), is_lt as u64);
-                }
-                SRL => {
-                    let new_value = self.read_gpr(instr.rt()) >> instr.sa();
-                    self.write_gpr(instr.rd(), new_value as i32 as u64);
-                }
-                SLL => {
-                    let new_value = self.read_gpr(instr.rt()) << instr.sa();
-                    self.write_gpr(instr.rd(), new_value as i32 as u64);
-                }
-                SRLV => {
-                    let bits = self.read_gpr(instr.rs()) & 0b11111;
-                    let new_value = self.read_gpr(instr.rt()) >> bits;
-                    self.write_gpr(instr.rd(), new_value as i32 as u64);
-                }
-                SLLV => {
-                    let bits = self.read_gpr(instr.rs()) & 0b11111;
-                    let new_value = self.read_gpr(instr.rt()) << bits;
-                    self.write_gpr(instr.rd(), new_value as i32 as u64);
-                }
-                MULTU => {
-                    let mut mult_result = self.read_gpr(instr.rs()) as u32 as u64 *
-                        self.read_gpr(instr.rt()) as u32 as u64;
+                // TODO: Overflow exception
+                ADD  => self.arithr(&instr, |rs, rt| rs.wrapping_add(rt)),
+                ADDU => self.arithr(&instr, |rs, rt| rs.wrapping_add(rt)),
+                // TODO: Overflow exception
+                SUB  => self.arithr(&instr, |rs, rt| rs.wrapping_sub(rt)),
+                SUBU => self.arithr(&instr, |rs, rt| rs.wrapping_sub(rt)),
+                AND  => self.arithr(&instr, |rs, rt| rs & rt),
+                OR   => self.arithr(&instr, |rs, rt| rs | rt),
+                XOR  => self.arithr(&instr, |rs, rt| rs ^ rt),
+                NOR  => self.arithr(&instr, |rs, rt| !(rs | rt)),
+                SLT  => self.arithr(&instr, |rs, rt| ((rs as i64) < rt as i64) as u64),
+                SLTU => self.arithr(&instr, |rs, rt| (rs < rt) as u64),
+                SRLV => self.arithr(&instr, |rs, rt| (rt >> (rs & 0b1111)) as i32 as u64),
+                SRAV => self.arithr(&instr, |rs, rt| (rt as i64 >> (rs & 0b1111)) as i32 as u64),
+                SLLV => self.arithr(&instr, |rs, rt| (rt << (rs & 0b1111)) as i32 as u64),
+                SRL  => self.ariths(&instr, |rt| (rt >> instr.sa()) as i32 as u64),
+                SRA  => self.ariths(&instr, |rt| (rt as i64 >> instr.sa()) as i32 as u64),
+                SLL  => self.ariths(&instr, |rt| (rt << instr.sa()) as i32 as u64),
+                MFHI => { let val = self.reg_hi; self.write_gpr(instr.rd(), val); }
+                MFLO => { let val = self.reg_lo; self.write_gpr(instr.rd(), val); }
+                MTHI => { let val = self.read_gpr(instr.rs()); self.reg_hi = val; }
+                MTLO => { let val = self.read_gpr(instr.rs()); self.reg_lo = val; }
+                MULT => {
+                    let mut mult_result = (self.read_gpr(instr.rs()) as i32) as i64 *
+                        (self.read_gpr(instr.rt()) as i32) as i64;
                     self.reg_lo = mult_result as i32 as u64;
                     mult_result >>= 32;
                     self.reg_hi = mult_result as i32 as u64;
                 }
-                MFHI => {
-                    let new_value = self.reg_hi;
-                    self.write_gpr(instr.rd(), new_value);
+                MULTU => {
+                    let mut mult_result = (self.read_gpr(instr.rs()) & 0xffff_ffff) *
+                        (self.read_gpr(instr.rt()) & 0xffff_ffff);
+                    self.reg_lo = mult_result as i32 as u64;
+                    mult_result >>= 32;
+                    self.reg_hi = mult_result as i32 as u64;
                 }
-                MFLO => {
-                    let new_value = self.reg_lo;
-                    self.write_gpr(instr.rd(), new_value);
-                }
+                // DIV, DIVU
+                SYNC  => { }
                 _ => {
-                    panic!("#UD at {:#x}: I {:#b} -- Op SPC -- Sub {:#08b}",
-                       self.reg_pc, instr.0, instr.special_op());
+                    unimpl!(self, "#UD at {:#x}: I {:#b} -- Op SPC -- Sub {:#08b}",
+                            self.reg_pc, instr.0, instr.special_op());
                 }
             },
             REGIMM => match instr.regimm_op() {
@@ -247,8 +255,8 @@ impl Cpu {
                 BLTZALL => self.branch(&instr, true, true, |cpu|
                                        (cpu.read_gpr(instr.rs()) >> 63) != 0),
                 _ => {
-                    panic!("#UD at {:#x}: I {:#b} -- Op REGIMM -- Sub {:#08b}",
-                       self.reg_pc, instr.0, instr.regimm_op());
+                    unimpl!(self, "#UD at {:#x}: I {:#b} -- Op REGIMM -- Sub {:#08b}",
+                            self.reg_pc, instr.0, instr.regimm_op());
                 }
             },
             COP0 => {
@@ -256,19 +264,46 @@ impl Cpu {
                     MT => {
                         // TODO: self.cp0...
                     }
+                    MF => {
+                        // TODO: self.cp0...
+                    }
                     _ => {
-                        panic!("#UD at {:#x}: I {:#b} -- Op COP0 -- Sub {:#b}",
-                               self.reg_pc, instr.0, instr.base());
+                        unimpl!(self, "#UD at {:#x}: I {:#b} -- Op COP0 -- Sub {:#b}",
+                                self.reg_pc, instr.0, instr.base());
                     }
                 }
             },
             _ => {
-                panic!("#UD at {:#x}: I {:#b} -- Op {:#08b}",
-                       self.reg_pc, instr.0, instr.opcode());
+                unimpl!(self, "#UD at {:#x}: I {:#b} -- Op {:#08b}",
+                        self.reg_pc, instr.0, instr.opcode());
             }
         }
 
         self.reg_pc += 4;
+    }
+
+    #[inline]
+    fn arithi<F>(&mut self, instr: &Instr, func: F)
+        where F: Fn(u64) -> u64
+    {
+        let res = func(self.read_gpr(instr.rs()));
+        self.write_gpr(instr.rt(), res);
+    }
+
+    #[inline]
+    fn arithr<F>(&mut self, instr: &Instr, func: F)
+        where F: Fn(u64, u64) -> u64
+    {
+        let res = func(self.read_gpr(instr.rs()), self.read_gpr(instr.rt()));
+        self.write_gpr(instr.rd(), res);
+    }
+
+    #[inline]
+    fn ariths<F>(&mut self, instr: &Instr, func: F)
+        where F: Fn(u64) -> u64
+    {
+        let res = func(self.read_gpr(instr.rt()));
+        self.write_gpr(instr.rd(), res);
     }
 
     #[inline]
@@ -281,7 +316,7 @@ impl Cpu {
             let return_addr = self.reg_pc + 8;
             self.write_gpr(31, return_addr);
         }
-        //println!("    branch: {}", if take { "taken" } else { "not taken" });
+        println!("    branch: {}", if take { "taken" } else { "not taken" });
         // Run the delay slot (XXX what happens if the delay slot is
         // another branch?)
         self.reg_pc += 4;
@@ -296,22 +331,20 @@ impl Cpu {
     }
 
     fn read_word_q(&self, virt_addr: u64) -> u32 {
-        // TODO: Check endianness
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         self.interconnect.read_word(phys_addr as u32)
     }
 
     fn read_word(&self, virt_addr: u64) -> u32 {
-        // TODO: Check endianness
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         let res = self.interconnect.read_word(phys_addr as u32);
-        //println!("    mem: {:#x} v {:#010x} r= {:#x}", virt_addr, phys_addr, res);
+        println!("    mem: {:#x} v {:#010x} r= {:#x}", virt_addr, phys_addr, res);
         res
     }
 
     fn write_word(&mut self, virt_addr: u64, word: u32) {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
-        //println!("    mem: {:#x} v {:#010x} w= {:#x}", virt_addr, phys_addr, word);
+        println!("    mem: {:#x} v {:#010x} w= {:#x}", virt_addr, phys_addr, word);
         self.interconnect.write_word(phys_addr as u32, word);
     }
 
@@ -324,7 +357,7 @@ impl Cpu {
             virt_addr - 0xffff_ffff_a000_0000
         } else {
             // TODO
-            panic!("Unrecognized virtual address: {:#x}", virt_addr);
+            unimpl!(self, "Unrecognized virtual address: {:#x}", virt_addr);
         }
     }
 
