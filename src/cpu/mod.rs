@@ -94,7 +94,7 @@ impl Cpu {
 
     pub fn run_instruction(&mut self) {
         let instr = Instr(self.read_word_q(self.reg_pc));
-        println!("op: {:#x}   {:?}", self.reg_pc, instr);
+        //println!("op: {:#x}   {:?}", self.reg_pc, instr);
         if self.reg_pc == 0xffff_ffff_a400_15f8 {
             if self.tmp_i >= 30 {
                 println!("{:?}", self);
@@ -143,50 +143,22 @@ impl Cpu {
                 let word = self.read_gpr(instr.rt());
                 self.write_word(addr, word as u32);
             }
-            BEQ => {
-                // TODO: combine branches
-                // move PC to delay slot
-                let addr = (instr.imm_se() << 2).wrapping_add(self.reg_pc);
-                let is_eq = self.read_gpr(instr.rs()) == self.read_gpr(instr.rt());
-                self.reg_pc += 4;
-                self.run_instruction();
-                if is_eq {
-                    // Run the delay slot (XXX what happens if the delay slot is
-                    // another branch?)
-                    self.reg_pc = addr;
-                } else {
-                    self.reg_pc -= 4;
-                }
-            }
-            BEQL => {
-                let addr = (instr.imm_se() << 2).wrapping_add(self.reg_pc);
-                let is_eq = self.read_gpr(instr.rs()) == self.read_gpr(instr.rt());
-                self.reg_pc += 4;
-                if is_eq {
-                    self.run_instruction();
-                    self.reg_pc = addr;
-                }
-            }
-            BNE => {
-                let addr = (instr.imm_se() << 2).wrapping_add(self.reg_pc);
-                let is_neq = self.read_gpr(instr.rs()) != self.read_gpr(instr.rt());
-                self.reg_pc += 4;
-                self.run_instruction();
-                if is_neq {
-                    self.reg_pc = addr;
-                } else {
-                    self.reg_pc -= 4;
-                }
-            }
-            BNEL => {
-                let addr = (instr.imm_se() << 2).wrapping_add(self.reg_pc);
-                let is_neq = self.read_gpr(instr.rs()) != self.read_gpr(instr.rt());
-                self.reg_pc += 4;
-                if is_neq {
-                    self.run_instruction();
-                    self.reg_pc = addr;
-                }
-            }
+            BEQ   => self.branch(&instr, false, false, |cpu|
+                                 cpu.read_gpr(instr.rs()) == cpu.read_gpr(instr.rt())),
+            BEQL  => self.branch(&instr, true, false, |cpu|
+                                 cpu.read_gpr(instr.rs()) == cpu.read_gpr(instr.rt())),
+            BNE   => self.branch(&instr, false, false, |cpu|
+                                 cpu.read_gpr(instr.rs()) != cpu.read_gpr(instr.rt())),
+            BNEL  => self.branch(&instr, true, false, |cpu|
+                                 cpu.read_gpr(instr.rs()) != cpu.read_gpr(instr.rt())),
+            BGTZ  => self.branch(&instr, false, false, |cpu| {
+                                 let v = cpu.read_gpr(instr.rs()); v != 0 && (v >> 63) == 0 }),
+            BGTZL => self.branch(&instr, true, false, |cpu| {
+                                 let v = cpu.read_gpr(instr.rs()); v != 0 && (v >> 63) == 0 }),
+            BLEZ  => self.branch(&instr, false, false, |cpu| {
+                                 let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
+            BLEZL => self.branch(&instr, true, false, |cpu| {
+                                 let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
             SPECIAL => match instr.special_op() {
                 JR => {
                     // TODO: Check alignment
@@ -258,19 +230,22 @@ impl Cpu {
                 }
             },
             REGIMM => match instr.regimm_op() {
-                BGEZAL => {
-                    let addr = (instr.imm_se() << 2).wrapping_add(self.reg_pc);
-                    let is_gez = (self.read_gpr(instr.rs()) >> 63) == 0;
-                    let return_addr = self.reg_pc + 8;
-                    self.write_gpr(31, return_addr);
-                    self.reg_pc += 4;
-                    self.run_instruction();
-                    if is_gez {
-                        self.reg_pc = addr;
-                    } else {
-                        self.reg_pc -= 4;
-                    }
-                }
+                BGEZ    => self.branch(&instr, false, false, |cpu|
+                                       (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BGEZL   => self.branch(&instr, true, false, |cpu|
+                                       (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BGEZAL  => self.branch(&instr, false, true, |cpu|
+                                       (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BGEZALL => self.branch(&instr, true, true, |cpu|
+                                       (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BLTZ    => self.branch(&instr, false, false, |cpu|
+                                       (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BLTZL   => self.branch(&instr, true, false, |cpu|
+                                       (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BLTZAL  => self.branch(&instr, false, true, |cpu|
+                                       (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BLTZALL => self.branch(&instr, true, true, |cpu|
+                                       (cpu.read_gpr(instr.rs()) >> 63) != 0),
                 _ => {
                     panic!("#UD at {:#x}: I {:#b} -- Op REGIMM -- Sub {:#08b}",
                        self.reg_pc, instr.0, instr.regimm_op());
@@ -296,6 +271,30 @@ impl Cpu {
         self.reg_pc += 4;
     }
 
+    #[inline]
+    fn branch<P>(&mut self, instr: &Instr, likely: bool, link: bool, mut predicate: P)
+        where P: FnMut(&mut Self) -> bool
+    {
+        let addr = (instr.imm_se() << 2).wrapping_add(self.reg_pc);
+        let take = predicate(self);
+        if link {
+            let return_addr = self.reg_pc + 8;
+            self.write_gpr(31, return_addr);
+        }
+        //println!("    branch: {}", if take { "taken" } else { "not taken" });
+        // Run the delay slot (XXX what happens if the delay slot is
+        // another branch?)
+        self.reg_pc += 4;
+        if take || !likely {
+            self.run_instruction();
+            if take {
+                self.reg_pc = addr;
+            } else {
+                self.reg_pc -= 4;
+            }
+        }
+    }
+
     fn read_word_q(&self, virt_addr: u64) -> u32 {
         // TODO: Check endianness
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
@@ -306,13 +305,13 @@ impl Cpu {
         // TODO: Check endianness
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         let res = self.interconnect.read_word(phys_addr as u32);
-        println!("    mem: {:#x} v {:#010x} r= {:#x}", virt_addr, phys_addr, res);
+        //println!("    mem: {:#x} v {:#010x} r= {:#x}", virt_addr, phys_addr, res);
         res
     }
 
     fn write_word(&mut self, virt_addr: u64, word: u32) {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
-        println!("    mem: {:#x} v {:#010x} w= {:#x}", virt_addr, phys_addr, word);
+        //println!("    mem: {:#x} v {:#010x} w= {:#x}", virt_addr, phys_addr, word);
         self.interconnect.write_word(phys_addr as u32, word);
     }
 
