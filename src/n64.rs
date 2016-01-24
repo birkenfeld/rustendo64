@@ -3,13 +3,13 @@ use super::interconnect;
 
 #[derive(Debug)]
 pub struct N64 {
-    cpu: cpu::Cpu
+    cpu: cpu::cpu::Cpu
 }
 
 impl N64 {
     pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>) -> N64 {
         let interconnect = interconnect::Interconnect::new(pif_rom, cart_rom);
-        let cpu = cpu::Cpu::new(interconnect);
+        let cpu = cpu::cpu::Cpu::new(interconnect);
 
         N64 {
             cpu: cpu,
