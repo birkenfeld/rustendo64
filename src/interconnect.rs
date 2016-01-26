@@ -4,7 +4,7 @@ use std::fmt;
 
 const PIF_ROM_SIZE: usize = 2048;
 
-const RAM_SIZE: usize = 4 * 1024 * 1024;
+const RAM_SIZE: usize = 8 * 1024 * 1024;
 
 #[derive(Default, Debug)]
 struct Rd {
@@ -172,8 +172,17 @@ impl Interconnect {
     }
 
     pub fn power_on_reset(&mut self) {
+        // use cpu::Instr;
+        // for i in 0..self.cart_rom.len()/4 {
+        //     let instr = Instr(BigEndian::read_u32(&self.cart_rom[4*i..]));
+        //     println!("{:10x}:   {:?}", 4*i, instr);
+        // }
+        // panic!("end");
         self.sp.reg_status |= 0x1;
-        self.pif_ram[(0x07fc - 0x7c0) / 4] = 0x00;
+        // CIC seed for CRC, not for all ROMs!
+        // fire demo: 00003f00
+        // ocarina: ....91..
+        self.pif_ram[(0x07e4 - 0x7c0) / 4] = 0x0002913f;
         // from cen64
         self.ri.reg_mode = 0xE;
         self.ri.reg_config = 0x40;
@@ -376,7 +385,7 @@ impl Interconnect {
     }
 
     pub fn write_word(&mut self, addr: u32, mut word: u32) -> Result<(), &'static str> {
-        if addr > (0x03ef_ffff - 0x03ef_ffff) && (addr < 0x0400_0000 || addr > 0x0400_1fff) {
+        if addr > 0x03ef_ffff && (addr < 0x0400_0000 || addr > 0x0400_1fff) {
             println!("W: {:#10x} -> {:#10x}", addr, word);
         }
         match addr {

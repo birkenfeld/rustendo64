@@ -39,7 +39,7 @@ macro_rules! bug {
 
 macro_rules! dprintln {
     ($cpu:expr, $($args:expr),+) => { if $cpu.tmp_d { println!($($args),+) } }
-    //($($args:expr),+) => { }
+    //($cpu:expr, $($args:expr),+) => { }
 }
 
 impl fmt::Debug for Cpu {
@@ -101,30 +101,27 @@ impl Cpu {
     pub fn run_instruction(&mut self) {
         self.tmp_i += 1;
         let pc = self.reg_pc;
-        if pc < 0xffff_ffff_a000_0000 {
-            self.tmp_d = true;
-        }
-        if pc == 0xffff_ffff_8000_0248 {
-            bug!(self, "Hit infinite loop");
+        if pc > 0xffff_ffff_8000_0000 {
+            //self.tmp_d = true;
         }
         let instr = Instr(self.read_word(pc));
         dprintln!(self, "op: {:#x}   {:?}", self.reg_pc & 0xffff_ffff, instr);
 
         match instr.opcode() {
             LUI   => {
-                dprintln!(self, "{} {} <- {:#x}",
-                          INDENT, REG_NAMES[instr.rt()], instr.imm_se() << 16);
-                self.write_gpr(instr.rt(), instr.imm_se() << 16);
+                let val = instr.imm_se() << 16;
+                dprintln!(self, "{} {} <- {:#x}", INDENT, REG_NAMES[instr.rt()], val);
+                self.write_gpr(instr.rt(), val);
             }
             LW    => {
                 let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
                 if addr & 0b11 != 0 {
                     bug!(self, "Unaligned address in LW: {:#x}", addr);
                 }
-                let word = self.read_word(addr);
-                dprintln!(self, "{} {} <- {:#x} = mem at: {:#x}",
+                let word = self.read_word(addr) as i32 as u64;
+                dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
                          INDENT, REG_NAMES[instr.rt()], word, addr);
-                self.write_gpr(instr.rt(), word as i32 as u64);
+                self.write_gpr(instr.rt(), word);
             }
             LWU   => {
                 let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
@@ -132,7 +129,7 @@ impl Cpu {
                     bug!(self, "Unaligned address in LWU: {:#x}", addr);
                 }
                 let word = self.read_word(addr);
-                dprintln!(self, "{} {} <- {:#x} = mem at: {:#x}",
+                dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
                           INDENT, REG_NAMES[instr.rt()], word, addr);
                 self.write_gpr(instr.rt(), word as u64);
             }
@@ -142,7 +139,7 @@ impl Cpu {
                     bug!(self, "Unaligned address in SW: {:#x}", addr);
                 }
                 let word = self.read_gpr(instr.rt());
-                dprintln!(self, "{}      {:#x} -> mem at: {:#x}",
+                dprintln!(self, "{}       {:#18x} -> mem @ {:#x}",
                           INDENT, word, addr);
                 self.write_word(addr, word as u32);
             }
@@ -154,6 +151,20 @@ impl Cpu {
             XORI  => self.arithi(&instr, |rs| rs ^ instr.imm()),
             SLTI  => self.arithi(&instr, |rs| ((rs as i64) < instr.imm_se() as i64) as u64),
             SLTIU => self.arithi(&instr, |rs| (rs < instr.imm_se()) as u64),
+            J     => {
+                self.reg_pc += 4;
+                let addr = (self.reg_pc & 0xffff_ffff_c000_000) | (instr.j_target() << 2);
+                self.run_instruction();  // delay slot
+                self.reg_pc = addr - 4;  // absolute jump
+            }
+            JAL   => {
+                let return_addr = self.reg_pc + 8;
+                self.write_gpr(31, return_addr);
+                self.reg_pc += 4;
+                let addr = (self.reg_pc & 0xffff_ffff_c000_000) | (instr.j_target() << 2);
+                self.run_instruction();  // delay slot
+                self.reg_pc = addr - 4;  // absolute jump
+            }
             BEQ   => self.branch(&instr, false, false, |cpu|
                                  cpu.read_gpr(instr.rs()) == cpu.read_gpr(instr.rt())),
             BEQL  => self.branch(&instr, true, false, |cpu|
@@ -216,20 +227,20 @@ impl Cpu {
                     self.reg_pc = addr - 4;  // absolute jump
                 }
                 // TODO: Overflow exception
-                ADD  => self.arithr(&instr, |rs, rt| rs.wrapping_add(rt)),
-                ADDU => self.arithr(&instr, |rs, rt| rs.wrapping_add(rt)),
+                ADD  => self.arithr(&instr, |rs, rt| (rs as i32).wrapping_add(rt as i32) as i32 as u64),
+                ADDU => self.arithr(&instr, |rs, rt| (rs as u32).wrapping_add(rt as u32) as i32 as u64),
                 // TODO: Overflow exception
-                SUB  => self.arithr(&instr, |rs, rt| rs.wrapping_sub(rt)),
-                SUBU => self.arithr(&instr, |rs, rt| rs.wrapping_sub(rt)),
+                SUB  => self.arithr(&instr, |rs, rt| (rs as i32).wrapping_sub(rt as i32) as i32 as u64),
+                SUBU => self.arithr(&instr, |rs, rt| (rs as u32).wrapping_sub(rt as u32) as i32 as u64),
                 AND  => self.arithr(&instr, |rs, rt| rs & rt),
                 OR   => self.arithr(&instr, |rs, rt| rs | rt),
                 XOR  => self.arithr(&instr, |rs, rt| rs ^ rt),
                 NOR  => self.arithr(&instr, |rs, rt| !(rs | rt)),
                 SLT  => self.arithr(&instr, |rs, rt| ((rs as i64) < rt as i64) as u64),
                 SLTU => self.arithr(&instr, |rs, rt| (rs < rt) as u64),
-                SRLV => self.arithr(&instr, |rs, rt| (rt >> (rs & 0b1111)) as i32 as u64),
-                SRAV => self.arithr(&instr, |rs, rt| (rt as i64 >> (rs & 0b1111)) as i32 as u64),
-                SLLV => self.arithr(&instr, |rs, rt| (rt << (rs & 0b1111)) as i32 as u64),
+                SRLV => self.arithr(&instr, |rs, rt| (rt as u32 >> (rs & 0b11111)) as i32 as u64),
+                SRAV => self.arithr(&instr, |rs, rt| (rt as i32 >> (rs & 0b11111)) as u64),
+                SLLV => self.arithr(&instr, |rs, rt| (rt << (rs & 0b11111)) as i32 as u64),
                 SRL  => self.ariths(&instr, |rt| (rt >> instr.sa()) as i32 as u64),
                 SRA  => self.ariths(&instr, |rt| (rt as i64 >> instr.sa()) as i32 as u64),
                 SLL  => if instr.sa() != 0 {
@@ -256,8 +267,7 @@ impl Cpu {
                 // DIV, DIVU
                 SYNC  => { }
                 _ => {
-                    bug!(self, "#UD at {:#x}: I {:#b} -- Op SPC -- Sub {:#08b}",
-                         self.reg_pc, instr.0, instr.special_op());
+                    bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
                 }
             },
             REGIMM => match instr.regimm_op() {
@@ -278,8 +288,7 @@ impl Cpu {
                 BLTZALL => self.branch(&instr, true, true, |cpu|
                                        (cpu.read_gpr(instr.rs()) >> 63) != 0),
                 _ => {
-                    bug!(self, "#UD at {:#x}: I {:#b} -- Op REGIMM -- Sub {:#08b}",
-                         self.reg_pc, instr.0, instr.regimm_op());
+                    bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
                 }
             },
             COP0 => {
@@ -289,17 +298,27 @@ impl Cpu {
                         dprintln!(self, "{} cp0[{}] <- {:#034b}", INDENT, instr.rd(), data);
                         self.cp0.write_reg(instr.rd(), data);
                     }
-                    // MF
+                    MF => {
+                        //self.cp0.read_reg()
+                    }
                     // ERET
                     _ => {
-                        bug!(self, "#UD at {:#x}: I {:#b} -- Op COP0 -- Sub {:#b}",
-                             self.reg_pc, instr.0, instr.base());
+                        bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
+                    }
+                }
+            },
+            COP1 => {
+                match instr.cop_op() {
+                    CF => {
+                        // TODO
+                    }
+                    _ => {
+                        bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
                     }
                 }
             },
             _ => {
-                bug!(self, "#UD at {:#x}: I {:#b} -- Op {:#08b}",
-                     self.reg_pc, instr.0, instr.opcode());
+                bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
             }
         }
 
@@ -311,7 +330,8 @@ impl Cpu {
         where F: Fn(u64) -> u64
     {
         let res = func(self.read_gpr(instr.rs()));
-        dprintln!(self, "{} {} <- {:#x}", INDENT, REG_NAMES[instr.rt()], res);
+        dprintln!(self, "{} {} :  {:#18x}", INDENT, REG_NAMES[instr.rs()], self.read_gpr(instr.rs()));
+        dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[instr.rt()], res);
         self.write_gpr(instr.rt(), res);
     }
 
@@ -320,7 +340,9 @@ impl Cpu {
         where F: Fn(u64, u64) -> u64
     {
         let res = func(self.read_gpr(instr.rs()), self.read_gpr(instr.rt()));
-        dprintln!(self, "{} {} <- {:#x}", INDENT, REG_NAMES[instr.rd()], res);
+        dprintln!(self, "{} {} :  {:#18x}", INDENT, REG_NAMES[instr.rs()], self.read_gpr(instr.rs()));
+        dprintln!(self, "{} {} :  {:#18x}", INDENT, REG_NAMES[instr.rt()], self.read_gpr(instr.rt()));
+        dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[instr.rd()], res);
         self.write_gpr(instr.rd(), res);
     }
 
@@ -329,7 +351,8 @@ impl Cpu {
         where F: Fn(u64) -> u64
     {
         let res = func(self.read_gpr(instr.rt()));
-        dprintln!(self, "{} {} <- {:#x}", INDENT, REG_NAMES[instr.rd()], res);
+        dprintln!(self, "{} {} :  {:#18x}", INDENT, REG_NAMES[instr.rt()], self.read_gpr(instr.rt()));
+        dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[instr.rd()], res);
         self.write_gpr(instr.rd(), res);
     }
 
