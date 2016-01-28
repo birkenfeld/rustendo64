@@ -3,6 +3,7 @@ use std::fmt;
 use super::instr::*;
 use super::cp0::Cp0;
 use interconnect;
+use util::mult_64_64;
 
 const NUM_GPR: usize = 32;
 
@@ -17,7 +18,6 @@ pub struct Cpu {
 
     reg_llbit: bool, // TODO: Enum type
 
-    reg_fcr0: u32,
     reg_fcr31: u32,
 
     cp0: Cp0,
@@ -73,7 +73,6 @@ impl Cpu {
 
             reg_llbit: false,
 
-            reg_fcr0: 0,
             reg_fcr31: 0,
 
             cp0: Cp0::default(),
@@ -101,8 +100,8 @@ impl Cpu {
     pub fn run_instruction(&mut self) {
         self.tmp_i += 1;
         let pc = self.reg_pc;
-        if pc > 0xffff_ffff_8000_0000 {
-            //self.tmp_d = true;
+        if pc > 0xffff_ffff_8000_3000 && pc < 0xffff_ffff_9000_0000 {
+            self.tmp_d = true;
         }
         let instr = Instr(self.read_word(pc));
         dprintln!(self, "op: {:#x}   {:?}", self.reg_pc & 0xffff_ffff, instr);
@@ -181,17 +180,84 @@ impl Cpu {
                                  let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
             BLEZL => self.branch(&instr, true, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
-            // LB, LBU, LH, LHU
+            // TODO: overflow exception
+            DADDI => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_se())),
+            DADDIU => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_se())),
+            LB    => {
+                // TODO: dedicated method?
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let word_addr = addr & !0b11;
+                let byte_offset = 0b11 - addr & 0b11;  // big endian
+                let word = self.read_word(word_addr);
+                let byte = word >> (8 * byte_offset) & 0xFF;
+                self.write_gpr(instr.rt(), byte as i8 as u64);
+            }
+            LBU   => {
+                // TODO: dedicated method?
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let word_addr = addr & !0b11;
+                let byte_offset = 0b11 - addr & 0b11;
+                let word = self.read_word(word_addr) as u64;
+                self.write_gpr(instr.rt(), word >> (8 * byte_offset) & 0xFF);
+            }
+            LH    => {
+                // TODO: dedicated method?
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                if addr & 0b1 != 0 {
+                    bug!(self, "Unaligned address in LH: {:#x}", addr);
+                }
+                let word_addr = addr & !0b1;
+                let hword_offset = 1 - addr & 0b1;
+                let word = self.read_word(word_addr);
+                let hword = word >> (16 * hword_offset) & 0xFFFF;
+                self.write_gpr(instr.rt(), hword as i16 as u64);
+            }
+            LHU   => {
+                // TODO: dedicated method?
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                if addr & 0b1 != 0 {
+                    bug!(self, "Unaligned address in LHU: {:#x}", addr);
+                }
+                let word_addr = addr & !0b1;
+                let hword_offset = 1 - addr & 0b1;
+                let word = self.read_word(word_addr) as u64;
+                self.write_gpr(instr.rt(), word >> (8 * hword_offset) & 0xFFFF);
+            }
             LD    => {
                 let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
                 if addr & 0b111 != 0 {
-                    bug!(self, "Unaligned address in SD: {:#x}", addr);
+                    bug!(self, "Unaligned address in LD: {:#x}", addr);
                 }
                 // TODO: Check endianness
                 let dword = (self.read_word(addr) as u64) << 32 | self.read_word(addr + 4) as u64;
                 self.write_gpr(instr.rt(), dword);
             }
-            // SB, SH
+            // LDL, LDR, LWL, LWR
+            SB    => {
+                // TODO: dedicated method?
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let word_addr = addr & !0b11;
+                let byte_offset = 0b11 - addr & 0b11;  // big endian
+                let byte = (self.read_gpr(instr.rt()) as u32 & 0xFF) << (8 * byte_offset);
+                let mask = !(0xFFu32 << (8 * byte_offset));
+                let mut word = self.read_word(word_addr);
+                word = (word & mask) | byte;
+                self.write_word(word_addr, word);
+            }
+            SH    => {
+                // TODO: dedicated method?
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                if addr & 0b1 != 0 {
+                    bug!(self, "Unaligned address in SH: {:#x}", addr);
+                }
+                let word_addr = addr & !0b11;
+                let hword_offset = 0b1 - addr & 0b1;  // big endian
+                let hword = (self.read_gpr(instr.rt()) as u32 & 0xFFFF) << (16 * hword_offset);
+                let mask = !(0xFFFFu32 << (16 * hword_offset));
+                let mut word = self.read_word(word_addr);
+                word = (word & mask) | hword;
+                self.write_word(word_addr, word);
+            }
             SD    => {
                 let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
                 if addr & 0b111 != 0 {
@@ -202,6 +268,8 @@ impl Cpu {
                 self.write_word(addr, (dword >> 32) as u32);
                 self.write_word(addr + 4, dword as u32);
             }
+            // SDL, SDR, SWL, SWR
+            // LL, LLD, SC
             CACHE => {
                 // TODO: Check if we need to implement this
             }
@@ -238,34 +306,91 @@ impl Cpu {
                 NOR  => self.arithr(&instr, |rs, rt| !(rs | rt)),
                 SLT  => self.arithr(&instr, |rs, rt| ((rs as i64) < rt as i64) as u64),
                 SLTU => self.arithr(&instr, |rs, rt| (rs < rt) as u64),
-                SRLV => self.arithr(&instr, |rs, rt| (rt as u32 >> (rs & 0b11111)) as i32 as u64),
-                SRAV => self.arithr(&instr, |rs, rt| (rt as i32 >> (rs & 0b11111)) as u64),
                 SLLV => self.arithr(&instr, |rs, rt| (rt << (rs & 0b11111)) as i32 as u64),
-                SRL  => self.ariths(&instr, |rt| (rt >> instr.sa()) as i32 as u64),
-                SRA  => self.ariths(&instr, |rt| (rt as i64 >> instr.sa()) as i32 as u64),
+                SRAV => self.arithr(&instr, |rs, rt| (rt as i32 >> (rs & 0b11111)) as u64),
+                SRLV => self.arithr(&instr, |rs, rt| (rt as u32 >> (rs & 0b11111)) as i32 as u64),
                 SLL  => if instr.sa() != 0 {
                     self.ariths(&instr, |rt| (rt << instr.sa()) as i32 as u64)
                 },
-                MFHI => { let val = self.reg_hi; self.write_gpr(instr.rd(), val); }
-                MFLO => { let val = self.reg_lo; self.write_gpr(instr.rd(), val); }
-                MTHI => { let val = self.read_gpr(instr.rs()); self.reg_hi = val; }
-                MTLO => { let val = self.read_gpr(instr.rs()); self.reg_lo = val; }
-                MULT => {
+                SRA  => self.ariths(&instr, |rt| (rt as i64 >> instr.sa()) as i32 as u64),
+                SRL  => self.ariths(&instr, |rt| (rt >> instr.sa()) as i32 as u64),
+                // TODO: Overflow exception
+                DADD   => self.arithr(&instr, |rs, rt| rs.wrapping_add(rt)),
+                DADDU  => self.arithr(&instr, |rs, rt| rs.wrapping_add(rt)),
+                // TODO: Overflow exception
+                DSUB   => self.arithr(&instr, |rs, rt| rs.wrapping_sub(rt)),
+                DSUBU  => self.arithr(&instr, |rs, rt| rs.wrapping_sub(rt)),
+                DSLLV  => self.arithr(&instr, |rs, rt| rt << (rs & 0b111111)),
+                DSRAV  => self.arithr(&instr, |rs, rt| (rt as i64 >> (rs & 0b111111)) as u64),
+                DSRLV  => self.arithr(&instr, |rs, rt| rt >> (rs & 0b111111)),
+                DSLL   => self.ariths(&instr, |rt| rt << instr.sa()),
+                DSLL32 => self.ariths(&instr, |rt| rt << (instr.sa() + 32)),
+                DSRA   => self.ariths(&instr, |rt| (rt as i64 >> instr.sa()) as u64),
+                DSRA32 => self.ariths(&instr, |rt| (rt as i64 >> (instr.sa() + 32)) as u64),
+                DSRL   => self.ariths(&instr, |rt| rt >> instr.sa()),
+                DSRL32 => self.ariths(&instr, |rt| rt >> (instr.sa() + 32)),
+                MFHI   => { let val = self.reg_hi; self.write_gpr(instr.rd(), val); }
+                MFLO   => { let val = self.reg_lo; self.write_gpr(instr.rd(), val); }
+                MTHI   => { let val = self.read_gpr(instr.rs()); self.reg_hi = val; }
+                MTLO   => { let val = self.read_gpr(instr.rs()); self.reg_lo = val; }
+                MULT   => {
                     let mut mult_result = (self.read_gpr(instr.rs()) as i32) as i64 *
                         (self.read_gpr(instr.rt()) as i32) as i64;
                     self.reg_lo = mult_result as i32 as u64;
                     mult_result >>= 32;
                     self.reg_hi = mult_result as i32 as u64;
                 }
-                MULTU => {
+                MULTU  => {
                     let mut mult_result = (self.read_gpr(instr.rs()) & 0xffff_ffff) *
                         (self.read_gpr(instr.rt()) & 0xffff_ffff);
                     self.reg_lo = mult_result as i32 as u64;
                     mult_result >>= 32;
                     self.reg_hi = mult_result as i32 as u64;
                 }
-                // DIV, DIVU
+                DIV    => {
+                    let a = self.read_gpr(instr.rs()) as i32;
+                    let b = self.read_gpr(instr.rt()) as i32;
+                    self.reg_lo = (a / b) as u64;
+                    self.reg_hi = (a % b) as u64;
+                }
+                DIVU   => {
+                    let a = self.read_gpr(instr.rs()) as u32;
+                    let b = self.read_gpr(instr.rt()) as u32;
+                    self.reg_lo = (a / b) as u64;
+                    self.reg_hi = (a % b) as u64;
+                }
+                DMULT  => {
+                    let mut a = self.read_gpr(instr.rs());
+                    let mut b = self.read_gpr(instr.rt());
+                    let neg = (a & 0x8000_0000_0000_0000 != 0) ^ (b & 0x8000_0000_0000_0000 != 0);
+                    a &= 0x7FFF_FFFF_FFFF_FFFF;
+                    b &= 0x7FFF_FFFF_FFFF_FFFF;
+                    let (rl, rh) = mult_64_64(self.read_gpr(instr.rs()),
+                                              self.read_gpr(instr.rt()));
+                    self.reg_lo = rl;
+                    self.reg_hi = rh | (neg as u64) << 63;
+                }
+                DMULTU => {
+                    let (rl, rh) = mult_64_64(self.read_gpr(instr.rs()),
+                                              self.read_gpr(instr.rt()));
+                    self.reg_lo = rl;
+                    self.reg_hi = rh;
+                }
+                DDIV   => {
+                    let a = self.read_gpr(instr.rs()) as i64;
+                    let b = self.read_gpr(instr.rt()) as i64;
+                    self.reg_lo = (a / b) as u64;
+                    self.reg_hi = (a % b) as u64;
+                }
+                DDIVU  => {
+                    let a = self.read_gpr(instr.rs());
+                    let b = self.read_gpr(instr.rt());
+                    self.reg_lo = a / b;
+                    self.reg_hi = a % b;
+                }
+                // TEQ, TGE, TGEU, TLT, TLTU, TNE
                 SYNC  => { }
+                // SYSCALL
                 _ => {
                     bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
                 }
@@ -287,31 +412,60 @@ impl Cpu {
                                        (cpu.read_gpr(instr.rs()) >> 63) != 0),
                 BLTZALL => self.branch(&instr, true, true, |cpu|
                                        (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                // TEQI, TGEI, TGEIU, TLTI, TLTIU, TNEI
                 _ => {
                     bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
                 }
             },
-            COP0 => {
-                match instr.cop_op() {
-                    MT => {
-                        let data = self.read_gpr(instr.rt());
-                        dprintln!(self, "{} cp0[{}] <- {:#034b}", INDENT, instr.rd(), data);
-                        self.cp0.write_reg(instr.rd(), data);
-                    }
-                    MF => {
-                        //self.cp0.read_reg()
-                    }
+            COP0 => match instr.cop_op() {
+                MF => {
+                    //self.cp0.read_reg()
+                }
+                MT => {
+                    let data = self.read_gpr(instr.rt());
+                    dprintln!(self, "{} cp0[{}] <- {:#034b}", INDENT, instr.rd(), data);
+                    self.cp0.write_reg(instr.rd(), data);
+                }
+                // DMF, DMT
+                // BC...
+                CO => match instr.special_op() {
                     // ERET
+                    TLBP => { }
+                    TLBR => { }
+                    TLBWI => { }
+                    TLBWR => { }
                     _ => {
                         bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
                     }
+                },
+                _ => {
+                    bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
                 }
             },
-            COP1 => {
-                match instr.cop_op() {
-                    CF => {
-                        // TODO
+            COP1 => match instr.cop_op() {
+                // MF, MT
+                // DMF, DMT
+                CF => {
+                    let data = match instr.fs() {
+                        31 => self.reg_fcr31,
+                        0  => 0xB << 8 | 0,  // TODO: constant
+                        _  => { bug!(self, "#RG at {:#x}: invalid read fp control reg {}",
+                                     self.reg_pc, instr.fs()); },
+                    };
+                    self.write_gpr(instr.rt(), data as u64);
+                }
+                CT => {
+                    let data = self.read_gpr(instr.rt());
+                    if instr.fs() == 31 {
+                        self.reg_fcr31 = data as u32;
+                    } else {
+                        bug!(self, "#RG at {:#x}: invalid write fp control reg {}",
+                             self.reg_pc, instr.fs());
                     }
+                }
+                // BC...
+                _  => match instr.fp_op() {
+                    // all the special fp ops
                     _ => {
                         bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
                     }
@@ -413,14 +567,17 @@ impl Cpu {
         }
     }
 
+    fn read_gpr(&self, index: usize) -> u64 {
+        // Reg 0 is always 0 since we never write it
+        self.reg_gpr[index]
+    }
+
     fn write_gpr(&mut self, index: usize, value: u64) {
         if index != 0 {
             self.reg_gpr[index] = value;
         }
     }
 
-    fn read_gpr(&self, index: usize) -> u64 {
-        // Reg 0 is always 0 since we never write it
-        self.reg_gpr[index]
-    }
+    // fn read_fpr(&self, index: usize, fmt: u32) -> {
+    // }
 }

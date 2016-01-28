@@ -59,6 +59,7 @@ pub const SWL:     u32 = 0b101010;
 pub const SWR:     u32 = 0b101110;
 pub const LL:      u32 = 0b110000;
 pub const LLD:     u32 = 0b110100;
+pub const SC:      u32 = 0b111000;
 pub const CACHE:   u32 = 0b101111;
 pub const SPECIAL: u32 = 0b000000;
 pub const REGIMM:  u32 = 0b000001;
@@ -198,6 +199,12 @@ pub const FCLT:    u32 = 0b111100;
 pub const FCNGE:   u32 = 0b111101;
 pub const FCLE:    u32 = 0b111110;
 pub const FCNGT:   u32 = 0b111111;
+
+// FP formats
+pub const FMT_S:   u32 = 0b010000;
+pub const FMT_D:   u32 = 0b010001;
+pub const FMT_W:   u32 = 0b010100;
+pub const FMT_L:   u32 = 0b010101;
 
 
 #[derive(Clone, Copy)]
@@ -430,39 +437,40 @@ impl fmt::Debug for Instr {
             SWR     => ins3m!("swr", rt, ims, base),
             LL      => ins3m!("ll", rt, ims, base),
             LLD     => ins3m!("lld", rt, ims, base),
+            SC      => ins3m!("sc", rt, ims, base),
             CACHE   => ins3m!("cache", cop, ims, base),
             SPECIAL => match self.special_op() {
                 JR      => ins1!("jr", rs),
                 JALR    => if self.rd() == 31 { ins1!("jalr", rs) } else { ins2!("jalr", rd, rs) },
-                AND     => ins3!("and", rd, rs, rt),
-                OR      => if self.rt() == 0 { ins2!("move", rd, rs) } else { ins3!("or", rd, rs, rt) },
-                XOR     => ins3!("xor", rd, rs, rt),
-                NOR     => ins3!("nor", rd, rs, rt),
                 ADD     => ins3!("add", rd, rs, rt),
                 ADDU    => ins3!("addu", rd, rs, rt),
                 SUB     => ins3!("sub", rd, rs, rt),
                 SUBU    => ins3!("subu", rd, rs, rt),
-                SRLV    => ins3!("srlv", rd, rt, rs),
-                SRAV    => ins3!("srav", rd, rt, rs),
-                SLLV    => ins3!("sllv", rd, rt, rs),
+                AND     => ins3!("and", rd, rs, rt),
+                OR      => if self.rt() == 0 { ins2!("move", rd, rs) } else { ins3!("or", rd, rs, rt) },
+                XOR     => ins3!("xor", rd, rs, rt),
+                NOR     => ins3!("nor", rd, rs, rt),
                 SLT     => ins3!("slt", rd, rs, rt),
                 SLTU    => ins3!("sltu", rd, rs, rt),
-                SRL     => ins3!("srl", rd, rt, sa),
-                SRA     => ins3!("sra", rd, rt, sa),
+                SLLV    => ins3!("sllv", rd, rt, rs),
+                SRAV    => ins3!("srav", rd, rt, rs),
+                SRLV    => ins3!("srlv", rd, rt, rs),
                 SLL     => if self.sa() == 0 { write!(f, "nop") } else { ins3!("sll", rd, rt, sa) },
+                SRA     => ins3!("sra", rd, rt, sa),
+                SRL     => ins3!("srl", rd, rt, sa),
                 DADD    => ins3!("dadd", rd, rs, rt),
                 DADDU   => ins3!("daddu", rd, rs, rt),
-                DSLL    => ins3!("dsll", rd, rt, sa),
-                DSLLV   => ins3!("dsllv", rd, rt, rs),
-                DSLL32  => ins3!("dsll", rd, rt, sa32),
-                DSRA    => ins3!("dsra", rd, rt, sa),
-                DSRAV   => ins3!("dsrav", rd, rt, rs),
-                DSRA32  => ins3!("dsra", rd, rt, sa32),
-                DSRL    => ins3!("dsrl", rd, rt, sa),
-                DSRLV   => ins3!("dsrlv", rd, rt, rs),
-                DSRL32  => ins3!("dsrl", rd, rt, sa32),
                 DSUB    => ins3!("sub", rd, rs, rt),
                 DSUBU   => ins3!("subu", rd, rs, rt),
+                DSLLV   => ins3!("dsllv", rd, rt, rs),
+                DSRAV   => ins3!("dsrav", rd, rt, rs),
+                DSRLV   => ins3!("dsrlv", rd, rt, rs),
+                DSLL    => ins3!("dsll", rd, rt, sa),
+                DSLL32  => ins3!("dsll", rd, rt, sa32),
+                DSRA    => ins3!("dsra", rd, rt, sa),
+                DSRA32  => ins3!("dsra", rd, rt, sa32),
+                DSRL    => ins3!("dsrl", rd, rt, sa),
+                DSRL32  => ins3!("dsrl", rd, rt, sa32),
                 MFHI    => ins1!("mfhi", rd),
                 MFLO    => ins1!("mflo", rd),
                 MULT    => ins2!("mult", rs, rt),
