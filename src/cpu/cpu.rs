@@ -1,6 +1,8 @@
 use std::fmt;
+use std::collections::VecDeque;
 
 use super::instruction::*;
+use super::exception::Exception;
 use super::cp0::Cp0;
 use interconnect;
 use util::mult_64_64;
@@ -8,10 +10,14 @@ use util::mult_64_64;
 const NUM_GPR: usize = 32;
 
 pub struct Cpu {
+    instr_counter: u32,
+    debug_instrs: bool,
+
     reg_gpr: [u64; NUM_GPR],
     reg_fpr: [f64; NUM_GPR],
 
-    reg_pc: u64,
+    reg_pc:  u64,
+    last_pc: u64,
 
     reg_hi: u64,
     reg_lo: u64,
@@ -20,11 +26,10 @@ pub struct Cpu {
 
     reg_fcr31: u32,
 
+    in_branch_delay: bool,
+    exc_pending: VecDeque<Exception>,
+
     cp0: Cp0,
-
-    tmp_i: u32,
-    tmp_d: bool,
-
     interconnect: interconnect::Interconnect
 }
 
@@ -32,15 +37,16 @@ macro_rules! bug {
     ($cpu:expr, $($args:expr),+) => {
         //println!("{:#?}", $cpu.interconnect);
         println!("{:?}", $cpu);
-        println!("#instrs executed: {}", $cpu.tmp_i);
+        println!("#instrs executed: {}", $cpu.instr_counter);
         panic!($($args),+);
     }
 }
 
 macro_rules! dprintln {
-    ($cpu:expr, $($args:expr),+) => { if $cpu.tmp_d { println!($($args),+) } }
+    ($cpu:expr, $($args:expr),+) => { if $cpu.debug_instrs { println!($($args),+) } }
     //($cpu:expr, $($args:expr),+) => { }
 }
+
 
 impl fmt::Debug for Cpu {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -66,7 +72,8 @@ impl Cpu {
             reg_gpr: [0; NUM_GPR],
             reg_fpr: [0.0; NUM_GPR],
 
-            reg_pc: 0,
+            reg_pc:  0,
+            last_pc: 0,
 
             reg_hi: 0,
             reg_lo: 0,
@@ -77,9 +84,13 @@ impl Cpu {
 
             cp0: Cp0::default(),
 
-            tmp_i: 0,
-            tmp_d: false,
-            interconnect: interconnect
+            instr_counter: 0,
+            debug_instrs: false,
+
+            in_branch_delay: false,
+            exc_pending: VecDeque::new(),
+
+            interconnect: interconnect,
         }
     }
 
@@ -97,12 +108,37 @@ impl Cpu {
         }
     }
 
+    pub fn run_branch_delay_slot(&mut self) {
+        self.in_branch_delay = true;
+        self.run_instruction();
+        self.in_branch_delay = false;
+    }
+
     pub fn run_instruction(&mut self) {
-        self.tmp_i += 1;
-        let pc = self.reg_pc;
-        if pc > 0xffff_ffff_8000_3000 && pc < 0xffff_ffff_9000_0000 {
-            self.tmp_d = true;
+        use std::ascii::AsciiExt;
+        // Can we start exception processing?
+        if !self.cp0.reg_status.exception_level {
+            if let Some(exc) = self.exc_pending.pop_front() {
+                println!("processing exception: {:?}", exc);
+                self.cp0.reg_epc = self.last_pc;
+                if self.in_branch_delay {
+                    self.cp0.reg_epc -= 4;
+                }
+                self.cp0.reg_cause.exc_in_delay_slot = self.in_branch_delay;
+                self.cp0.reg_cause.coprocessor = exc.coprocessor();
+                self.cp0.reg_cause.exception_code = exc.code();
+                self.cp0.reg_cause.interrupts_pending = exc.interrupt_mask();
+                self.cp0.reg_status.exception_level = true;
+                self.reg_pc = exc.vector_location(self.cp0.reg_status.is_bootstrap());
+            }
         }
+
+        self.instr_counter += 1;
+        self.last_pc = self.reg_pc;
+        let pc = self.reg_pc;
+        // if pc > 0xffff_ffff_8000_5000 && pc < 0xffff_ffff_9000_0000 {
+        //      self.debug_instrs = true;
+        // }
         let instr = Instruction(self.read_word(pc));
         dprintln!(self, "op: {:#x}   {:?}", self.reg_pc & 0xffff_ffff, instr);
 
@@ -151,18 +187,12 @@ impl Cpu {
             SLTI  => self.arithi(&instr, |rs| ((rs as i64) < instr.imm_sign_extended() as i64) as u64),
             SLTIU => self.arithi(&instr, |rs| (rs < instr.imm_sign_extended()) as u64),
             J     => {
-                self.reg_pc += 4;
-                let addr = (self.reg_pc & 0xffff_ffff_c000_000) | (instr.j_target() << 2);
-                self.run_instruction();  // delay slot
-                self.reg_pc = addr - 4;  // absolute jump
+                let addr = ((self.reg_pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
+                self.jump(addr, 0);
             }
             JAL   => {
-                let return_addr = self.reg_pc + 8;
-                self.write_gpr(31, return_addr);
-                self.reg_pc += 4;
-                let addr = (self.reg_pc & 0xffff_ffff_c000_000) | (instr.j_target() << 2);
-                self.run_instruction();  // delay slot
-                self.reg_pc = addr - 4;  // absolute jump
+                let addr = ((self.reg_pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
+                self.jump(addr, 31);
             }
             BEQ   => self.branch(&instr, false, false, |cpu|
                                  cpu.read_gpr(instr.rs()) == cpu.read_gpr(instr.rt())),
@@ -187,18 +217,23 @@ impl Cpu {
                 // TODO: dedicated method?
                 let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 let word_addr = addr & !0b11;
-                let byte_offset = 0b11 - addr & 0b11;  // big endian
+                let byte_offset = 0b11 - (addr & 0b11);  // big endian
                 let word = self.read_word(word_addr);
-                let byte = word >> (8 * byte_offset) & 0xFF;
+                let byte = (word >> (8 * byte_offset)) & 0xFF;
+                dprintln!(self, "{} {} <- {:#18x}({:#4x}) :  mem @ {:#x}",
+                         INDENT, REG_NAMES[instr.rt()], word, byte, addr);
                 self.write_gpr(instr.rt(), byte as i8 as u64);
             }
             LBU   => {
                 // TODO: dedicated method?
                 let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 let word_addr = addr & !0b11;
-                let byte_offset = 0b11 - addr & 0b11;
+                let byte_offset = 0b11 - (addr & 0b11);
                 let word = self.read_word(word_addr) as u64;
-                self.write_gpr(instr.rt(), word >> (8 * byte_offset) & 0xFF);
+                let byte = (word >> (8 * byte_offset)) & 0xFF;
+                dprintln!(self, "{} {} <- {:#18x}({:#4x}) :  mem @ {:#x}",
+                         INDENT, REG_NAMES[instr.rt()], word, byte, addr);
+                self.write_gpr(instr.rt(), byte);
             }
             LH    => {
                 // TODO: dedicated method?
@@ -207,9 +242,11 @@ impl Cpu {
                     bug!(self, "Unaligned address in LH: {:#x}", addr);
                 }
                 let word_addr = addr & !0b1;
-                let hword_offset = 1 - addr & 0b1;
+                let hword_offset = 0b1 - ((addr & 0b10) >> 1);  // big endian
                 let word = self.read_word(word_addr);
-                let hword = word >> (16 * hword_offset) & 0xFFFF;
+                let hword = (word >> (16 * hword_offset)) & 0xFFFF;
+                dprintln!(self, "{} {} <- {:#18x}({:#6x}) :  mem @ {:#x}",
+                         INDENT, REG_NAMES[instr.rt()], word, hword, addr);
                 self.write_gpr(instr.rt(), hword as i16 as u64);
             }
             LHU   => {
@@ -219,17 +256,21 @@ impl Cpu {
                     bug!(self, "Unaligned address in LHU: {:#x}", addr);
                 }
                 let word_addr = addr & !0b1;
-                let hword_offset = 1 - addr & 0b1;
+                let hword_offset = 0b1 - ((addr & 0b10) >> 1);  // big endian
                 let word = self.read_word(word_addr) as u64;
-                self.write_gpr(instr.rt(), word >> (8 * hword_offset) & 0xFFFF);
+                let hword = (word >> (16 * hword_offset)) & 0xFFFF;
+                dprintln!(self, "{} {} <- {:#18x}({:#6x}) :  mem @ {:#x}",
+                         INDENT, REG_NAMES[instr.rt()], word, hword, addr);
+                self.write_gpr(instr.rt(), hword);
             }
             LD    => {
                 let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 if addr & 0b111 != 0 {
                     bug!(self, "Unaligned address in LD: {:#x}", addr);
                 }
-                // TODO: Check endianness
                 let dword = (self.read_word(addr) as u64) << 32 | self.read_word(addr + 4) as u64;
+                dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
+                         INDENT, REG_NAMES[instr.rt()], dword, addr);
                 self.write_gpr(instr.rt(), dword);
             }
             // LDL, LDR, LWL, LWR
@@ -237,11 +278,13 @@ impl Cpu {
                 // TODO: dedicated method?
                 let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 let word_addr = addr & !0b11;
-                let byte_offset = 0b11 - addr & 0b11;  // big endian
+                let byte_offset = 0b11 - (addr & 0b11);  // big endian
                 let byte = (self.read_gpr(instr.rt()) as u32 & 0xFF) << (8 * byte_offset);
                 let mask = !(0xFFu32 << (8 * byte_offset));
                 let mut word = self.read_word(word_addr);
                 word = (word & mask) | byte;
+                dprintln!(self, "{}       {:#18x} -> mem @ {:#x}",
+                          INDENT, word, word_addr);
                 self.write_word(word_addr, word);
             }
             SH    => {
@@ -251,11 +294,13 @@ impl Cpu {
                     bug!(self, "Unaligned address in SH: {:#x}", addr);
                 }
                 let word_addr = addr & !0b11;
-                let hword_offset = 0b1 - addr & 0b1;  // big endian
+                let hword_offset = 0b1 - ((addr & 0b10) >> 1);  // big endian
                 let hword = (self.read_gpr(instr.rt()) as u32 & 0xFFFF) << (16 * hword_offset);
                 let mask = !(0xFFFFu32 << (16 * hword_offset));
                 let mut word = self.read_word(word_addr);
                 word = (word & mask) | hword;
+                dprintln!(self, "{}       {:#18x} -> mem @ {:#x}",
+                          INDENT, word, word_addr);
                 self.write_word(word_addr, word);
             }
             SD    => {
@@ -264,7 +309,8 @@ impl Cpu {
                     bug!(self, "Unaligned address in SD: {:#x}", addr);
                 }
                 let dword = self.read_gpr(instr.rt());
-                // TODO: Check endianness
+                dprintln!(self, "{}       {:#18x} -> mem @ {:#x}",
+                          INDENT, dword, addr);
                 self.write_word(addr, (dword >> 32) as u32);
                 self.write_word(addr + 4, dword as u32);
             }
@@ -274,26 +320,8 @@ impl Cpu {
                 // TODO: Check if we need to implement this
             }
             SPECIAL => match instr.special_op() {
-                JR => {
-                    let addr = self.read_gpr(instr.rs());
-                    if addr & 0b11 != 0 {
-                        bug!(self, "Unaligned address in JR: {:#x}", addr);
-                    }
-                    self.reg_pc += 4;
-                    self.run_instruction();
-                    self.reg_pc = addr - 4;  // absolute jump
-                }
-                JALR => {
-                    let addr = self.read_gpr(instr.rs());
-                    if addr & 0b11 != 0 {
-                        bug!(self, "Unaligned address in JALR: {:#x}", addr);
-                    }
-                    let return_addr = self.reg_pc + 8;
-                    self.write_gpr(instr.rd(), return_addr);  // usually rd = 31
-                    self.reg_pc += 4;
-                    self.run_instruction();
-                    self.reg_pc = addr - 4;  // absolute jump
-                }
+                JR   => { let addr = self.read_gpr(instr.rs()); self.jump(addr, 0); }
+                JALR => { let addr = self.read_gpr(instr.rs()); self.jump(addr, instr.rd()); }
                 // TODO: Overflow exception
                 ADD  => self.arithr(&instr, |rs, rt| (rs as i32).wrapping_add(rt as i32) as i32 as u64),
                 ADDU => self.arithr(&instr, |rs, rt| (rs as u32).wrapping_add(rt as u32) as i32 as u64),
@@ -312,8 +340,8 @@ impl Cpu {
                 SLL  => if instr.sa() != 0 {
                     self.ariths(&instr, |rt| (rt << instr.sa()) as i32 as u64)
                 },
-                SRA  => self.ariths(&instr, |rt| (rt as i64 >> instr.sa()) as i32 as u64),
-                SRL  => self.ariths(&instr, |rt| (rt >> instr.sa()) as i32 as u64),
+                SRA  => self.ariths(&instr, |rt| (rt as i32 >> instr.sa()) as i32 as u64),
+                SRL  => self.ariths(&instr, |rt| (rt as u32 >> instr.sa()) as i32 as u64),
                 // TODO: Overflow exception
                 DADD   => self.arithr(&instr, |rs, rt| rs.wrapping_add(rt)),
                 DADDU  => self.arithr(&instr, |rs, rt| rs.wrapping_add(rt)),
@@ -392,7 +420,7 @@ impl Cpu {
                 SYNC  => { }
                 // SYSCALL
                 _ => {
-                    bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
+                    bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr);
                 }
             },
             REGIMM => match instr.regimm_op() {
@@ -414,32 +442,49 @@ impl Cpu {
                                        (cpu.read_gpr(instr.rs()) >> 63) != 0),
                 // TEQI, TGEI, TGEIU, TLTI, TLTIU, TNEI
                 _ => {
-                    bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
+                    bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr);
                 }
             },
             COP0 => match instr.cop_op() {
                 MF => {
-                    //self.cp0.read_reg()
+                    let data = self.cp0.read_reg(instr.rd());
+                    dprintln!(self, "{} cp0[{:2}] :  {:#066b}", INDENT, instr.rd(), data);
+                    self.write_gpr(instr.rt(), data);
                 }
                 MT => {
                     let data = self.read_gpr(instr.rt());
-                    dprintln!(self, "{} cp0[{}] <- {:#034b}", INDENT, instr.rd(), data);
+                    dprintln!(self, "{} cp0[{:2}] <- {:#066b}", INDENT, instr.rd(), data);
                     self.cp0.write_reg(instr.rd(), data);
                 }
                 // DMF, DMT
                 // BC...
                 CO => match instr.special_op() {
-                    // ERET
-                    TLBP => { }
-                    TLBR => { }
+                    ERET  => {
+                        self.reg_llbit = false;
+                        if self.cp0.reg_status.error_level {
+                            dprintln!(self, "{} return from errorlevel to {:#x}",
+                                      INDENT, self.cp0.reg_error_epc);
+                            self.reg_pc = self.cp0.reg_error_epc - 4;
+                            self.cp0.reg_status.error_level = false;
+                        } else if self.cp0.reg_status.exception_level {
+                            dprintln!(self, "{} return from exception to {:#x}",
+                                      INDENT, self.cp0.reg_epc);
+                            self.reg_pc = self.cp0.reg_epc - 4;
+                            self.cp0.reg_status.exception_level = false;
+                        } else {
+                            bug!(self, "ERET without error/exception bit set");
+                        }
+                    }
+                    TLBP  => { }
+                    TLBR  => { }
                     TLBWI => { }
                     TLBWR => { }
                     _ => {
-                        bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
+                        bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr);
                     }
                 },
                 _ => {
-                    bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
+                    bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr);
                 }
             },
             COP1 => match instr.cop_op() {
@@ -449,8 +494,7 @@ impl Cpu {
                     let data = match instr.fs() {
                         31 => self.reg_fcr31,
                         0  => 0xB << 8 | 0,  // TODO: constant
-                        _  => { bug!(self, "#RG at {:#x}: invalid read fp control reg {}",
-                                     self.reg_pc, instr.fs()); },
+                        _  => { bug!(self, "#RG: invalid read fp control reg {}", instr.fs()); },
                     };
                     self.write_gpr(instr.rt(), data as u64);
                 }
@@ -459,20 +503,19 @@ impl Cpu {
                     if instr.fs() == 31 {
                         self.reg_fcr31 = data as u32;
                     } else {
-                        bug!(self, "#RG at {:#x}: invalid write fp control reg {}",
-                             self.reg_pc, instr.fs());
+                        bug!(self, "#RG: invalid write fp control reg {}", instr.fs());
                     }
                 }
                 // BC...
                 _  => match instr.fp_op() {
                     // all the special fp ops
                     _ => {
-                        bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
+                        bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr);
                     }
                 }
             },
             _ => {
-                bug!(self, "#UD at {:#x}: I {:#b} -- {:?}", self.reg_pc, instr.0, instr);
+                bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr);
             }
         }
 
@@ -511,9 +554,27 @@ impl Cpu {
     }
 
     #[inline]
+    fn jump(&mut self, addr: u64, link_reg: usize) {
+        if addr & 0b11 != 0 {
+            bug!(self, "Unaligned address in jump: {:#x}", addr);
+        }
+        if link_reg > 0 {
+            let return_addr = self.reg_pc + 8;
+            self.write_gpr(link_reg, return_addr);
+            dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[link_reg], return_addr);
+        }
+        self.reg_pc += 4;
+        self.run_branch_delay_slot();
+        self.reg_pc = addr - 4;  // compensate for += 4 at the end of run_instruction
+    }
+
+    #[inline]
     fn branch<P>(&mut self, instr: &Instruction, likely: bool, link: bool, mut predicate: P)
         where P: FnMut(&mut Self) -> bool
     {
+        // Offset is supposed to be relative to the delay slot, but reg_pc points to
+        // the branch instruction.  This is correct since we add 4 to reg_pc at the
+        // end of the run_instruction() function.
         let addr = (instr.imm_sign_extended() << 2).wrapping_add(self.reg_pc);
         let take = predicate(self);
         if link {
@@ -525,7 +586,7 @@ impl Cpu {
         // another branch?)
         self.reg_pc += 4;
         if take || !likely {
-            self.run_instruction();
+            self.run_branch_delay_slot();
             if take {
                 self.reg_pc = addr;
             } else {

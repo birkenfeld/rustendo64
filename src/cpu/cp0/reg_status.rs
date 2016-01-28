@@ -31,10 +31,10 @@ pub struct RegStatus {
     mode: Mode,
 
     // ERL
-    error_level: bool,
+    pub error_level: bool,
 
     // EXL
-    exception_level: bool,
+    pub exception_level: bool,
 
     // IE
     interrupts_enabled: bool
@@ -69,6 +69,40 @@ impl From<u32> for RegStatus {
     }
 }
 
+impl RegStatus {
+    pub fn power_on_reset(&mut self) {
+        self.error_level = true;
+        self.diagnostic_status.soft_reset_or_nmi_occurred = false;
+        self.low_power = false;
+    }
+
+    pub fn to_u32(&self) -> u32 {
+        (self.coprocessor_usability[0] as u32) << 28 |
+        (self.coprocessor_usability[1] as u32) << 29 |
+        (self.coprocessor_usability[2] as u32) << 30 |
+        (self.coprocessor_usability[3] as u32) << 31 |
+        (self.low_power as u32) << 27 |
+        (self.additional_fp_regs as u32) << 26 |
+        (self.reverse_endian as u32) << 25 |
+        (self.diagnostic_status.instruction_trace_support as u32) << 24 |
+        (self.diagnostic_status.tlb_shutdown as u32) << 21 |
+        (self.diagnostic_status.soft_reset_or_nmi_occurred as u32) << 20 |
+        (self.diagnostic_status.condition_bit as u32) << 18 |
+        self.interrupt_mask.to_u32() |
+        (self.kernel_mode_64bit_addressing as u32) << 7 |
+        (self.supervisor_mode_64bit_addressing as u32) << 6 |
+        (self.user_mode_64bit_addressing as u32) << 5 |
+        self.mode.to_u32() |
+        (self.error_level as u32) << 2 |
+        (self.exception_level as u32) << 1 |
+        (self.interrupts_enabled as u32)
+    }
+
+    pub fn is_bootstrap(&self) -> bool {
+        self.diagnostic_status.exception_vector_location == ExceptionVectorLocation::Bootstrap
+    }
+}
+
 #[derive(Debug, Default)]
 struct DiagnosticStatus {
     // ITS
@@ -76,7 +110,7 @@ struct DiagnosticStatus {
 
     // BEV
     // TODO: Better name?
-    tlb_general_exception_vector_location: TLBGeneralExceptionVectorLocation,
+    exception_vector_location: ExceptionVectorLocation,
 
     // TS
     tlb_shutdown: bool,
@@ -93,7 +127,7 @@ impl From<u32> for DiagnosticStatus {
         DiagnosticStatus {
             instruction_trace_support:  (value & (1 << 24)) != 0,
 
-            tlb_general_exception_vector_location: value.into(),
+            exception_vector_location:  value.into(),
 
             tlb_shutdown:               (value & (1 << 21)) != 0,
             soft_reset_or_nmi_occurred: (value & (1 << 20)) != 0,
@@ -102,39 +136,38 @@ impl From<u32> for DiagnosticStatus {
     }
 }
 
-// TODO: Better name?
-#[derive(Debug)]
-enum TLBGeneralExceptionVectorLocation {
+#[derive(Debug, PartialEq)]
+pub enum ExceptionVectorLocation {
     Normal,
     Bootstrap
 }
 
-impl Default for TLBGeneralExceptionVectorLocation {
+impl Default for ExceptionVectorLocation {
     fn default() -> Self {
-        TLBGeneralExceptionVectorLocation::Normal
+        ExceptionVectorLocation::Normal
     }
 }
 
-impl From<u32> for TLBGeneralExceptionVectorLocation {
+impl From<u32> for ExceptionVectorLocation {
     fn from(value: u32) -> Self {
         match (value >> 22) & 0b1 {
-            0 => TLBGeneralExceptionVectorLocation::Normal,
-            1 => TLBGeneralExceptionVectorLocation::Bootstrap,
+            0 => ExceptionVectorLocation::Normal,
+            1 => ExceptionVectorLocation::Bootstrap,
             _ => unreachable!()
         }
     }
 }
 
 #[derive(Debug, Default)]
-struct InterruptMask {
+pub struct InterruptMask {
     // IM(7)
-    timer_interrupt: bool,
+    pub timer_interrupt: bool,
 
     // IM(6:2)
-    external_interrupt_write_req: [bool; 5],
+    pub external_interrupt: [bool; 5],
 
     // IM(1:0)
-    software_interrupt_cause_reg: [bool; 2]
+    pub software_interrupt: [bool; 2]
 }
 
 impl From<u32> for InterruptMask {
@@ -142,17 +175,30 @@ impl From<u32> for InterruptMask {
         InterruptMask {
             timer_interrupt: (value & (1 << 15)) != 0,
 
-            external_interrupt_write_req: [
+            external_interrupt: [
                 (value & (1 << 10)) != 0,
                 (value & (1 << 11)) != 0,
                 (value & (1 << 12)) != 0,
                 (value & (1 << 13)) != 0,
                 (value & (1 << 14)) != 0],
 
-            software_interrupt_cause_reg: [
+            software_interrupt: [
                 (value & (1 <<  8)) != 0,
                 (value & (1 <<  9)) != 0]
         }
+    }
+}
+
+impl InterruptMask {
+    pub fn to_u32(&self) -> u32 {
+        (self.timer_interrupt as u32) << 15 |
+        (self.external_interrupt[0] as u32) << 10 |
+        (self.external_interrupt[1] as u32) << 11 |
+        (self.external_interrupt[2] as u32) << 12 |
+        (self.external_interrupt[3] as u32) << 13 |
+        (self.external_interrupt[4] as u32) << 14 |
+        (self.software_interrupt[0] as u32) << 8 |
+        (self.software_interrupt[1] as u32) << 9
     }
 }
 
@@ -176,6 +222,16 @@ impl From<u32> for Mode {
             0b01 => Mode::Supervisor,
             0b10 => Mode::User,
             _ => panic!("Invalid cp0 KSU bits: {:#b}", value)
+        }
+    }
+}
+
+impl Mode {
+    fn to_u32(&self) -> u32 {
+        match *self {
+            Mode::Kernel     => 0,
+            Mode::Supervisor => 1 << 3,
+            Mode::User       => 2 << 3,
         }
     }
 }

@@ -105,6 +105,7 @@ pub const TLTU:    u32 = 0b110011;
 pub const TNE:     u32 = 0b110110;
 pub const SYNC:    u32 = 0b001111;
 pub const SYSCALL: u32 = 0b001100;
+pub const BREAK:   u32 = 0b001101;
 
 // REG-IMM ops
 pub const BGEZ:    u32 = 0b00001;
@@ -491,8 +492,8 @@ impl fmt::Debug for Instruction {
                 DSRL32  => ins3!("dsrl",   rd, rt, sa32),
                 MFHI    => ins1!("mfhi",   rd),
                 MFLO    => ins1!("mflo",   rd),
-                MTHI    => ins1!("mthi",   rd),
-                MTLO    => ins1!("mthi",   rd),
+                MTHI    => ins1!("mthi",   rs),
+                MTLO    => ins1!("mtlo",   rs),
                 MULT    => ins2!("mult",   rs, rt),
                 MULTU   => ins2!("multu",  rs, rt),
                 DIV     => ins2!("div",    rs, rt),
@@ -509,6 +510,7 @@ impl fmt::Debug for Instruction {
                 TNE     => ins2!("tne",    rs, rt),
                 SYNC    => write!(f, "sync"),
                 SYSCALL => write!(f, "syscall {:#x}", self.0 >> 6),
+                BREAK   => write!(f, "break   {:#x}", self.0 >> 6),
                 _       => unknown!(),
             },
             REGIMM  => match self.regimm_op() {

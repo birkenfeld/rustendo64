@@ -172,18 +172,14 @@ impl Interconnect {
     }
 
     pub fn power_on_reset(&mut self) {
-        // use cpu::Instr;
-        // for i in 0..self.cart_rom.len()/4 {
-        //     let instr = Instr(BigEndian::read_u32(&self.cart_rom[4*i..]));
-        //     println!("{:10x}:   {:?}", 4*i, instr);
-        // }
-        // panic!("end");
+        // all gleaned from cen64
         self.sp.reg_status |= 0x1;
         // CIC seed for CRC, not for all ROMs!
         // fire demo: 00003f00
         // ocarina: ....91..
         self.pif_ram[(0x07e4 - 0x7c0) / 4] = 0x0002913f;
-        // from cen64
+        // memory size
+        self.write_word(0x3f0, 0x800000);
         self.ri.reg_mode = 0xE;
         self.ri.reg_config = 0x40;
         self.ri.reg_select = 0x14;
@@ -302,9 +298,20 @@ impl Interconnect {
             0x0440_0000 ... 0x044f_ffff => {
                 // VI area
                 match addr {
+                    0x0440_0000 => self.vi.reg_status,
+                    0x0440_0004 => self.vi.reg_origin,
+                    0x0440_0008 => self.vi.reg_width,
                     0x0440_000c => self.vi.reg_intr,
                     0x0440_0010 => self.vi.reg_current,
+                    0x0440_0014 => self.vi.reg_burst,
+                    0x0440_0018 => self.vi.reg_v_sync,
+                    0x0440_001c => self.vi.reg_h_sync,
+                    0x0440_0020 => self.vi.reg_leap,
                     0x0440_0024 => self.vi.reg_h_start,
+                    0x0440_0028 => self.vi.reg_v_start,
+                    0x0440_002c => self.vi.reg_v_burst,
+                    0x0440_0030 => self.vi.reg_x_scale,
+                    0x0440_0034 => self.vi.reg_y_scale,
                     _ => {
                         return Err("Unsupported VI read address");
                     }
@@ -368,6 +375,10 @@ impl Interconnect {
                         return Err("Unsupported SI read address");
                     }
                 }
+            }
+            0x0600_0000 ... 0x063f_ffff => {
+                // DD IPL ROM, return zeros
+                0
             }
             _ => {
                 // TODO
@@ -474,9 +485,20 @@ impl Interconnect {
             0x0440_0000 ... 0x044f_ffff => {
                 // VI area
                 match addr {
+                    0x0440_0000 => self.vi.reg_status = word,
+                    0x0440_0004 => self.vi.reg_origin = word,
+                    0x0440_0008 => self.vi.reg_width = word,
                     0x0440_000c => self.vi.reg_intr = word,
                     0x0440_0010 => self.vi.reg_current = word,
+                    0x0440_0014 => self.vi.reg_burst = word,
+                    0x0440_0018 => self.vi.reg_v_sync = word,
+                    0x0440_001c => self.vi.reg_h_sync = word,
+                    0x0440_0020 => self.vi.reg_leap = word,
                     0x0440_0024 => self.vi.reg_h_start = word,
+                    0x0440_0028 => self.vi.reg_v_start = word,
+                    0x0440_002c => self.vi.reg_v_burst = word,
+                    0x0440_0030 => self.vi.reg_x_scale = word,
+                    0x0440_0034 => self.vi.reg_y_scale = word,
                     _ => {
                         return Err("Unsupported VI write address");
                     }
