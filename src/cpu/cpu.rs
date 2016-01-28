@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::instr::*;
+use super::instruction::*;
 use super::cp0::Cp0;
 use interconnect;
 use util::mult_64_64;
@@ -103,17 +103,17 @@ impl Cpu {
         if pc > 0xffff_ffff_8000_3000 && pc < 0xffff_ffff_9000_0000 {
             self.tmp_d = true;
         }
-        let instr = Instr(self.read_word(pc));
+        let instr = Instruction(self.read_word(pc));
         dprintln!(self, "op: {:#x}   {:?}", self.reg_pc & 0xffff_ffff, instr);
 
         match instr.opcode() {
             LUI   => {
-                let val = instr.imm_se() << 16;
+                let val = instr.imm_sign_extended() << 16;
                 dprintln!(self, "{} {} <- {:#x}", INDENT, REG_NAMES[instr.rt()], val);
                 self.write_gpr(instr.rt(), val);
             }
             LW    => {
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 if addr & 0b11 != 0 {
                     bug!(self, "Unaligned address in LW: {:#x}", addr);
                 }
@@ -123,7 +123,7 @@ impl Cpu {
                 self.write_gpr(instr.rt(), word);
             }
             LWU   => {
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 if addr & 0b11 != 0 {
                     bug!(self, "Unaligned address in LWU: {:#x}", addr);
                 }
@@ -133,7 +133,7 @@ impl Cpu {
                 self.write_gpr(instr.rt(), word as u64);
             }
             SW    => {
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 if addr & 0b11 != 0 {
                     bug!(self, "Unaligned address in SW: {:#x}", addr);
                 }
@@ -143,13 +143,13 @@ impl Cpu {
                 self.write_word(addr, word as u32);
             }
             // TODO: overflow exception
-            ADDI  => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_se()) as i32 as u64),
-            ADDIU => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_se()) as i32 as u64),
+            ADDI  => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
+            ADDIU => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
             ANDI  => self.arithi(&instr, |rs| rs & instr.imm()),
             ORI   => self.arithi(&instr, |rs| rs | instr.imm()),
             XORI  => self.arithi(&instr, |rs| rs ^ instr.imm()),
-            SLTI  => self.arithi(&instr, |rs| ((rs as i64) < instr.imm_se() as i64) as u64),
-            SLTIU => self.arithi(&instr, |rs| (rs < instr.imm_se()) as u64),
+            SLTI  => self.arithi(&instr, |rs| ((rs as i64) < instr.imm_sign_extended() as i64) as u64),
+            SLTIU => self.arithi(&instr, |rs| (rs < instr.imm_sign_extended()) as u64),
             J     => {
                 self.reg_pc += 4;
                 let addr = (self.reg_pc & 0xffff_ffff_c000_000) | (instr.j_target() << 2);
@@ -181,11 +181,11 @@ impl Cpu {
             BLEZL => self.branch(&instr, true, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
             // TODO: overflow exception
-            DADDI => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_se())),
-            DADDIU => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_se())),
+            DADDI => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
+            DADDIU => self.arithi(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
             LB    => {
                 // TODO: dedicated method?
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 let word_addr = addr & !0b11;
                 let byte_offset = 0b11 - addr & 0b11;  // big endian
                 let word = self.read_word(word_addr);
@@ -194,7 +194,7 @@ impl Cpu {
             }
             LBU   => {
                 // TODO: dedicated method?
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 let word_addr = addr & !0b11;
                 let byte_offset = 0b11 - addr & 0b11;
                 let word = self.read_word(word_addr) as u64;
@@ -202,7 +202,7 @@ impl Cpu {
             }
             LH    => {
                 // TODO: dedicated method?
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 if addr & 0b1 != 0 {
                     bug!(self, "Unaligned address in LH: {:#x}", addr);
                 }
@@ -214,7 +214,7 @@ impl Cpu {
             }
             LHU   => {
                 // TODO: dedicated method?
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 if addr & 0b1 != 0 {
                     bug!(self, "Unaligned address in LHU: {:#x}", addr);
                 }
@@ -224,7 +224,7 @@ impl Cpu {
                 self.write_gpr(instr.rt(), word >> (8 * hword_offset) & 0xFFFF);
             }
             LD    => {
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 if addr & 0b111 != 0 {
                     bug!(self, "Unaligned address in LD: {:#x}", addr);
                 }
@@ -235,7 +235,7 @@ impl Cpu {
             // LDL, LDR, LWL, LWR
             SB    => {
                 // TODO: dedicated method?
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 let word_addr = addr & !0b11;
                 let byte_offset = 0b11 - addr & 0b11;  // big endian
                 let byte = (self.read_gpr(instr.rt()) as u32 & 0xFF) << (8 * byte_offset);
@@ -246,7 +246,7 @@ impl Cpu {
             }
             SH    => {
                 // TODO: dedicated method?
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 if addr & 0b1 != 0 {
                     bug!(self, "Unaligned address in SH: {:#x}", addr);
                 }
@@ -259,7 +259,7 @@ impl Cpu {
                 self.write_word(word_addr, word);
             }
             SD    => {
-                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_se());
+                let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
                 if addr & 0b111 != 0 {
                     bug!(self, "Unaligned address in SD: {:#x}", addr);
                 }
@@ -480,7 +480,7 @@ impl Cpu {
     }
 
     #[inline]
-    fn arithi<F>(&mut self, instr: &Instr, func: F)
+    fn arithi<F>(&mut self, instr: &Instruction, func: F)
         where F: Fn(u64) -> u64
     {
         let res = func(self.read_gpr(instr.rs()));
@@ -490,7 +490,7 @@ impl Cpu {
     }
 
     #[inline]
-    fn arithr<F>(&mut self, instr: &Instr, func: F)
+    fn arithr<F>(&mut self, instr: &Instruction, func: F)
         where F: Fn(u64, u64) -> u64
     {
         let res = func(self.read_gpr(instr.rs()), self.read_gpr(instr.rt()));
@@ -501,7 +501,7 @@ impl Cpu {
     }
 
     #[inline]
-    fn ariths<F>(&mut self, instr: &Instr, func: F)
+    fn ariths<F>(&mut self, instr: &Instruction, func: F)
         where F: Fn(u64) -> u64
     {
         let res = func(self.read_gpr(instr.rt()));
@@ -511,10 +511,10 @@ impl Cpu {
     }
 
     #[inline]
-    fn branch<P>(&mut self, instr: &Instr, likely: bool, link: bool, mut predicate: P)
+    fn branch<P>(&mut self, instr: &Instruction, likely: bool, link: bool, mut predicate: P)
         where P: FnMut(&mut Self) -> bool
     {
-        let addr = (instr.imm_se() << 2).wrapping_add(self.reg_pc);
+        let addr = (instr.imm_sign_extended() << 2).wrapping_add(self.reg_pc);
         let take = predicate(self);
         if link {
             let return_addr = self.reg_pc + 8;
