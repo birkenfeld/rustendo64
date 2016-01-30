@@ -579,7 +579,7 @@ impl fmt::Debug for Instruction {
                     FFLOORL => fpins2!("floor.l", fd, fs),
                     FFLOORW => fpins2!("florr.w", fd, fs),
                     FMOV    => fpins2!("mov",     fd, fs),
-                    FMUL    => fpins2!("mul",     fd, fs),
+                    FMUL    => fpins3!("mul",     fd, fs, ft),
                     FNEG    => fpins2!("neg",     fd, fs),
                     FROUNDL => fpins2!("round.l", fd, fs),
                     FROUNDW => fpins2!("round.w", fd, fs),

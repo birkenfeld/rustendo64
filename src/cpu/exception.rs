@@ -101,4 +101,10 @@ impl Exception {
             }
         }
     }
+
+    // pub fn is_masked(&self, mask: &InterruptMask) -> bool {
+    //     match self.exc_type {
+    //         ExcType::Interrupt(ref i) 
+    //     }
+    // }
 }

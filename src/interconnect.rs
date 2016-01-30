@@ -180,7 +180,7 @@ impl Interconnect {
 //        self.pif_ram[(0x07e4 - 0x7c0) / 4] = 0x0002913f;
         self.pif_ram[(0x07e4 - 0x7c0) / 4] = 0x00003f00;
         // memory size
-        self.write_word(0x3f0, 0x800000);
+        self.write_word(0x3f0, 0x800000).unwrap();
         self.ri.reg_mode = 0xE;
         self.ri.reg_config = 0x40;
         self.ri.reg_select = 0x14;

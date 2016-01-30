@@ -1,4 +1,4 @@
-#![allow(unused)]
+#![allow(dead_code)]
 
 extern crate byteorder;
 
