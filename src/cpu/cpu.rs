@@ -2,7 +2,7 @@ use std::fmt;
 use std::collections::VecDeque;
 
 use super::instruction::*;
-use super::exception::Exception;
+use super::exception::*;
 use super::cp0::Cp0;
 use interconnect;
 use util::mult_64_64;
@@ -69,27 +69,23 @@ pub const INDENT: &'static str = "                                       ";
 impl Cpu {
     pub fn new(interconnect: interconnect::Interconnect) -> Cpu {
         Cpu {
-            reg_gpr: [0; NUM_GPR],
-            reg_fpr: [0.0; NUM_GPR],
-
-            reg_pc:  0,
-            last_pc: 0,
-
-            reg_hi: 0,
-            reg_lo: 0,
-
-            reg_llbit: false,
-
-            reg_fcr31: 0,
-
-            cp0: Cp0::default(),
-
             instr_counter: 0,
             debug_instrs: false,
-
             in_branch_delay: false,
             exc_pending: VecDeque::new(),
 
+            reg_gpr:   [0; NUM_GPR],
+            reg_fpr:   [0.0; NUM_GPR],
+
+            reg_pc:    0,
+            last_pc:   0,
+
+            reg_hi:    0,
+            reg_lo:    0,
+            reg_llbit: false,
+            reg_fcr31: 0,
+
+            cp0: Cp0::default(),
             interconnect: interconnect,
         }
     }
@@ -115,7 +111,17 @@ impl Cpu {
     }
 
     pub fn run_instruction(&mut self) {
-        use std::ascii::AsciiExt;
+        // Timer interrupt?
+        self.cp0.reg_count = self.cp0.reg_count.wrapping_add(1);
+        if self.cp0.reg_compare == self.cp0.reg_count {
+            if !self.cp0.reg_status.interrupt_mask.timer_interrupt &&
+                self.cp0.reg_status.interrupts_enabled
+            {
+                self.exc_pending.push_back(
+                    Exception { exc_type: ExcType::Interrupt(Intr::Timer) });
+            }
+        }
+
         // Can we start exception processing?
         if !self.cp0.reg_status.exception_level {
             if let Some(exc) = self.exc_pending.pop_front() {

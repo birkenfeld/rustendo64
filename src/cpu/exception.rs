@@ -2,8 +2,7 @@ use super::cp0::InterruptMask;
 
 #[derive(Debug)]
 pub struct Exception {
-    exc_type: ExcType,
-    exc_loc: u64,
+    pub exc_type: ExcType,
 }
 
 #[derive(Debug)]

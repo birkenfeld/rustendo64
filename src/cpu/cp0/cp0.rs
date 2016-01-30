@@ -4,8 +4,8 @@ use super::reg_config;
 
 #[derive(Debug, Default)]
 pub struct Cp0 {
-    reg_count:   u32,
-    reg_compare: u32,
+    pub reg_count:   u32,
+    pub reg_compare: u32,
 
     reg_index:     u32,
     reg_entry_lo0: u64,

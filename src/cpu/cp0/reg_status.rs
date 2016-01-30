@@ -16,7 +16,7 @@ pub struct RegStatus {
     diagnostic_status: DiagnosticStatus,
 
     // IM(7:0)
-    interrupt_mask: InterruptMask,
+    pub interrupt_mask: InterruptMask,
 
     // KX
     kernel_mode_64bit_addressing: bool,
@@ -37,7 +37,7 @@ pub struct RegStatus {
     pub exception_level: bool,
 
     // IE
-    interrupts_enabled: bool
+    pub interrupts_enabled: bool
 }
 
 impl From<u32> for RegStatus {

@@ -177,7 +177,8 @@ impl Interconnect {
         // CIC seed for CRC, not for all ROMs!
         // fire demo: 00003f00
         // ocarina: ....91..
-        self.pif_ram[(0x07e4 - 0x7c0) / 4] = 0x0002913f;
+//        self.pif_ram[(0x07e4 - 0x7c0) / 4] = 0x0002913f;
+        self.pif_ram[(0x07e4 - 0x7c0) / 4] = 0x00003f00;
         // memory size
         self.write_word(0x3f0, 0x800000);
         self.ri.reg_mode = 0xE;
@@ -388,7 +389,8 @@ impl Interconnect {
         if addr > 0x03ef_ffff {
             if addr < 0x0400_0000 || addr > 0x0400_1fff {
                 if addr < 0x1000_0000 || addr > 0x1fc0_07bf {
-                    println!("R: {:#10x} -> {:#10x}", addr, res);
+                    // Log all reads from non-RAM, non-ROM locations
+                    println!("Bus read:  {:#10x} :  {:#10x}", addr, res);
                 }
             }
         }
@@ -397,7 +399,8 @@ impl Interconnect {
 
     pub fn write_word(&mut self, addr: u32, mut word: u32) -> Result<(), &'static str> {
         if addr > 0x03ef_ffff && (addr < 0x0400_0000 || addr > 0x0400_1fff) {
-            println!("W: {:#10x} -> {:#10x}", addr, word);
+            // Log all writes to non-RAM locations
+            println!("Bus write: {:#10x} <- {:#10x}", addr, word);
         }
         match addr {
             0x0000_0000 ... 0x03ef_ffff => {
@@ -530,6 +533,8 @@ impl Interconnect {
                         let ram_start = self.pi.reg_dram_addr as usize;  // offset is 0
                         let rom_start = self.pi.reg_cart_addr as usize - 0x1000_0000;
                         let length = (word + 1) as usize;
+                        println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
+                                 length, rom_start, ram_start);
                         for i in 0..length {
                             self.ram[ram_start + i] = self.cart_rom[rom_start + i] as u16;
                         }
