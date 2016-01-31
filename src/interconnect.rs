@@ -1,9 +1,9 @@
-use super::byteorder::{BigEndian, ByteOrder};
-
 use std::fmt;
+use byteorder::{BigEndian, ByteOrder};
+
+use cic;
 
 const PIF_ROM_SIZE: usize = 2048;
-
 const RAM_SIZE: usize = 8 * 1024 * 1024;
 
 #[derive(Default, Debug)]
@@ -172,13 +172,13 @@ impl Interconnect {
     }
 
     pub fn power_on_reset(&mut self) {
+        if let Some(seed) = cic::get_cic_seed(&self.cart_rom) {
+            self.pif_ram[(0x07e4 - 0x7c0) / 4] = seed;
+        } else {
+            println!("Warning: no CIC seed found for this ROM");
+        }
         // all gleaned from cen64
         self.sp.reg_status |= 0x1;
-        // CIC seed for CRC, not for all ROMs!
-        // fire demo: 00003f00
-        // ocarina: ....91..
-//        self.pif_ram[(0x07e4 - 0x7c0) / 4] = 0x0002913f;
-        self.pif_ram[(0x07e4 - 0x7c0) / 4] = 0x00003f00;
         // memory size
         self.write_word(0x3f0, 0x800000).unwrap();
         self.ri.reg_mode = 0xE;

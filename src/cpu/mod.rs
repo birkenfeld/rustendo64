@@ -5,4 +5,3 @@ mod exception;
 mod types;
 
 pub use self::cpu::Cpu;
-pub use self::instruction::Instruction;

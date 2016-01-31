@@ -5,6 +5,7 @@ extern crate byteorder;
 mod n64;
 mod cpu;
 mod interconnect;
+mod cic;
 mod util;
 
 use std::env;
