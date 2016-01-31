@@ -1,11 +1,10 @@
 use std::fmt;
 use std::collections::VecDeque;
-use std::cmp::Ordering;
-use byteorder::{BigEndian, ByteOrder};
 
 use super::instruction::*;
 use super::exception::*;
 use super::cp0::Cp0;
+use super::types::*;
 use interconnect;
 use util::mult_64_64;
 
@@ -51,14 +50,6 @@ impl fmt::Debug for Cpu {
             for col in 0..4 {
                 let i = row + col * 8;
                 try!(write!(f, "  {:2}:{} = {:016x}", i, REG_NAMES[i], self.reg_gpr[i]));
-            }
-            try!(write!(f, "\n"));
-        }
-        try!(write!(f, "\n"));
-        for row in 0..8 {
-            for col in 0..4 {
-                let i = row + col * 8;
-                try!(write!(f, "  fpr{:-2} = {:016x}", i, BigEndian::read_u64(&self.reg_fpr[i])));
             }
             try!(write!(f, "\n"));
         }
@@ -123,8 +114,7 @@ impl Cpu {
                 !self.cp0.reg_status.interrupt_mask.timer_interrupt &&
                 !self.cp0.reg_status.exception_level
             {
-                self.exc_pending.push_back(
-                    Exception { exc_type: ExcType::Interrupt(Intr::Timer) });
+                self.flag_exception(ExcType::Interrupt(Intr::Timer));
             }
         }
 
@@ -414,23 +404,22 @@ impl Cpu {
                     FTRUNCW => self.fp_convert_2way(&instr, |a| a.trunc() as i32, |a| a.trunc() as i32),
                     FTRUNCL => self.fp_convert_2way(&instr, |a| a.trunc() as i64, |a| a.trunc() as i64),
                     // Compares
-                    FCF     => self.fp_compare_2way(&instr, |_| false),
-                    FCUN    => self.fp_compare_2way(&instr, |r| r == FpOrd::No),
-                    FCEQ    => self.fp_compare_2way(&instr, |r| r == FpOrd::Eq),
-                    FCUEQ   => self.fp_compare_2way(&instr, |r| r == FpOrd::Eq || r == FpOrd::No),
-                    FCOLT   => self.fp_compare_2way(&instr, |r| r == FpOrd::Lt),
-                    FCULT   => self.fp_compare_2way(&instr, |r| r == FpOrd::Lt || r == FpOrd::No),
-                    FCOLE   => self.fp_compare_2way(&instr, |r| r != FpOrd::Gt && r != FpOrd::No),
-                    FCULE   => self.fp_compare_2way(&instr, |r| r != FpOrd::Gt),
-                    // TODO: exception on No
-                    FCSF    => self.fp_compare_2way(&instr, |_| false),
-                    FCNGLE  => self.fp_compare_2way(&instr, |r| r == FpOrd::No),
-                    FCSEQ   => self.fp_compare_2way(&instr, |r| r == FpOrd::Eq),
-                    FCNGL   => self.fp_compare_2way(&instr, |r| r == FpOrd::Eq || r == FpOrd::No),
-                    FCLT    => self.fp_compare_2way(&instr, |r| r == FpOrd::Lt),
-                    FCNGE   => self.fp_compare_2way(&instr, |r| r == FpOrd::Lt || r == FpOrd::No),
-                    FCLE    => self.fp_compare_2way(&instr, |r| r != FpOrd::Gt && r != FpOrd::No),
-                    FCNGT   => self.fp_compare_2way(&instr, |r| r != FpOrd::Gt),
+                    FCF     => self.fp_compare_2way(&instr, false, |_| false),
+                    FCUN    => self.fp_compare_2way(&instr, false, |r| r == FpOrd::No),
+                    FCEQ    => self.fp_compare_2way(&instr, false, |r| r == FpOrd::Eq),
+                    FCUEQ   => self.fp_compare_2way(&instr, false, |r| r == FpOrd::Eq || r == FpOrd::No),
+                    FCOLT   => self.fp_compare_2way(&instr, false, |r| r == FpOrd::Lt),
+                    FCULT   => self.fp_compare_2way(&instr, false, |r| r == FpOrd::Lt || r == FpOrd::No),
+                    FCOLE   => self.fp_compare_2way(&instr, false, |r| r != FpOrd::Gt && r != FpOrd::No),
+                    FCULE   => self.fp_compare_2way(&instr, false, |r| r != FpOrd::Gt),
+                    FCSF    => self.fp_compare_2way(&instr, true,  |_| false),
+                    FCNGLE  => self.fp_compare_2way(&instr, true,  |r| r == FpOrd::No),
+                    FCSEQ   => self.fp_compare_2way(&instr, true,  |r| r == FpOrd::Eq),
+                    FCNGL   => self.fp_compare_2way(&instr, true,  |r| r == FpOrd::Eq || r == FpOrd::No),
+                    FCLT    => self.fp_compare_2way(&instr, true,  |r| r == FpOrd::Lt),
+                    FCNGE   => self.fp_compare_2way(&instr, true,  |r| r == FpOrd::Lt || r == FpOrd::No),
+                    FCLE    => self.fp_compare_2way(&instr, true,  |r| r != FpOrd::Gt && r != FpOrd::No),
+                    FCNGT   => self.fp_compare_2way(&instr, true,  |r| r != FpOrd::Gt),
                     _       => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
                 }
             },
@@ -678,30 +667,29 @@ impl Cpu {
         }
     }
 
-    fn fp_compare<T: FpFmt, F>(&mut self, instr: &Instruction, f: F)
+    fn fp_compare<T: FpFmt, F>(&mut self, instr: &Instruction, signal: bool, f: F)
         where F: Fn(FpOrd) -> bool
     {
         let a = T::read_fpr(&self.reg_fpr[instr.fs()]);
         let b = T::read_fpr(&self.reg_fpr[instr.ft()]);
-        let comp = match a.partial_cmp(&b) {
-            None                    => FpOrd::No,
-            Some(Ordering::Equal)   => FpOrd::Eq,
-            Some(Ordering::Greater) => FpOrd::Gt,
-            Some(Ordering::Less)    => FpOrd::Lt,
-        };
-        let cond = f(comp);
+        if signal && (a.is_nan() || b.is_nan()) {
+            // TODO: set FCR31 cause bit "invalid operation"
+            self.flag_exception(ExcType::FloatingPointException);
+            return;
+        }
+        let cond = f(FpOrd::from(a, b));
         dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.fs(), a);
         dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.ft(), b);
         dprintln!(self, "{} cond <- {}", INDENT, cond);
         self.reg_fcr31 = (self.reg_fcr31 & 0xff7f_ffff) | ((cond as u32) << 23);
     }
 
-    fn fp_compare_2way<F>(&mut self, instr: &Instruction, f: F)
+    fn fp_compare_2way<F>(&mut self, instr: &Instruction, signal: bool, f: F)
         where F: Fn(FpOrd) -> bool
     {
         match instr.fp_fmt() {
-            FMT_S => self.fp_compare::<f32, _>(&instr, f),
-            FMT_D => self.fp_compare::<f64, _>(&instr, f),
+            FMT_S => self.fp_compare::<f32, _>(&instr, signal, f),
+            FMT_D => self.fp_compare::<f64, _>(&instr, signal, f),
             _     => { bug!(self, "invalid FP format: {:?}", instr); }
         }
     }
@@ -737,7 +725,7 @@ impl Cpu {
         self.write_gpr(instr.rt(), func(value));
     }
 
-    fn read_word(&mut self, virt_addr: u64) -> u32 {
+    pub fn read_word(&mut self, virt_addr: u64) -> u32 {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         match self.interconnect.read_word(phys_addr as u32) {
             Ok(res) => res,
@@ -747,7 +735,7 @@ impl Cpu {
         }
     }
 
-    fn write_word(&mut self, virt_addr: u64, word: u32) {
+    pub fn write_word(&mut self, virt_addr: u64, word: u32) {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         if (phys_addr as u32) & !0xF == self.cp0.reg_lladdr {
             self.reg_llbit = false;
@@ -757,11 +745,11 @@ impl Cpu {
         }
     }
 
-    fn read_dword(&mut self, virt_addr: u64) -> u64 {
+    pub fn read_dword(&mut self, virt_addr: u64) -> u64 {
         (self.read_word(virt_addr) as u64) << 32 | self.read_word(virt_addr + 4) as u64
     }
 
-    fn write_dword(&mut self, virt_addr: u64, dword: u64) {
+    pub fn write_dword(&mut self, virt_addr: u64, dword: u64) {
         self.write_word(virt_addr, (dword >> 32) as u32);
         self.write_word(virt_addr + 4, dword as u32);
     }
@@ -793,6 +781,10 @@ impl Cpu {
         }
     }
 
+    fn flag_exception(&mut self, exc_type: ExcType) {
+        self.exc_pending.push_back(Exception { exc_type: exc_type });
+    }
+
     #[cold]
     fn bug(&self, msg: String) -> ! {
         //println!("{:#?}", $cpu.interconnect);
@@ -800,133 +792,5 @@ impl Cpu {
         println!("last instr was:    {:?}", Instruction(self.last_instr));
         println!("#instrs executed:  {}", self.instr_counter);
         panic!(msg);
-    }
-}
-
-
-trait MemFmt: Copy + fmt::LowerHex {
-    fn get_align() -> u64;
-    fn load_from(&mut Cpu, u64) -> Self;
-    fn store_to(&mut Cpu, u64, Self);
-    fn rotate_left(self, amount: u32) -> Self;
-}
-
-impl MemFmt for u8 {
-    fn get_align() -> u64 { 1 }
-    fn load_from(cpu: &mut Cpu, addr: u64) -> u8 {
-        let word = cpu.read_word(addr & !3);
-        let shift = 8 * (3 - (addr % 4));  // byte 0: shift 24
-        (word >> shift) as u8
-    }
-    fn store_to(cpu: &mut Cpu, addr: u64, val: u8) {
-        let mut word = cpu.read_word(addr & !3);
-        let shift = 8 * (3 - (addr % 4));
-        let mask = !(0xFF << shift);
-        word = (word & mask) | ((val as u32) << shift);
-        cpu.write_word(addr & !3, word);
-    }
-    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
-}
-
-impl MemFmt for u16 {
-    fn get_align() -> u64 { 2 }
-    fn load_from(cpu: &mut Cpu, addr: u64) -> u16 {
-        let word = cpu.read_word(addr & !3);
-        let shift = 8 * (2 - (addr % 4));  // halfword 0: shift 16
-        (word >> shift) as u16
-    }
-    fn store_to(cpu: &mut Cpu, addr: u64, val: u16) {
-        let mut word = cpu.read_word(addr & !3);
-        let shift = 8 * (2 - (addr % 4));
-        let mask = !(0xFFFF << shift);
-        word = (word & mask) | ((val as u32) << shift);
-        cpu.write_word(addr & !3, word);
-    }
-    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
-}
-
-impl MemFmt for u32 {
-    fn get_align() -> u64 { 4 }
-    fn load_from(cpu: &mut Cpu, addr: u64) -> u32 { cpu.read_word(addr) }
-    fn store_to(cpu: &mut Cpu, addr: u64, val: u32) { cpu.write_word(addr, val); }
-    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
-}
-
-impl MemFmt for u64 {
-    fn get_align() -> u64 { 8 }
-    fn load_from(cpu: &mut Cpu, addr: u64) -> u64 { cpu.read_dword(addr) }
-    fn store_to(cpu: &mut Cpu, addr: u64, val: u64) { cpu.write_dword(addr, val); }
-    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
-}
-
-
-#[derive(PartialEq, Eq)]
-enum FpOrd {
-    Eq,
-    Gt,
-    Lt,
-    No
-}
-
-// TODO: verify this is the correct offset for half-width
-const LO: usize = 4;
-
-trait FpFmt: Copy + fmt::Display + PartialOrd {
-    fn read_fpr(&[u8; 8]) -> Self;
-    fn write_fpr(&mut [u8; 8], value: Self);
-}
-
-impl FpFmt for f32 {
-    fn read_fpr(reg: &[u8; 8]) -> f32 {
-        BigEndian::read_f32(&reg[LO..])
-    }
-    fn write_fpr(reg: &mut [u8; 8], value: f32) {
-        BigEndian::write_f32(&mut reg[LO..], value);
-    }
-}
-
-impl FpFmt for f64 {
-    fn read_fpr(reg: &[u8; 8]) -> f64 {
-        BigEndian::read_f64(reg)
-    }
-    fn write_fpr(reg: &mut [u8; 8], value: f64) {
-        BigEndian::write_f64(reg, value);
-    }
-}
-
-impl FpFmt for i32 {
-    fn read_fpr(reg: &[u8; 8]) -> i32 {
-        BigEndian::read_i32(&reg[LO..])
-    }
-    fn write_fpr(reg: &mut [u8; 8], value: i32) {
-        BigEndian::write_i32(&mut reg[LO..], value);
-    }
-}
-
-impl FpFmt for i64 {
-    fn read_fpr(reg: &[u8; 8]) -> i64 {
-        BigEndian::read_i64(reg)
-    }
-    fn write_fpr(reg: &mut [u8; 8], value: i64) {
-        BigEndian::write_i64(reg, value);
-    }
-}
-
-// For memory loads/stores.
-impl FpFmt for u32 {
-    fn read_fpr(reg: &[u8; 8]) -> u32 {
-        BigEndian::read_u32(&reg[LO..])
-    }
-    fn write_fpr(reg: &mut [u8; 8], value: u32) {
-        BigEndian::write_u32(&mut reg[LO..], value);
-    }
-}
-
-impl FpFmt for u64 {
-    fn read_fpr(reg: &[u8; 8]) -> u64 {
-        BigEndian::read_u64(reg)
-    }
-    fn write_fpr(reg: &mut [u8; 8], value: u64) {
-        BigEndian::write_u64(reg, value);
     }
 }
