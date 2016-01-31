@@ -43,6 +43,7 @@ pub const SWR:     u32 = 0b101110;
 pub const LL:      u32 = 0b110000;
 pub const LLD:     u32 = 0b110100;
 pub const SC:      u32 = 0b111000;
+pub const SCD:     u32 = 0b111100;
 pub const CACHE:   u32 = 0b101111;
 pub const SPECIAL: u32 = 0b000000;
 pub const REGIMM:  u32 = 0b000001;
@@ -452,6 +453,7 @@ impl fmt::Debug for Instruction {
             LL      => insm!("ll",     rt, ims, base),
             LLD     => insm!("lld",    rt, ims, base),
             SC      => insm!("sc",     rt, ims, base),
+            SCD     => insm!("scd",    rt, ims, base),
             CACHE   => insm!("cache",  cop, ims, base),
             SPECIAL => match self.special_op() {
                 JR      => ins1!("jr", rs),

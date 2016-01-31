@@ -24,7 +24,7 @@ pub struct Cpu {
 
     reg_hi:     u64,
     reg_lo:     u64,
-    reg_llbit:  bool, // TODO: Enum type
+    reg_llbit:  bool,
     reg_fcr31:  u32,
 
     in_branch_delay: bool,
@@ -35,13 +35,7 @@ pub struct Cpu {
 }
 
 macro_rules! bug {
-    ($cpu:expr, $($args:expr),+) => {
-        //println!("{:#?}", $cpu.interconnect);
-        println!("{:?}", $cpu);
-        println!("last instr was:    {:?}", Instruction($cpu.last_instr));
-        println!("#instrs executed:  {}", $cpu.instr_counter);
-        panic!($($args),+);
-    }
+    ($cpu:expr, $($args:expr),+) => { $cpu.bug(format!($($args),+)); }
 }
 
 macro_rules! dprintln {
@@ -70,7 +64,7 @@ impl fmt::Debug for Cpu {
         }
         try!(write!(f, "     pc = {:016x}", self.reg_pc));
         try!(write!(f, "     hi = {:016x}     lo = {:016x}", self.reg_hi, self.reg_lo));
-        write!(f, "     ll = {}\n", self.reg_llbit)
+        write!(f, "     ll = {:16}\n", self.reg_llbit)
     }
 }
 
@@ -152,10 +146,10 @@ impl Cpu {
         self.instr_counter += 1;
         self.last_pc = self.reg_pc;
         let pc = self.reg_pc;
-        // if pc > 0xffff_ffff_8020_0000 && pc < 0xffff_ffff_9000_0000 {
         // if pc == 0xffff_ffff_8020_0188 {
-        //     self.debug_instrs = true;
-        // }
+        if pc > 0xffff_ffff_8000_4000 && pc < 0xffff_ffff_9000_0000 {
+            self.debug_instrs = true;
+        }
         self.last_instr = self.read_word(pc);
         let instr = Instruction(self.last_instr);
         dprintln!(self, "op: {:#x}   {:?}", self.reg_pc & 0xffff_ffff, instr);
@@ -166,27 +160,9 @@ impl Cpu {
                 dprintln!(self, "{} {} <- {:#x}", INDENT, REG_NAMES[instr.rt()], val);
                 self.write_gpr(instr.rt(), val);
             }
-            LW    => {
-                let addr = self.aligned_addr(&instr, 4);
-                let word = self.read_word(addr) as i32 as u64;
-                dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
-                         INDENT, REG_NAMES[instr.rt()], word, addr);
-                self.write_gpr(instr.rt(), word);
-            }
-            LWU   => {
-                let addr = self.aligned_addr(&instr, 4);
-                let word = self.read_word(addr) as u64;
-                dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
-                          INDENT, REG_NAMES[instr.rt()], word, addr);
-                self.write_gpr(instr.rt(), word);
-            }
-            SW    => {
-                let addr = self.aligned_addr(&instr, 4);
-                let word = self.read_gpr(instr.rt());
-                dprintln!(self, "{}       {:#18x} -> mem @ {:#x}",
-                          INDENT, word, addr);
-                self.write_word(addr, word as u32);
-            }
+            LW    => self.mem_load (&instr, false, |word: u32| word as i32 as u64),
+            LWU   => self.mem_load (&instr, false, |word: u32| word as u64),
+            SW    => self.mem_store(&instr, false, |data| data as u32),
             // TODO: overflow exception
             ADDI  => self.binary_imm(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
             ADDIU => self.binary_imm(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
@@ -222,88 +198,34 @@ impl Cpu {
             // TODO: overflow exception
             DADDI => self.binary_imm(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
             DADDIU => self.binary_imm(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
-            LB    => {
-                let addr = self.aligned_addr(&instr, 1);
-                let word_addr = addr & !0b11;
-                let byte_offset = 0b11 - (addr & 0b11);  // big endian
-                let word = self.read_word(word_addr);
-                let byte = (word >> (8 * byte_offset)) & 0xFF;
-                dprintln!(self, "{} {} <- {:#18x}({:#4x}) :  mem @ {:#x}",
-                         INDENT, REG_NAMES[instr.rt()], word, byte, addr);
-                self.write_gpr(instr.rt(), byte as i8 as u64);
-            }
-            LBU   => {
-                let addr = self.aligned_addr(&instr, 1);
-                let word_addr = addr & !0b11;
-                let byte_offset = 0b11 - (addr & 0b11);
-                let word = self.read_word(word_addr) as u64;
-                let byte = (word >> (8 * byte_offset)) & 0xFF;
-                dprintln!(self, "{} {} <- {:#18x}({:#4x}) :  mem @ {:#x}",
-                         INDENT, REG_NAMES[instr.rt()], word, byte, addr);
-                self.write_gpr(instr.rt(), byte);
-            }
-            LH    => {
-                let addr = self.aligned_addr(&instr, 2);
-                let word_addr = addr & !0b1;
-                let hword_offset = 0b1 - ((addr & 0b10) >> 1);  // big endian
-                let word = self.read_word(word_addr);
-                let hword = (word >> (16 * hword_offset)) & 0xFFFF;
-                dprintln!(self, "{} {} <- {:#18x}({:#6x}) :  mem @ {:#x}",
-                         INDENT, REG_NAMES[instr.rt()], word, hword, addr);
-                self.write_gpr(instr.rt(), hword as i16 as u64);
-            }
-            LHU   => {
-                let addr = self.aligned_addr(&instr, 2);
-                let word_addr = addr & !0b1;
-                let hword_offset = 0b1 - ((addr & 0b10) >> 1);  // big endian
-                let word = self.read_word(word_addr) as u64;
-                let hword = (word >> (16 * hword_offset)) & 0xFFFF;
-                dprintln!(self, "{} {} <- {:#18x}({:#6x}) :  mem @ {:#x}",
-                         INDENT, REG_NAMES[instr.rt()], word, hword, addr);
-                self.write_gpr(instr.rt(), hword);
-            }
-            LD    => {
-                let addr = self.aligned_addr(&instr, 8);
-                let dword = (self.read_word(addr) as u64) << 32 | self.read_word(addr + 4) as u64;
-                dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
-                         INDENT, REG_NAMES[instr.rt()], dword, addr);
-                self.write_gpr(instr.rt(), dword);
-            }
-            // LDL, LDR, LWL, LWR
-            SB    => {
-                let addr = self.aligned_addr(&instr, 1);
-                let word_addr = addr & !0b11;
-                let byte_offset = 0b11 - (addr & 0b11);  // big endian
-                let byte = (self.read_gpr(instr.rt()) as u32 & 0xFF) << (8 * byte_offset);
-                let mask = !(0xFFu32 << (8 * byte_offset));
-                let mut word = self.read_word(word_addr);
-                word = (word & mask) | byte;
-                dprintln!(self, "{}       {:#18x} -> mem @ {:#x}",
-                          INDENT, word, word_addr);
-                self.write_word(word_addr, word);
-            }
-            SH    => {
-                let addr = self.aligned_addr(&instr, 2);
-                let word_addr = addr & !0b11;
-                let hword_offset = 0b1 - ((addr & 0b10) >> 1);  // big endian
-                let hword = (self.read_gpr(instr.rt()) as u32 & 0xFFFF) << (16 * hword_offset);
-                let mask = !(0xFFFFu32 << (16 * hword_offset));
-                let mut word = self.read_word(word_addr);
-                word = (word & mask) | hword;
-                dprintln!(self, "{}       {:#18x} -> mem @ {:#x}",
-                          INDENT, word, word_addr);
-                self.write_word(word_addr, word);
-            }
-            SD    => {
-                let addr = self.aligned_addr(&instr, 8);
-                let dword = self.read_gpr(instr.rt());
-                dprintln!(self, "{}       {:#18x} -> mem @ {:#x}",
-                          INDENT, dword, addr);
-                self.write_word(addr, (dword >> 32) as u32);
-                self.write_word(addr + 4, dword as u32);
-            }
-            // SDL, SDR, SWL, SWR
-            // LL, LLD, SC
+            LB    => self.mem_load (&instr, false, |byte: u8| byte as i8 as u64),
+            LBU   => self.mem_load (&instr, false, |byte: u8| byte as u64),
+            LH    => self.mem_load (&instr, false, |hword: u16| hword as i16 as u64),
+            LHU   => self.mem_load (&instr, false, |hword: u16| hword as u64),
+            LD    => self.mem_load (&instr, false, |dword: u64| dword),
+            SB    => self.mem_store(&instr, false, |data| data as u8),
+            SH    => self.mem_store(&instr, false, |data| data as u16),
+            SD    => self.mem_store(&instr, false, |data| data),
+            LWL   => self.mem_load_unaligned (&instr, false, |mask, reg, data: u32|
+                                              ((reg & !mask) | (data as u64 & mask)) as i32 as u64),
+            LWR   => self.mem_load_unaligned (&instr, true,  |mask, reg, data: u32|
+                                              ((reg & !mask) | (data as u64 & mask)) as i32 as u64),
+            LDL   => self.mem_load_unaligned (&instr, false, |mask, reg, data: u64|
+                                              (reg & !mask) | (data & mask)),
+            LDR   => self.mem_load_unaligned (&instr, true,  |mask, reg, data: u64|
+                                              (reg & !mask) | (data & mask)),
+            SWL   => self.mem_store_unaligned(&instr, false, |mask, data: u32, reg|
+                                              ((data as u64 & !mask) | (reg & mask)) as u32),
+            SWR   => self.mem_store_unaligned(&instr, true,  |mask, data: u32, reg|
+                                              ((data as u64 & !mask) | (reg & mask)) as u32),
+            SDL   => self.mem_store_unaligned(&instr, false, |mask, data: u64, reg|
+                                              (data & !mask) | (reg & mask)),
+            SDR   => self.mem_store_unaligned(&instr, true,  |mask, data: u64, reg|
+                                              (data & !mask) | (reg & mask)),
+            LL    => self.mem_load (&instr, true, |data: u32| data as i32 as u64),
+            LLD   => self.mem_load (&instr, true, |data: u64| data),
+            SC    => self.mem_store(&instr, true, |data| data as u32),
+            SCD   => self.mem_store(&instr, true, |data| data),
             CACHE => {
                 // TODO: Check if we need to implement this
             }
@@ -325,9 +247,7 @@ impl Cpu {
                 SLLV => self.binary(&instr, |rs, rt| (rt << (rs & 0b11111)) as i32 as u64),
                 SRAV => self.binary(&instr, |rs, rt| (rt as i32 >> (rs & 0b11111)) as u64),
                 SRLV => self.binary(&instr, |rs, rt| (rt as u32 >> (rs & 0b11111)) as i32 as u64),
-                SLL  => if instr.sa() != 0 {
-                    self.unary(&instr, |rt| (rt << instr.sa()) as i32 as u64)
-                },
+                SLL  => if instr.sa() != 0 { self.unary(&instr, |rt| (rt << instr.sa()) as i32 as u64) },
                 SRA  => self.unary(&instr, |rt| (rt as i32 >> instr.sa()) as i32 as u64),
                 SRL  => self.unary(&instr, |rt| (rt as u32 >> instr.sa()) as i32 as u64),
                 // TODO: Overflow exception
@@ -349,64 +269,29 @@ impl Cpu {
                 MFLO   => { let val = self.reg_lo; self.write_gpr(instr.rd(), val); }
                 MTHI   => { let val = self.read_gpr(instr.rs()); self.reg_hi = val; }
                 MTLO   => { let val = self.read_gpr(instr.rs()); self.reg_lo = val; }
-                MULT   => {
-                    let mut mult_result = (self.read_gpr(instr.rs()) as i32) as i64 *
-                        (self.read_gpr(instr.rt()) as i32) as i64;
-                    self.reg_lo = mult_result as i32 as u64;
-                    mult_result >>= 32;
-                    self.reg_hi = mult_result as i32 as u64;
-                }
-                MULTU  => {
-                    let mut mult_result = (self.read_gpr(instr.rs()) & 0xffff_ffff) *
-                        (self.read_gpr(instr.rt()) & 0xffff_ffff);
-                    self.reg_lo = mult_result as i32 as u64;
-                    mult_result >>= 32;
-                    self.reg_hi = mult_result as i32 as u64;
-                }
-                DIV    => {
-                    let a = self.read_gpr(instr.rs()) as i32;
-                    let b = self.read_gpr(instr.rt()) as i32;
-                    self.reg_lo = (a / b) as u64;
-                    self.reg_hi = (a % b) as u64;
-                }
-                DIVU   => {
-                    let a = self.read_gpr(instr.rs()) as u32;
-                    let b = self.read_gpr(instr.rt()) as u32;
-                    self.reg_lo = (a / b) as u64;
-                    self.reg_hi = (a % b) as u64;
-                }
-                DMULT  => {
-                    let mut a = self.read_gpr(instr.rs());
-                    let mut b = self.read_gpr(instr.rt());
-                    let neg = (a & 0x8000_0000_0000_0000 != 0) ^ (b & 0x8000_0000_0000_0000 != 0);
-                    a &= 0x7FFF_FFFF_FFFF_FFFF;
-                    b &= 0x7FFF_FFFF_FFFF_FFFF;
-                    let (rl, rh) = mult_64_64(a, b);
-                    self.reg_lo = rl;
-                    self.reg_hi = rh | (neg as u64) << 63;
-                }
-                DMULTU => {
-                    let (rl, rh) = mult_64_64(self.read_gpr(instr.rs()),
-                                              self.read_gpr(instr.rt()));
-                    self.reg_lo = rl;
-                    self.reg_hi = rh;
-                }
-                DDIV   => {
-                    let a = self.read_gpr(instr.rs()) as i64;
-                    let b = self.read_gpr(instr.rt()) as i64;
-                    self.reg_lo = (a / b) as u64;
-                    self.reg_hi = (a % b) as u64;
-                }
-                DDIVU  => {
-                    let a = self.read_gpr(instr.rs());
-                    let b = self.read_gpr(instr.rt());
-                    self.reg_lo = a / b;
-                    self.reg_hi = a % b;
-                }
+                MULT   => self.binary_hilo(&instr, |a, b| {
+                    let res = (a as i32 as i64) * (b as i32 as i64);
+                    (res as i32 as u64, (res >> 32) as i32 as u64) }),
+                MULTU  => self.binary_hilo(&instr, |a, b| {
+                    let res = (a & 0xffff_ffff) * (b & 0xffff_ffff);
+                    (res as i32 as u64, (res >> 32) as i32 as u64) }),
+                DIV    => self.binary_hilo(&instr, |a, b| ((a as i32 / b as i32) as u64,
+                                                           (a as i32 % b as i32) as u64)),
+                DIVU   => self.binary_hilo(&instr, |a, b| ((a as u32 / b as u32) as u64,
+                                                           (a as u32 % b as u32) as u64)),
+                DMULT  => self.binary_hilo(&instr, |a, b| {
+                    let a = a as i64; let b = b as i64;
+                    let neg = (a < 0) ^ (b < 0);
+                    let (rl, rh) = mult_64_64(a.abs() as u64, b.abs() as u64);
+                    (rl, rh | (neg as u64) << 63) }),
+                DMULTU => self.binary_hilo(&instr, |a, b| mult_64_64(a, b)),
+                DDIV   => self.binary_hilo(&instr, |a, b| ((a as i64 / b as i64) as u64,
+                                                           (a as i64 % b as i64) as u64)),
+                DDIVU  => self.binary_hilo(&instr, |a, b| (a / b, a % b)),
                 // TEQ, TGE, TGEU, TLT, TLTU, TNE
                 SYNC  => { }
                 // SYSCALL
-                _ => { bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr); }
+                _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
             },
             REGIMM => match instr.regimm_op() {
                 BGEZ    => self.branch(&instr, false, false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
@@ -418,19 +303,21 @@ impl Cpu {
                 BLTZAL  => self.branch(&instr, false, true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
                 BLTZALL => self.branch(&instr, true,  true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
                 // TEQI, TGEI, TGEIU, TLTI, TLTIU, TNEI
-                _ => { bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr); }
+                _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
             },
             COP0 => match instr.cop_op() {
                 // TODO: do these really transfer 64 bits?
                 MF => {
                     let data = self.cp0.read_reg(instr.rd());
-                    dprintln!(self, "{} cp0[{:2}] :  {:#066b}", INDENT, instr.rd(), data);
+                    dprintln!(self, "{} cp0[{:2}] :  {:#18x}, {:#066b}",
+                              INDENT, instr.rd(), data, data);
                     self.write_gpr(instr.rt(), data);
                 }
                 MT => {
                     let data = self.read_gpr(instr.rt());
-                    println!("{} cp0[{:2}] <- {:#066b}", INDENT, instr.rd(), data);
-                    dprintln!(self, "{} cp0[{:2}] <- {:#066b}", INDENT, instr.rd(), data);
+                    // println!("{} cp0[{:2}] <- {:#066b}", INDENT, instr.rd(), data);
+                    dprintln!(self, "{} cp0[{:2}] <- {:#18x}, {:#066b}",
+                              INDENT, instr.rd(), data, data);
                     self.cp0.write_reg(instr.rd(), data);
                 }
                 // DMF, DMT
@@ -455,37 +342,29 @@ impl Cpu {
                     TLBR  => { }
                     TLBWI => { }
                     TLBWR => { }
-                    _ => { bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr); }
+                    _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
                 },
-                _ => { bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr); }
+                _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
             },
             COP1 => match instr.cop_op() {
-                MF  => {
-                    let value = i32::read_fpr(&self.reg_fpr[instr.fs()]);
-                    self.write_gpr(instr.rt(), value as u64);
-                }
-                MT  => {
-                    let value = self.read_gpr(instr.rt()) as u32;
-                    u32::write_fpr(&mut self.reg_fpr[instr.fs()], value);
-                }
-                DMF => {
-                    let value = u64::read_fpr(&self.reg_fpr[instr.fs()]);
-                    self.write_gpr(instr.rt(), value);
-                }
-                DMT => {
-                    let value = self.read_gpr(instr.rt());
-                    u64::write_fpr(&mut self.reg_fpr[instr.fs()], value);
-                }
+                MF  => self.reg_store_fp(&instr, |v: i32| v as u64),
+                DMF => self.reg_store_fp(&instr, |v: u64| v),
+                MT  => self.reg_load_fp (&instr, |v| v as u32),
+                DMT => self.reg_load_fp (&instr, |v| v),
                 CF  => {
                     let data = match instr.fs() {
                         31 => self.reg_fcr31,
                         0  => 0xB << 8 | 0,  // TODO: constant
-                        _  => { bug!(self, "#RG: invalid read fp control reg {}", instr.fs()); },
+                        _  => bug!(self, "#RG: invalid read fp control reg {}", instr.fs())
                     };
+                    dprintln!(self, "{} cp1[{:2}] :  {:#18x}, {:#066b}",
+                              INDENT, instr.fs(), data, data);
                     self.write_gpr(instr.rt(), data as u64);
                 }
                 CT  => {
                     let data = self.read_gpr(instr.rt());
+                    dprintln!(self, "{} cp1[{:2}] <- {:#18x}, {:#066b}",
+                              INDENT, instr.fs(), data, data);
                     if instr.fs() == 31 {
                         self.reg_fcr31 = data as u32;
                     } else {
@@ -497,7 +376,7 @@ impl Cpu {
                     BCFL => self.branch(&instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 == 0),
                     BCT  => self.branch(&instr, false, false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
                     BCTL => self.branch(&instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
-                    _    => { bug!(self, "#UD: {:#b} -- {:?}", instr.0, instr); }
+                    _    => bug!(self, "#UD: {:#b} -- {:?}", instr.0, instr)
                 },
                 _   => match instr.fp_op() {
                     // TODO: exceptions
@@ -516,13 +395,13 @@ impl Cpu {
                         FMT_D => self.fp_convert::<f64, _, _>(&instr, |a| a as f32),
                         FMT_W => self.fp_convert::<i32, _, _>(&instr, |a| a as f32),
                         FMT_L => self.fp_convert::<i64, _, _>(&instr, |a| a as f32),
-                        _     => { bug!(self, "invalid FP source format: {:?}", instr); }
+                        _     => bug!(self, "invalid FP source format: {:?}", instr)
                     },
                     FCVTD   => match instr.fp_fmt() {
                         FMT_S => self.fp_convert::<f32, _, _>(&instr, |a| a as f64),
                         FMT_W => self.fp_convert::<i32, _, _>(&instr, |a| a as f64),
                         FMT_L => self.fp_convert::<i64, _, _>(&instr, |a| a as f64),
-                        _     => { bug!(self, "invalid FP source format: {:?}", instr); }
+                        _     => bug!(self, "invalid FP source format: {:?}", instr)
                     },
                     FCVTW   => self.fp_convert_2way(&instr, |a| a.round() as i32, |a| a.round() as i32),
                     FCVTL   => self.fp_convert_2way(&instr, |a| a.round() as i64, |a| a.round() as i64),
@@ -552,39 +431,101 @@ impl Cpu {
                     FCNGE   => self.fp_compare_2way(&instr, |r| r == FpOrd::Lt || r == FpOrd::No),
                     FCLE    => self.fp_compare_2way(&instr, |r| r != FpOrd::Gt && r != FpOrd::No),
                     FCNGT   => self.fp_compare_2way(&instr, |r| r != FpOrd::Gt),
-                    _ => { bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr); }
+                    _       => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
                 }
             },
-            LDC1 => {
-                let addr = self.aligned_addr(&instr, 8);
-                let word1 = self.read_word(addr) as u64;
-                let word2 = self.read_word(addr + 4) as u64;
-                let dword = (word1 << 32) | word2;
-                u64::write_fpr(&mut self.reg_fpr[instr.ft()], dword);
-            },
-            LWC1 => {
-                let addr = self.aligned_addr(&instr, 4);
-                let word = self.read_word(addr);
-                u32::write_fpr(&mut self.reg_fpr[instr.ft()], word);
-            },
-            SDC1 => {
-                let addr = self.aligned_addr(&instr, 8);
-                let value = u64::read_fpr(&self.reg_fpr[instr.ft()]);
-                self.write_word(addr, (value >> 32) as u32);
-                self.write_word(addr + 4, value as u32);
-            },
-            SWC1 => {
-                let addr = self.aligned_addr(&instr, 4);
-                let value = u32::read_fpr(&self.reg_fpr[instr.ft()]);
-                self.write_word(addr, value);
-            },
-            _ => { bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr); }
+            LDC1 => self.mem_load_fp::<u64>(&instr),
+            LWC1 => self.mem_load_fp::<u32>(&instr),
+            SDC1 => self.mem_store_fp::<u64>(&instr),
+            SWC1 => self.mem_store_fp::<u32>(&instr),
+            _    => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
         }
 
         self.reg_pc += 4;
     }
 
-    #[inline]
+    fn mem_load<T: MemFmt, F>(&mut self, instr: &Instruction, linked: bool, func: F)
+        where F: Fn(T) -> u64
+    {
+        let addr = self.aligned_addr(instr, T::get_align());
+        if linked {
+            self.cp0.reg_lladdr = (self.virt_addr_to_phys_addr(addr) as u32) & !0xF;
+            self.reg_llbit = true;
+        }
+        let data = func(T::load_from(self, addr));
+        dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
+                  INDENT, REG_NAMES[instr.rt()], data, addr);
+        self.write_gpr(instr.rt(), data);
+    }
+
+    fn mem_store<T: MemFmt, F>(&mut self, instr: &Instruction, linked: bool, func: F)
+        where F: Fn(u64) -> T
+    {
+        let addr = self.aligned_addr(instr, T::get_align());
+        let data = self.read_gpr(instr.rt());
+        let data = func(data);
+        dprintln!(self, "{}       {:#18x} -> mem @ {:#x}", INDENT, data, addr);
+        if linked {
+            let llbit = self.reg_llbit;
+            if llbit {
+                T::store_to(self, addr, data);
+            }
+            self.write_gpr(instr.rt(), llbit as u64);
+        } else {
+            T::store_to(self, addr, data);
+        }
+    }
+
+    fn mem_load_unaligned<T: MemFmt, F>(&mut self, instr: &Instruction, right: bool, func: F)
+        where F: Fn(u64, u64, T) -> u64
+    {
+        let addr = self.aligned_addr(&instr, 1);
+        let align = T::get_align();
+        let mut aligned_addr = addr & !(align - 1);
+        let mut shift = 8 * (addr % align);
+        if right {
+            if shift == 0 {
+                shift = 8 * align;
+            } else {
+                aligned_addr += align;
+            }
+        }
+        let data = T::load_from(self, aligned_addr);
+        let rotated_data = data.rotate_left(shift as u32);
+        let mut mask = (1 << shift) - 1;
+        if !right { mask = !mask; }
+        let reg = self.read_gpr(instr.rt());
+        let reg = func(mask, reg, rotated_data);
+        dprintln!(self, "{}       {:#18x} :  mem @ {:#x}", INDENT, data, aligned_addr);
+        dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
+                  INDENT, REG_NAMES[instr.rt()], reg, addr);
+        self.write_gpr(instr.rt(), reg);
+    }
+
+    fn mem_store_unaligned<T: MemFmt, F>(&mut self, instr: &Instruction, right: bool, func: F)
+        where F: Fn(u64, T, u64) -> T
+    {
+        let addr = self.aligned_addr(&instr, 1);
+        let align = T::get_align();
+        let mut aligned_addr = addr & !(align - 1);
+        let mut shift = 8 * (align - addr % align);
+        if right {
+            if shift == 8 * align{
+                shift = 0;
+            } else {
+                aligned_addr += align;
+            }
+        }
+        let rotated_reg = self.read_gpr(instr.rt()).rotate_left(shift as u32);
+        let mut mask = (1 << shift) - 1;
+        if !right { mask = !mask; }
+        let orig_data = T::load_from(self, aligned_addr);
+        let data = func(mask, orig_data, rotated_reg);
+        dprintln!(self, "{}       {:#18x} :  mem @ {:#x}", INDENT, orig_data, aligned_addr);
+        dprintln!(self, "{}       {:#18x} -> mem @ {:#x}", INDENT, data, addr);
+        T::store_to(self, aligned_addr, data);
+    }
+
     fn binary_imm<F>(&mut self, instr: &Instruction, func: F)
         where F: Fn(u64) -> u64
     {
@@ -594,7 +535,6 @@ impl Cpu {
         self.write_gpr(instr.rt(), res);
     }
 
-    #[inline]
     fn binary<F>(&mut self, instr: &Instruction, func: F)
         where F: Fn(u64, u64) -> u64
     {
@@ -605,7 +545,20 @@ impl Cpu {
         self.write_gpr(instr.rd(), res);
     }
 
-    #[inline]
+    fn binary_hilo<F>(&mut self, instr: &Instruction, func: F)
+        where F: Fn(u64, u64) -> (u64, u64)
+    {
+        let a = self.read_gpr(instr.rs());
+        let b = self.read_gpr(instr.rt());
+        let (rlo, rhi) = func(a, b);
+        dprintln!(self, "{} {} :  {:#18x}", INDENT, REG_NAMES[instr.rs()], a);
+        dprintln!(self, "{} {} :  {:#18x}", INDENT, REG_NAMES[instr.rt()], b);
+        dprintln!(self, "{} lo <- {:#18x}", INDENT, rlo);
+        dprintln!(self, "{} hi <- {:#18x}", INDENT, rhi);
+        self.reg_lo = rlo;
+        self.reg_hi = rhi;
+    }
+
     fn unary<F>(&mut self, instr: &Instruction, func: F)
         where F: Fn(u64) -> u64
     {
@@ -615,7 +568,6 @@ impl Cpu {
         self.write_gpr(instr.rd(), res);
     }
 
-    #[inline]
     fn jump(&mut self, addr: u64, link_reg: usize) {
         if addr & 0b11 != 0 {
             bug!(self, "Unaligned address in jump: {:#x}", addr);
@@ -630,7 +582,6 @@ impl Cpu {
         self.reg_pc = addr - 4;  // compensate for += 4 at the end of run_instruction
     }
 
-    #[inline]
     fn branch<P>(&mut self, instr: &Instruction, likely: bool, link: bool, mut predicate: P)
         where P: FnMut(&mut Self) -> bool
     {
@@ -657,7 +608,6 @@ impl Cpu {
         }
     }
 
-    #[inline]
     fn aligned_addr(&self, instr: &Instruction, align: u64) -> u64 {
         let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
         if addr & (align - 1) != 0 {
@@ -666,15 +616,16 @@ impl Cpu {
         addr
     }
 
-    #[inline]
     fn fp_unary<T: FpFmt, F>(&mut self, instr: &Instruction, f: F)
         where F: Fn(T) -> T
     {
         let a = T::read_fpr(&self.reg_fpr[instr.fs()]);
-        T::write_fpr(&mut self.reg_fpr[instr.fd()], f(a));
+        let res = f(a);
+        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.fs(), a);
+        dprintln!(self, "{} $f{} <- {:16.8}", INDENT, instr.fd(), res);
+        T::write_fpr(&mut self.reg_fpr[instr.fd()], res);
     }
 
-    #[inline]
     fn fp_unary_2way<F, G>(&mut self, instr: &Instruction, f: F, g: G)
         where F: Fn(f32) -> f32, G: Fn(f64) -> f64
     {
@@ -685,16 +636,18 @@ impl Cpu {
         }
     }
 
-    #[inline]
     fn fp_binary<T: FpFmt, F>(&mut self, instr: &Instruction, f: F)
         where F: Fn(T, T) -> T
     {
         let a = T::read_fpr(&self.reg_fpr[instr.fs()]);
         let b = T::read_fpr(&self.reg_fpr[instr.ft()]);
-        T::write_fpr(&mut self.reg_fpr[instr.fd()], f(a, b));
+        let res = f(a, b);
+        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.fs(), a);
+        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.ft(), b);
+        dprintln!(self, "{} $f{} <- {:16.8}", INDENT, instr.fd(), res);
+        T::write_fpr(&mut self.reg_fpr[instr.fd()], res);
     }
 
-    #[inline]
     fn fp_binary_2way<F, G>(&mut self, instr: &Instruction, f: F, g: G)
         where F: Fn(f32, f32) -> f32, G: Fn(f64, f64) -> f64
     {
@@ -705,15 +658,16 @@ impl Cpu {
         }
     }
 
-    #[inline]
     fn fp_convert<T: FpFmt, U: FpFmt, F>(&mut self, instr: &Instruction, f: F)
         where F: Fn(T) -> U
     {
         let value = T::read_fpr(&self.reg_fpr[instr.fs()]);
-        U::write_fpr(&mut self.reg_fpr[instr.fd()], f(value));
+        let res = f(value);
+        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.fs(), value);
+        dprintln!(self, "{} $f{} <- {:16.8}", INDENT, instr.fd(), res);
+        U::write_fpr(&mut self.reg_fpr[instr.fd()], res);
     }
 
-    #[inline]
     fn fp_convert_2way<U: FpFmt, F, G>(&mut self, instr: &Instruction, f: F, g: G)
         where F: Fn(f32) -> U, G: Fn(f64) -> U
     {
@@ -724,7 +678,6 @@ impl Cpu {
         }
     }
 
-    #[inline]
     fn fp_compare<T: FpFmt, F>(&mut self, instr: &Instruction, f: F)
         where F: Fn(FpOrd) -> bool
     {
@@ -737,10 +690,12 @@ impl Cpu {
             Some(Ordering::Less)    => FpOrd::Lt,
         };
         let cond = f(comp);
+        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.fs(), a);
+        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.ft(), b);
+        dprintln!(self, "{} cond <- {}", INDENT, cond);
         self.reg_fcr31 = (self.reg_fcr31 & 0xff7f_ffff) | ((cond as u32) << 23);
     }
 
-    #[inline]
     fn fp_compare_2way<F>(&mut self, instr: &Instruction, f: F)
         where F: Fn(FpOrd) -> bool
     {
@@ -751,7 +706,37 @@ impl Cpu {
         }
     }
 
-    #[inline]
+    fn mem_load_fp<T: FpFmt + MemFmt>(&mut self, instr: &Instruction) {
+        let addr = self.aligned_addr(&instr, T::get_align());
+        let data = T::load_from(self, addr);
+        dprintln!(self, "{} $f{} <- {:16.8} :  mem @ {:#x}",
+                  INDENT, instr.ft(), data, addr);
+        T::write_fpr(&mut self.reg_fpr[instr.ft()], data);
+    }
+
+    fn mem_store_fp<T: FpFmt + MemFmt>(&mut self, instr: &Instruction) {
+        let addr = self.aligned_addr(&instr, T::get_align());
+        let data = T::read_fpr(&self.reg_fpr[instr.ft()]);
+        dprintln!(self, "{}         {:16.8} -> mem @ {:#x}", INDENT, data, addr);
+        T::store_to(self, addr, data);
+    }
+
+    fn reg_load_fp<T: FpFmt, F>(&mut self, instr: &Instruction, func: F)
+        where F: Fn(u64) -> T
+    {
+        let value = func(self.read_gpr(instr.rt()));
+        dprintln!(self, "{} $f{} <- {:16.8}", INDENT, instr.fs(), value);
+        T::write_fpr(&mut self.reg_fpr[instr.fs()], value);
+    }
+
+    fn reg_store_fp<T: FpFmt, F>(&mut self, instr: &Instruction, func: F)
+        where F: Fn(T) -> u64
+    {
+        let value = T::read_fpr(&self.reg_fpr[instr.fs()]);
+        dprintln!(self, "{} {} <- {:16.8}", INDENT, REG_NAMES[instr.rt()], value);
+        self.write_gpr(instr.rt(), func(value));
+    }
+
     fn read_word(&mut self, virt_addr: u64) -> u32 {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         match self.interconnect.read_word(phys_addr as u32) {
@@ -762,15 +747,25 @@ impl Cpu {
         }
     }
 
-    #[inline]
     fn write_word(&mut self, virt_addr: u64, word: u32) {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
+        if (phys_addr as u32) & !0xF == self.cp0.reg_lladdr {
+            self.reg_llbit = false;
+        }
         if let Err(desc) = self.interconnect.write_word(phys_addr as u32, word) {
             bug!(self, "{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr);
         }
     }
 
-    #[inline]
+    fn read_dword(&mut self, virt_addr: u64) -> u64 {
+        (self.read_word(virt_addr) as u64) << 32 | self.read_word(virt_addr + 4) as u64
+    }
+
+    fn write_dword(&mut self, virt_addr: u64, dword: u64) {
+        self.write_word(virt_addr, (dword >> 32) as u32);
+        self.write_word(virt_addr + 4, dword as u32);
+    }
+
     fn virt_addr_to_phys_addr(&self, virt_addr: u64) -> u64 {
         // See Table 5-3 in the VR4300 User's Manual
         let addr_bit_values = (virt_addr >> 29) & 0b111;
@@ -787,19 +782,83 @@ impl Cpu {
         }
     }
 
-    #[inline]
     fn read_gpr(&self, index: usize) -> u64 {
         // Reg 0 is always 0 since we never write it
         self.reg_gpr[index]
     }
 
-    #[inline]
     fn write_gpr(&mut self, index: usize, value: u64) {
         if index != 0 {
             self.reg_gpr[index] = value;
         }
     }
+
+    #[cold]
+    fn bug(&self, msg: String) -> ! {
+        //println!("{:#?}", $cpu.interconnect);
+        println!("{:?}", self);
+        println!("last instr was:    {:?}", Instruction(self.last_instr));
+        println!("#instrs executed:  {}", self.instr_counter);
+        panic!(msg);
+    }
 }
+
+
+trait MemFmt: Copy + fmt::LowerHex {
+    fn get_align() -> u64;
+    fn load_from(&mut Cpu, u64) -> Self;
+    fn store_to(&mut Cpu, u64, Self);
+    fn rotate_left(self, amount: u32) -> Self;
+}
+
+impl MemFmt for u8 {
+    fn get_align() -> u64 { 1 }
+    fn load_from(cpu: &mut Cpu, addr: u64) -> u8 {
+        let word = cpu.read_word(addr & !3);
+        let shift = 8 * (3 - (addr % 4));  // byte 0: shift 24
+        (word >> shift) as u8
+    }
+    fn store_to(cpu: &mut Cpu, addr: u64, val: u8) {
+        let mut word = cpu.read_word(addr & !3);
+        let shift = 8 * (3 - (addr % 4));
+        let mask = !(0xFF << shift);
+        word = (word & mask) | ((val as u32) << shift);
+        cpu.write_word(addr & !3, word);
+    }
+    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
+}
+
+impl MemFmt for u16 {
+    fn get_align() -> u64 { 2 }
+    fn load_from(cpu: &mut Cpu, addr: u64) -> u16 {
+        let word = cpu.read_word(addr & !3);
+        let shift = 8 * (2 - (addr % 4));  // halfword 0: shift 16
+        (word >> shift) as u16
+    }
+    fn store_to(cpu: &mut Cpu, addr: u64, val: u16) {
+        let mut word = cpu.read_word(addr & !3);
+        let shift = 8 * (2 - (addr % 4));
+        let mask = !(0xFFFF << shift);
+        word = (word & mask) | ((val as u32) << shift);
+        cpu.write_word(addr & !3, word);
+    }
+    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
+}
+
+impl MemFmt for u32 {
+    fn get_align() -> u64 { 4 }
+    fn load_from(cpu: &mut Cpu, addr: u64) -> u32 { cpu.read_word(addr) }
+    fn store_to(cpu: &mut Cpu, addr: u64, val: u32) { cpu.write_word(addr, val); }
+    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
+}
+
+impl MemFmt for u64 {
+    fn get_align() -> u64 { 8 }
+    fn load_from(cpu: &mut Cpu, addr: u64) -> u64 { cpu.read_dword(addr) }
+    fn store_to(cpu: &mut Cpu, addr: u64, val: u64) { cpu.write_dword(addr, val); }
+    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
+}
+
 
 #[derive(PartialEq, Eq)]
 enum FpOrd {
@@ -812,7 +871,7 @@ enum FpOrd {
 // TODO: verify this is the correct offset for half-width
 const LO: usize = 4;
 
-trait FpFmt: PartialOrd {
+trait FpFmt: Copy + fmt::Display + PartialOrd {
     fn read_fpr(&[u8; 8]) -> Self;
     fn write_fpr(&mut [u8; 8], value: Self);
 }

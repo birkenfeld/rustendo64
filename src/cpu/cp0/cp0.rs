@@ -13,6 +13,8 @@ pub struct Cp0 {
     reg_entry_hi:  u64,
     reg_page_mask: u32,
 
+    pub reg_lladdr:    u32,
+
     pub reg_status:    reg_status::RegStatus,
     pub reg_config:    reg_config::RegConfig,
     pub reg_cause:     reg_cause::RegCause,
@@ -36,6 +38,7 @@ impl Cp0 {
             13 => { self.reg_cause   = (data as u32).into(); }
             14 => { self.reg_epc     = data; }
             16 => { self.reg_config  = (data as u32).into(); }
+            17 => { self.reg_lladdr  = data as u32; }
             // Cache tag registers
             28 => { self.reg_tag_lo  = data as u32; }
             29 => if data != 0 { panic!("wrote nonzero to TAG_HI reg"); },
@@ -56,6 +59,7 @@ impl Cp0 {
             12 => self.reg_status.to_u32() as u64,
             13 => self.reg_cause.to_u32() as u64,
             14 => self.reg_epc,
+            17 => self.reg_lladdr as u64,
             28 => self.reg_tag_lo as u64,
             29 => 0,  // reg_tag_hi is reserved
             30 => self.reg_error_epc,
