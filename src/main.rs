@@ -4,6 +4,7 @@ extern crate byteorder;
 
 mod n64;
 mod cpu;
+mod memmap;
 mod interconnect;
 mod cic;
 mod util;

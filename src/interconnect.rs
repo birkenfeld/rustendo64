@@ -2,6 +2,7 @@ use std::fmt;
 use byteorder::{BigEndian, ByteOrder};
 
 use cic;
+use memmap::*;
 
 const PIF_ROM_SIZE: usize = 2048;
 const RAM_SIZE: usize = 8 * 1024 * 1024;
@@ -116,12 +117,10 @@ struct Pi {
 struct Ri {
     reg_mode: u32,
     reg_config: u32,
-    reg_current_load: u32,
     reg_select: u32,
     reg_refresh: u32,
     reg_latency: u32,
     reg_rerror: u32,
-    reg_werror: u32,
 }
 
 #[derive(Default, Debug)]
@@ -189,29 +188,24 @@ impl Interconnect {
 
     pub fn read_word(&mut self, addr: u32) -> Result<u32, &'static str> {
         let res = match addr {
-            // TODO: Replace constants with useful names
-            0x0000_0000 ... 0x03ef_ffff => {
-                // RAM
+            RDRAM_START ... RDRAM_END => {
                 let addr = addr as usize;
                 // Cannot use byteorder: RAM is 16bits
                 ((self.ram[addr] as u32) << 24) |
                 ((self.ram[addr + 1] as u32) << 16) |
                 ((self.ram[addr + 2] as u32) << 8) |
                  (self.ram[addr + 3] as u32)
-            }
-            0x1000_0000 ... 0x1fbf_ffff => {
-                // Cartridge ROM
-                let rel_addr = addr as usize - 0x1000_0000;
+            },
+            CART_START ... CART_END => {
+                let rel_addr = (addr - CART_START) as usize;
                 BigEndian::read_u32(&self.cart_rom[rel_addr..])
-            }
-            0x1fc0_0000 ... 0x1fc0_07bf => {
-                // PIF ROM
-                let rel_addr = addr as usize - 0x1fc0_0000;
+            },
+            PIF_ROM_START ... PIF_ROM_END => {
+                let rel_addr = (addr - PIF_ROM_START) as usize;
                 BigEndian::read_u32(&self.pif_rom[rel_addr..])
-            }
-            0x1fc0_07c0 ... 0x1fc0_07ff => {
-                // PIF RAM
-                let rel_addr = addr as usize - 0x1fc0_07c0;
+            },
+            PIF_RAM_START ... PIF_RAM_END => {
+                let rel_addr = (addr - PIF_RAM_START) as usize;
                 if rel_addr == 0x3c {
                     self.pif_status
                 } else {
@@ -221,190 +215,122 @@ impl Interconnect {
                     }
                     self.pif_ram[rel_addr / 4]
                 }
+            },
+            SP_DMEM_START ... SP_DMEM_END => {
+                self.spram.dmem[(addr - SP_DMEM_START) as usize / 4]
             }
-            0x03f0_0000 ... 0x03ff_ffff => {
-                // RDRAM register area
-                match addr {
-                    0x03f0_0000 => self.rd.reg_config,
-                    0x03f0_0004 => self.rd.reg_device_id,
-                    0x03f0_0008 => self.rd.reg_delay,
-                    0x03f0_000c => self.rd.reg_mode,
-                    0x03f0_0010 => self.rd.reg_ref_interval,
-                    0x03f0_0014 => self.rd.reg_ref_row,
-                    0x03f0_0018 => self.rd.reg_ras_interval,
-                    0x03f0_001c => self.rd.reg_min_interval,
-                    0x03f0_0020 => self.rd.reg_addr_select,
-                    0x03f0_0024 => self.rd.reg_device_manuf,
-                    _ => {
-                        return Err("Unsupported RDreg read address");
-                    }
-                }
+            SP_IMEM_START ... SP_IMEM_END => {
+                self.spram.imem[(addr - SP_IMEM_START) as usize / 4]
             }
-            0x0400_0000 ... 0x040f_ffff => {
-                // SP area
-                match addr {
-                    0x0400_0000 ... 0x0400_0fff => {
-                        self.spram.dmem[(addr as usize - 0x0400_0000) / 4]
-                    }
-                    0x0400_1000 ... 0x0400_1fff => {
-                        self.spram.imem[(addr as usize - 0x0400_1000) / 4]
-                    }
-                    0x0404_0000 => self.sp.reg_mem_addr,
-                    0x0404_0004 => self.sp.reg_dram_addr,
-                    0x0404_0008 => self.sp.reg_rd_len,
-                    0x0404_000c => self.sp.reg_wr_len,
-                    0x0404_0010 => self.sp.reg_status,
-                    0x0404_0014 => self.sp.reg_dma_full,
-                    0x0404_0018 => self.sp.reg_dma_busy,
-                    0x0404_001c => self.sp.reg_semaphore,
-                    0x0408_0000 => self.sp.reg_pc,
-                    0x0408_0004 => self.sp.reg_ibist,
-                    _ => {
-                        return Err("Unsupported SP read address");
-                    }
-                }
-            }
-            0x0410_0000 ... 0x042f_ffff => {
-                // DP area
-                match addr {
-                    0x0410_0000 => self.dp.reg_start,
-                    0x0410_0004 => self.dp.reg_end,
-                    0x0410_0008 => self.dp.reg_current,
-                    0x0410_000c => self.dp.reg_status,
-                    0x0410_0010 => self.dp.reg_clock,
-                    0x0410_0014 => self.dp.reg_bufbusy,
-                    0x0410_0018 => self.dp.reg_pipebusy,
-                    0x0410_001c => self.dp.reg_tmem,
-                    0x0420_0000 => self.dp.reg_tbist,
-                    0x0420_0004 => self.dp.reg_test_mode,
-                    0x0420_0008 => self.dp.reg_buftest_addr,
-                    0x0420_000c => self.dp.reg_buftest_data,
-                    _ => {
-                        return Err("Unsupported DP read address");
-                    }
-                }
-            }
-            0x0430_0000 ... 0x043f_ffff => {
-                // MI area
-                match addr {
-                    0x0430_0000 => self.mi.reg_mode,
-                    0x0430_0004 => self.mi.reg_version,
-                    0x0430_0008 => self.mi.reg_intr,
-                    0x0430_000c => self.mi.reg_intr_mask,
-                    _ => {
-                        return Err("Unsupported MI read address");
-                    }
-                }
-            }
-            0x0440_0000 ... 0x044f_ffff => {
-                // VI area
-                match addr {
-                    0x0440_0000 => self.vi.reg_status,
-                    0x0440_0004 => self.vi.reg_origin,
-                    0x0440_0008 => self.vi.reg_width,
-                    0x0440_000c => self.vi.reg_intr,
-                    0x0440_0010 => self.vi.reg_current,
-                    0x0440_0014 => self.vi.reg_burst,
-                    0x0440_0018 => self.vi.reg_v_sync,
-                    0x0440_001c => self.vi.reg_h_sync,
-                    0x0440_0020 => self.vi.reg_leap,
-                    0x0440_0024 => self.vi.reg_h_start,
-                    0x0440_0028 => self.vi.reg_v_start,
-                    0x0440_002c => self.vi.reg_v_burst,
-                    0x0440_0030 => self.vi.reg_x_scale,
-                    0x0440_0034 => self.vi.reg_y_scale,
-                    _ => {
-                        return Err("Unsupported VI read address");
-                    }
-                }
-            }
-            0x0450_0000 ... 0x045f_ffff => {
-                // AI area
-                match addr {
-                    0x0450_0000 => self.ai.reg_dram_addr,
-                    0x0450_0004 => self.ai.reg_len,
-                    0x0450_000c => self.ai.reg_status,
-                    _ => {
-                        return Err("Unsupported AI read address");
-                    }
-                }
-            }
-            0x0460_0000 ... 0x046f_ffff => {
-                // PI area
-                match addr {
-                    0x0460_0000 => self.pi.reg_dram_addr,
-                    0x0460_0004 => self.pi.reg_cart_addr,
-                    0x0460_0008 => self.pi.reg_rd_len,
-                    0x0460_000c => self.pi.reg_wr_len,
-                    0x0460_0010 => self.pi.reg_status,
-                    0x0460_0014 => self.pi.reg_bsd_dom1_lat,
-                    0x0460_0018 => self.pi.reg_bsd_dom1_pwd,
-                    0x0460_001c => self.pi.reg_bsd_dom1_pgs,
-                    0x0460_0020 => self.pi.reg_bsd_dom1_rls,
-                    0x0460_0024 => self.pi.reg_bsd_dom2_lat,
-                    0x0460_0028 => self.pi.reg_bsd_dom2_pwd,
-                    0x0460_002c => self.pi.reg_bsd_dom2_pgs,
-                    0x0460_0030 => self.pi.reg_bsd_dom2_rls,
-                    _ => {
-                        return Err("Unsupported PI read address");
-                    }
-                }
-            }
-            0x0470_0000 ... 0x047f_ffff => {
-                // RI area
-                match addr {
-                    0x0470_0000 => self.ri.reg_mode,
-                    0x0470_0004 => self.ri.reg_config,
-                    0x0470_0008 => self.ri.reg_current_load,
-                    0x0470_000c => self.ri.reg_select,
-                    0x0470_0010 => self.ri.reg_refresh,
-                    0x0470_0014 => self.ri.reg_latency,
-                    0x0470_0018 => self.ri.reg_rerror,
-                    _ => {
-                        return Err("Unsupported RI read address");
-                    }
-                }
-            }
-            0x0480_0000 ... 0x048f_ffff => {
-                // SI area
-                match addr {
-                    0x0480_0000 => self.si.reg_dram_addr,
-                    0x0480_0004 => self.si.reg_pif_addr_rd64b,
-                    0x0480_0010 => self.si.reg_pif_addr_wr64b,
-                    0x0480_0018 => self.si.reg_status,
-                    _ => {
-                        return Err("Unsupported SI read address");
-                    }
-                }
-            }
-            0x0600_0000 ... 0x063f_ffff => {
+            DD_ROM_START ... DD_ROM_END => {
                 // DD IPL ROM, return zeros
                 0
             }
+            // RDRAM registers
+            RDRAM_REG_CONFIG       => self.rd.reg_config,
+            RDRAM_REG_DEVICE_ID    => self.rd.reg_device_id,
+            RDRAM_REG_DELAY        => self.rd.reg_delay,
+            RDRAM_REG_MODE         => self.rd.reg_mode,
+            RDRAM_REG_REF_INTERVAL => self.rd.reg_ref_interval,
+            RDRAM_REG_REF_ROW      => self.rd.reg_ref_row,
+            RDRAM_REG_RAS_INTERVAL => self.rd.reg_ras_interval,
+            RDRAM_REG_MIN_INTERVAL => self.rd.reg_min_interval,
+            RDRAM_REG_ADDR_SELECT  => self.rd.reg_addr_select,
+            RDRAM_REG_DEVICE_MANUF => self.rd.reg_device_manuf,
+            // RI registers
+            RI_REG_MODE            => self.ri.reg_mode,
+            RI_REG_CONFIG          => self.ri.reg_config,
+            RI_REG_SELECT          => self.ri.reg_select,
+            RI_REG_REFRESH         => self.ri.reg_refresh,
+            RI_REG_LATENCY         => self.ri.reg_latency,
+            RI_REG_RERROR          => self.ri.reg_rerror,
+            // RSP registers
+            SP_REG_MEM_ADDR        => self.sp.reg_mem_addr,
+            SP_REG_DRAM_ADDR       => self.sp.reg_dram_addr,
+            SP_REG_RD_LEN          => self.sp.reg_rd_len,
+            SP_REG_WR_LEN          => self.sp.reg_wr_len,
+            SP_REG_STATUS          => self.sp.reg_status,
+            SP_REG_DMA_FULL        => self.sp.reg_dma_full,
+            SP_REG_DMA_BUSY        => self.sp.reg_dma_busy,
+            SP_REG_SEMAPHORE       => self.sp.reg_semaphore,
+            SP_REG_PC              => self.sp.reg_pc,
+            SP_REG_IBIST           => self.sp.reg_ibist,
+            // RDP registers
+            DPC_REG_START          => self.dp.reg_start,
+            DPC_REG_END            => self.dp.reg_end,
+            DPC_REG_CURRENT        => self.dp.reg_current,
+            DPC_REG_STATUS         => self.dp.reg_status,
+            DPC_REG_CLOCK          => self.dp.reg_clock,
+            DPC_REG_BUFBUSY        => self.dp.reg_bufbusy,
+            DPC_REG_PIPEBUSY       => self.dp.reg_pipebusy,
+            DPC_REG_TMEM           => self.dp.reg_tmem,
+            DPS_REG_TBIST          => self.dp.reg_tbist,
+            DPS_REG_TEST_MODE      => self.dp.reg_test_mode,
+            DPS_REG_BUFTEST_ADDR   => self.dp.reg_buftest_addr,
+            DPS_REG_BUFTEST_DATA   => self.dp.reg_buftest_data,
+            // MIPS interface
+            MI_REG_MODE            => self.mi.reg_mode,
+            MI_REG_VERSION         => self.mi.reg_version,
+            MI_REG_INTR            => self.mi.reg_intr,
+            MI_REG_INTR_MASK       => self.mi.reg_intr_mask,
+            // Video interface
+            VI_REG_STATUS          => self.vi.reg_status,
+            VI_REG_ORIGIN          => self.vi.reg_origin,
+            VI_REG_H_WIDTH         => self.vi.reg_width,
+            VI_REG_V_INTR          => self.vi.reg_intr,
+            VI_REG_CURRENT         => self.vi.reg_current,
+            VI_REG_BURST           => self.vi.reg_burst,
+            VI_REG_V_SYNC          => self.vi.reg_v_sync,
+            VI_REG_H_SYNC          => self.vi.reg_h_sync,
+            VI_REG_LEAP            => self.vi.reg_leap,
+            VI_REG_H_START         => self.vi.reg_h_start,
+            VI_REG_V_START         => self.vi.reg_v_start,
+            VI_REG_V_BURST         => self.vi.reg_v_burst,
+            VI_REG_X_SCALE         => self.vi.reg_x_scale,
+            VI_REG_Y_SCALE         => self.vi.reg_y_scale,
+            // Audio interface
+            AI_REG_DRAM_ADDR       => self.ai.reg_dram_addr,
+            AI_REG_LEN             => self.ai.reg_len,
+            AI_REG_STATUS          => self.ai.reg_status,
+            // Peripheral interface
+            PI_REG_DRAM_ADDR       => self.pi.reg_dram_addr,
+            PI_REG_CART_ADDR       => self.pi.reg_cart_addr,
+            PI_REG_RD_LEN          => self.pi.reg_rd_len,
+            PI_REG_WR_LEN          => self.pi.reg_wr_len,
+            PI_REG_STATUS          => self.pi.reg_status,
+            PI_REG_BSD_DOM1_LAT    => self.pi.reg_bsd_dom1_lat,
+            PI_REG_BSD_DOM1_PWD    => self.pi.reg_bsd_dom1_pwd,
+            PI_REG_BSD_DOM1_PGS    => self.pi.reg_bsd_dom1_pgs,
+            PI_REG_BSD_DOM1_RLS    => self.pi.reg_bsd_dom1_rls,
+            PI_REG_BSD_DOM2_LAT    => self.pi.reg_bsd_dom2_lat,
+            PI_REG_BSD_DOM2_PWD    => self.pi.reg_bsd_dom2_pwd,
+            PI_REG_BSD_DOM2_PGS    => self.pi.reg_bsd_dom2_pgs,
+            PI_REG_BSD_DOM2_RLS    => self.pi.reg_bsd_dom2_rls,
+            // Serial interface
+            SI_REG_DRAM_ADDR       => self.si.reg_dram_addr,
+            SI_REG_STATUS          => self.si.reg_status,
             _ => {
                 // TODO
                 return Err("Unsupported read memory area");
             }
         };
-        if addr > 0x03ef_ffff {
-            if addr < 0x0400_0000 || addr > 0x0400_1fff {
-                if addr < 0x1000_0000 || addr > 0x1fc0_07bf {
-                    // Log all reads from non-RAM, non-ROM locations
-                    println!("Bus read:  {:#10x} :  {:#10x}", addr, res);
-                }
-            }
+        if addr > RDRAM_END &&
+            (addr < SP_DMEM_START || addr > SP_IMEM_END) &&
+            (addr < CART_START || addr > PIF_ROM_END)
+        {
+            // Log all reads from non-RAM, non-ROM locations
+            println!("Bus read:  {:#10x} :  {:#10x}", addr, res);
         }
         Ok(res)
     }
 
     pub fn write_word(&mut self, addr: u32, mut word: u32) -> Result<(), &'static str> {
-        if addr > 0x03ef_ffff && (addr < 0x0400_0000 || addr > 0x0400_1fff) {
+        if addr > RDRAM_END && (addr < SP_DMEM_START || addr > SP_IMEM_END) {
             // Log all writes to non-RAM locations
             println!("Bus write: {:#10x} <- {:#10x}", addr, word);
         }
         match addr {
-            0x0000_0000 ... 0x03ef_ffff => {
-                // RAM
+            RDRAM_START ... RDRAM_END => {
                 let addr = addr as usize;
                 // Cannot use byteorder: RAM is 16bits
                 self.ram[addr + 3] = word as u16 & 0xff;
@@ -414,172 +340,108 @@ impl Interconnect {
                 self.ram[addr + 1] = word as u16 & 0xff;
                 word >>= 8;
                 self.ram[addr] = word as u16;
-            }
-            0x1fc0_07c0 ... 0x1fc0_07ff => {
-                // PIF RAM
-                let rel_addr = addr as usize - 0x1fc0_07c0;
+            },
+            PIF_RAM_START ... PIF_RAM_END => {
+                let rel_addr = (addr - PIF_RAM_START) as usize;
                 // XXX assumes alignment
                 self.pif_ram[rel_addr / 4] = word;
-            }
-            0x03f0_0000 ... 0x03ff_ffff => {
-                // RDRAM register area
-                match addr {
-                    0x03f0_0000 => self.rd.reg_config = word,
-                    0x03f0_0004 => self.rd.reg_device_id = word,
-                    0x03f0_0008 => self.rd.reg_delay = word,
-                    0x03f0_000c => self.rd.reg_mode = word,
-                    0x03f0_0010 => self.rd.reg_ref_interval = word,
-                    0x03f0_0014 => self.rd.reg_ref_row = word,
-                    0x03f0_0018 => self.rd.reg_ras_interval = word,
-                    0x03f0_001c => self.rd.reg_min_interval = word,
-                    0x03f0_0020 => self.rd.reg_addr_select = word,
-                    _ => {
-                        return Err("Unsupported RDreg write address");
-                    }
+            },
+            SP_DMEM_START ... SP_DMEM_END => {
+                self.spram.dmem[(addr - SP_DMEM_START) as usize / 4] = word;
+            },
+            SP_IMEM_START ... SP_IMEM_END => {
+                self.spram.imem[(addr - SP_IMEM_START) as usize / 4] = word;
+            },
+            // RDRAM registers
+            RDRAM_REG_CONFIG       => self.rd.reg_config = word,
+            RDRAM_REG_DEVICE_ID    => self.rd.reg_device_id = word,
+            RDRAM_REG_DELAY        => self.rd.reg_delay = word,
+            RDRAM_REG_MODE         => self.rd.reg_mode = word,
+            RDRAM_REG_REF_INTERVAL => self.rd.reg_ref_interval = word,
+            RDRAM_REG_REF_ROW      => self.rd.reg_ref_row = word,
+            RDRAM_REG_RAS_INTERVAL => self.rd.reg_ras_interval = word,
+            RDRAM_REG_MIN_INTERVAL => self.rd.reg_min_interval = word,
+            RDRAM_REG_ADDR_SELECT  => self.rd.reg_addr_select = word,
+            // RI registers
+            RI_REG_MODE            => self.ri.reg_mode = word,
+            RI_REG_CONFIG          => self.ri.reg_config = word,
+            RI_REG_CURRENT_LOAD    => { /* TODO */ },
+            RI_REG_SELECT          => self.ri.reg_select = word,
+            RI_REG_REFRESH         => self.ri.reg_refresh = word,
+            RI_REG_LATENCY         => self.ri.reg_latency = word,
+            RI_REG_WERROR          => { /* TODO */ },
+            // RSP registers
+            SP_REG_MEM_ADDR        => self.sp.reg_mem_addr = word,
+            SP_REG_DRAM_ADDR       => self.sp.reg_dram_addr = word,
+            SP_REG_RD_LEN          => self.sp.reg_rd_len = word,
+            SP_REG_WR_LEN          => self.sp.reg_wr_len = word,
+            SP_REG_STATUS          => self.sp.reg_status = word,
+            SP_REG_SEMAPHORE       => self.sp.reg_semaphore = word,
+            SP_REG_PC              => self.sp.reg_pc = word,
+            SP_REG_IBIST           => self.sp.reg_ibist = word,
+            // RDP registers
+            DPC_REG_START          => self.dp.reg_start = word,
+            DPC_REG_END            => self.dp.reg_end = word,
+            DPC_REG_STATUS         => self.dp.reg_status = word,
+            DPS_REG_TBIST          => self.dp.reg_tbist = word,
+            DPS_REG_TEST_MODE      => self.dp.reg_test_mode = word,
+            DPS_REG_BUFTEST_ADDR   => self.dp.reg_buftest_addr = word,
+            DPS_REG_BUFTEST_DATA   => self.dp.reg_buftest_data = word,
+            // MIPS interface
+            MI_REG_MODE            => self.mi.reg_mode = word,
+            MI_REG_INTR_MASK       => self.mi.reg_intr_mask = word,
+            // Video interface
+            VI_REG_STATUS          => self.vi.reg_status = word,
+            VI_REG_ORIGIN          => self.vi.reg_origin = word,
+            VI_REG_H_WIDTH         => self.vi.reg_width = word,
+            VI_REG_V_INTR          => self.vi.reg_intr = word,
+            VI_REG_CURRENT         => self.vi.reg_current = word,
+            VI_REG_BURST           => self.vi.reg_burst = word,
+            VI_REG_V_SYNC          => self.vi.reg_v_sync = word,
+            VI_REG_H_SYNC          => self.vi.reg_h_sync = word,
+            VI_REG_LEAP            => self.vi.reg_leap = word,
+            VI_REG_H_START         => self.vi.reg_h_start = word,
+            VI_REG_V_START         => self.vi.reg_v_start = word,
+            VI_REG_V_BURST         => self.vi.reg_v_burst = word,
+            VI_REG_X_SCALE         => self.vi.reg_x_scale = word,
+            VI_REG_Y_SCALE         => self.vi.reg_y_scale = word,
+            // Audio interface
+            AI_REG_DRAM_ADDR       => self.ai.reg_dram_addr = word,
+            AI_REG_LEN             => self.ai.reg_len = word,
+            AI_REG_CONTROL         => self.ai.reg_control = word,
+            AI_REG_STATUS          => self.ai.reg_status = word,
+            AI_REG_DACRATE         => self.ai.reg_dacrate = word,
+            AI_REG_BITRATE         => self.ai.reg_bitrate = word,
+            // Peripheral interface
+            PI_REG_DRAM_ADDR       => self.pi.reg_dram_addr = word,
+            PI_REG_CART_ADDR       => self.pi.reg_cart_addr = word,
+            PI_REG_RD_LEN          => self.pi.reg_rd_len = word,
+            PI_REG_WR_LEN          => {
+                self.pi.reg_wr_len = word;
+                // DMA transfer ROM -> main memory
+                let ram_start = self.pi.reg_dram_addr as usize;  // offset is 0
+                let rom_start = self.pi.reg_cart_addr as usize - 0x1000_0000;
+                let length = (word + 1) as usize;
+                println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
+                         length, rom_start, ram_start);
+                for i in 0..length {
+                    self.ram[ram_start + i] = self.cart_rom[rom_start + i] as u16;
                 }
-            }
-            0x0400_0000 ... 0x040f_ffff => {
-                // SP area
-                match addr {
-                    0x0400_0000 ... 0x0400_0fff => {
-                        self.spram.dmem[(addr as usize - 0x0400_0000) / 4] = word;
-                    }
-                    0x0400_1000 ... 0x0400_1fff => {
-                        self.spram.imem[(addr as usize - 0x0400_1000) / 4] = word;
-                    }
-                    0x0404_0000 => self.sp.reg_mem_addr = word,
-                    0x0404_0004 => self.sp.reg_dram_addr = word,
-                    0x0404_0008 => self.sp.reg_rd_len = word,
-                    0x0404_000c => self.sp.reg_wr_len = word,
-                    0x0404_0010 => self.sp.reg_status = word,
-                    0x0404_001c => self.sp.reg_semaphore = word,
-                    0x0408_0000 => self.sp.reg_pc = word,
-                    0x0408_0004 => self.sp.reg_ibist = word,
-                    _ => {
-                        return Err("Unsupported SP write address");
-                    }
-                }
-            }
-            0x0410_0000 ... 0x042f_ffff => {
-                // DP area
-                match addr {
-                    0x0410_0000 => self.dp.reg_start = word,
-                    0x0410_0004 => self.dp.reg_end = word,
-                    0x0410_000c => self.dp.reg_status = word,
-                    0x0420_0000 => self.dp.reg_tbist = word,
-                    0x0420_0004 => self.dp.reg_test_mode = word,
-                    0x0420_0008 => self.dp.reg_buftest_addr = word,
-                    0x0420_000c => self.dp.reg_buftest_data = word,
-                    _ => {
-                        return Err("Unsupported DP write address");
-                    }
-                }
-            }
-            0x0430_0000 ... 0x043f_ffff => {
-                // MI area
-                match addr {
-                    0x0430_0000 => self.mi.reg_mode = word,
-                    0x0430_000c => self.mi.reg_intr_mask = word,
-                    _ => {
-                        return Err("Unsupported MI write address");
-                    }
-                }
-            }
-            0x0440_0000 ... 0x044f_ffff => {
-                // VI area
-                match addr {
-                    0x0440_0000 => self.vi.reg_status = word,
-                    0x0440_0004 => self.vi.reg_origin = word,
-                    0x0440_0008 => self.vi.reg_width = word,
-                    0x0440_000c => self.vi.reg_intr = word,
-                    0x0440_0010 => self.vi.reg_current = word,
-                    0x0440_0014 => self.vi.reg_burst = word,
-                    0x0440_0018 => self.vi.reg_v_sync = word,
-                    0x0440_001c => self.vi.reg_h_sync = word,
-                    0x0440_0020 => self.vi.reg_leap = word,
-                    0x0440_0024 => self.vi.reg_h_start = word,
-                    0x0440_0028 => self.vi.reg_v_start = word,
-                    0x0440_002c => self.vi.reg_v_burst = word,
-                    0x0440_0030 => self.vi.reg_x_scale = word,
-                    0x0440_0034 => self.vi.reg_y_scale = word,
-                    _ => {
-                        return Err("Unsupported VI write address");
-                    }
-                }
-            }
-            0x0450_0000 ... 0x045f_ffff => {
-                // AI area
-                match addr {
-                    0x0450_0000 => self.ai.reg_dram_addr = word,
-                    0x0450_0004 => self.ai.reg_len = word,
-                    0x0450_0008 => self.ai.reg_control = word,
-                    0x0450_000c => { }, // TODO: clear intr
-                    0x0450_0010 => self.ai.reg_dacrate = word,
-                    0x0450_0014 => self.ai.reg_bitrate = word,
-                    _ => {
-                        return Err("Unsupported AI write address");
-                    }
-                }
-            }
-            0x0460_0000 ... 0x046f_ffff => {
-                // PI area
-                match addr {
-                    0x0460_0000 => self.pi.reg_dram_addr = word,
-                    0x0460_0004 => self.pi.reg_cart_addr = word,
-                    0x0460_0008 => self.pi.reg_rd_len = word,
-                    0x0460_000c => {
-                        self.pi.reg_wr_len = word;
-                        // DMA transfer ROM -> main memory
-                        let ram_start = self.pi.reg_dram_addr as usize;  // offset is 0
-                        let rom_start = self.pi.reg_cart_addr as usize - 0x1000_0000;
-                        let length = (word + 1) as usize;
-                        println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
-                                 length, rom_start, ram_start);
-                        for i in 0..length {
-                            self.ram[ram_start + i] = self.cart_rom[rom_start + i] as u16;
-                        }
-                    },
-                    0x0460_0010 => { }, // TODO: self.pi.reg_status = word,
-                    0x0460_0014 => self.pi.reg_bsd_dom1_lat = word,
-                    0x0460_0018 => self.pi.reg_bsd_dom1_pwd = word,
-                    0x0460_001c => self.pi.reg_bsd_dom1_pgs = word,
-                    0x0460_0020 => self.pi.reg_bsd_dom1_rls = word,
-                    0x0460_0024 => self.pi.reg_bsd_dom2_lat = word,
-                    0x0460_0028 => self.pi.reg_bsd_dom2_pwd = word,
-                    0x0460_002c => self.pi.reg_bsd_dom2_pgs = word,
-                    0x0460_0030 => self.pi.reg_bsd_dom2_rls = word,
-                    _ => {
-                        return Err("Unsupported PI write address");
-                    }
-                }
-            }
-            0x0470_0000 ... 0x047f_ffff => {
-                // RI area
-                match addr {
-                    0x0470_0000 => self.ri.reg_mode = word,
-                    0x0470_0004 => self.ri.reg_config = word,
-                    0x0470_0008 => self.ri.reg_current_load = word,
-                    0x0470_000c => self.ri.reg_select = word,
-                    0x0470_0010 => self.ri.reg_refresh = word,
-                    0x0470_0014 => self.ri.reg_latency = word,
-                    0x0470_001c => self.ri.reg_werror = word,
-                    _ => {
-                        return Err("Unsupported RI read address");
-                    }
-                }
-            }
-            0x0480_0000 ... 0x048f_ffff => {
-                // SI area
-                match addr {
-                    0x0480_0000 => self.si.reg_dram_addr = word,
-                    0x0480_0004 => self.si.reg_pif_addr_rd64b = word,
-                    0x0480_0010 => self.si.reg_pif_addr_wr64b = word,
-                    0x0480_0018 => self.si.reg_status = word,
-                    _ => {
-                        return Err("Unsupported SI write address");
-                    }
-                }
-            }
+            },
+            PI_REG_STATUS          => { /* TODO */ },
+            PI_REG_BSD_DOM1_LAT    => self.pi.reg_bsd_dom1_lat = word,
+            PI_REG_BSD_DOM1_PWD    => self.pi.reg_bsd_dom1_pwd = word,
+            PI_REG_BSD_DOM1_PGS    => self.pi.reg_bsd_dom1_pgs = word,
+            PI_REG_BSD_DOM1_RLS    => self.pi.reg_bsd_dom1_rls = word,
+            PI_REG_BSD_DOM2_LAT    => self.pi.reg_bsd_dom2_lat = word,
+            PI_REG_BSD_DOM2_PWD    => self.pi.reg_bsd_dom2_pwd = word,
+            PI_REG_BSD_DOM2_PGS    => self.pi.reg_bsd_dom2_pgs = word,
+            PI_REG_BSD_DOM2_RLS    => self.pi.reg_bsd_dom2_rls = word,
+            // Serial interface
+            SI_REG_DRAM_ADDR       => self.si.reg_dram_addr = word,
+            SI_REG_PIF_ADDR_RD64B  => self.si.reg_pif_addr_rd64b = word,
+            SI_REG_PIF_ADDR_WR64B  => self.si.reg_pif_addr_wr64b = word,
+            SI_REG_STATUS          => self.si.reg_status = word,
             _ => {
                 return Err("Unsupported memory write area");
             }
