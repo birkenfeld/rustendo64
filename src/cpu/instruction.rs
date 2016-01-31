@@ -353,8 +353,8 @@ impl fmt::Debug for Instruction {
     /// following caveats:
     ///
     /// * Branch targets are printed relative, since this routine doesn't
-    ///   know the instruction's address.
-    /// * We don't do extensive checks for unused bits being zero, so some invalid
+    ///   know the instruction's actual address.
+    /// * We don't do checks for unused bits being zero, so some invalid
     ///   instructions will not be flagged as invalid.
     /// * Probably not all short forms are implemented.
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -368,17 +368,12 @@ impl fmt::Debug for Instruction {
             (ims)   => { self.imm_signed() };
             (ioff)  => { (self.imm_signed() + 1) << 2 };
             (sa)    => { self.sa() };
-            (sa32)  => { 32 + self.sa() };
-            (targ)  => { self.j_target() << 2 };
+            (jadr)  => { format!("{:#x}", self.j_target() << 2) };
             (cop)   => { format!("{:#x}", self.rt()) };
-            (cpreg) => { self.cop_reg() };
+            (cpreg) => { format!("${}", self.cop_reg()) };
             (ft)    => { FP_REG_NAMES[self.ft()] };
             (fd)    => { FP_REG_NAMES[self.fd()] };
             (fs)    => { FP_REG_NAMES[self.fs()] };
-        }
-        /// General instruction with custom format and any number of args given.
-        macro_rules! ins {
-            ($fmt:expr, $($a:tt),+) => { write!(f, $fmt, $(aexp!($a)),+) }
         }
         /// N-argument instruction with special formats.
         macro_rules! ins1 {
@@ -426,8 +421,8 @@ impl fmt::Debug for Instruction {
             XORI    => ins3!("xori",   rt, rs, imm),
             SLTI    => ins3!("slti",   rt, rs, imm),
             SLTIU   => ins3!("sltiu",  rt, rs, imm),
-            J       => ins! ("j       {:#x}", targ),
-            JAL     => ins! ("jal     {:#x}", targ),
+            J       => ins1!("j",      jadr),
+            JAL     => ins1!("jal",    jadr),
             BEQ     => if self.rt() == 0 { ins2!("beqz",  rs, ioff) } else { ins3!("beq",  rs, rt, ioff) },
             BEQL    => if self.rt() == 0 { ins2!("beqzl", rs, ioff) } else { ins3!("beql", rs, rt, ioff) },
             BNE     => if self.rt() == 0 { ins2!("bnez",  rs, ioff) } else { ins3!("bne",  rs, rt, ioff) },
@@ -485,11 +480,11 @@ impl fmt::Debug for Instruction {
                 DSRAV   => ins3!("dsrav",  rd, rt, rs),
                 DSRLV   => ins3!("dsrlv",  rd, rt, rs),
                 DSLL    => ins3!("dsll",   rd, rt, sa),
-                DSLL32  => ins3!("dsll",   rd, rt, sa32),
+                DSLL32  => ins3!("dsll32", rd, rt, sa),
                 DSRA    => ins3!("dsra",   rd, rt, sa),
-                DSRA32  => ins3!("dsra",   rd, rt, sa32),
+                DSRA32  => ins3!("dsra32", rd, rt, sa),
                 DSRL    => ins3!("dsrl",   rd, rt, sa),
-                DSRL32  => ins3!("dsrl",   rd, rt, sa32),
+                DSRL32  => ins3!("dsrl32", rd, rt, sa),
                 MFHI    => ins1!("mfhi",   rd),
                 MFLO    => ins1!("mflo",   rd),
                 MTHI    => ins1!("mthi",   rs),
@@ -531,10 +526,10 @@ impl fmt::Debug for Instruction {
                 _       => unknown!(),
             },
             COP0    => match self.cop_op() {
-                MF      => ins!("mfc0    {}, ${}", rt, cpreg),
-                MT      => ins!("mtc0    {}, ${}", rt, cpreg),
-                DMF     => ins!("dmfc0   {}, ${}", rt, cpreg),
-                DMT     => ins!("dmtc0   {}, ${}", rt, cpreg),
+                MF      => ins2!("mfc0",  rt, cpreg),
+                MT      => ins2!("mtc0",  rt, cpreg),
+                DMF     => ins2!("dmfc0", rt, cpreg),
+                DMT     => ins2!("dmtc0", rt, cpreg),
                 BC      => match self.regimm_op() {
                     BCF     => ins1!("bc0f",  ioff),
                     BCFL    => ins1!("bc0fl", ioff),
@@ -557,8 +552,8 @@ impl fmt::Debug for Instruction {
                 MT      => ins2!("mtc1",  rt, fs),
                 DMF     => ins2!("dmfc1", rt, fs),
                 DMT     => ins2!("dmtc1", rt, fs),
-                CF      => ins! ("cfc1    {}, ${}", rt, cpreg),
-                CT      => ins! ("ctc1    {}, ${}", rt, cpreg),
+                CF      => ins2!("cfc1",  rt, cpreg),
+                CT      => ins2!("ctc1",  rt, cpreg),
                 BC      => match self.regimm_op() {
                     BCF     => ins1!("bc1f",  ioff),
                     BCFL    => ins1!("bc1fl", ioff),
@@ -577,7 +572,7 @@ impl fmt::Debug for Instruction {
                     FCVTW   => fpins2!("cvt.w",   fd, fs),
                     FDIV    => fpins3!("div",     fd, fs, ft),
                     FFLOORL => fpins2!("floor.l", fd, fs),
-                    FFLOORW => fpins2!("florr.w", fd, fs),
+                    FFLOORW => fpins2!("floor.w", fd, fs),
                     FMOV    => fpins2!("mov",     fd, fs),
                     FMUL    => fpins3!("mul",     fd, fs, ft),
                     FNEG    => fpins2!("neg",     fd, fs),
@@ -671,7 +666,7 @@ fn test_disassembly() {
                            (0x00408025, "move    s0, v0"),
                            (0x00000000, "nop"),
                            (0x00032a03, "sra     a1, v1, 8"),
-                           (0x0003183f, "dsra    v1, v1, 32"),
+                           (0x0003183f, "dsra32  v1, v1, 0"),
                            (0x00001010, "mfhi    v0"),
                            (0x01cf001d, "dmultu  t6, t7"),
                            (0x0000000f, "sync"),
