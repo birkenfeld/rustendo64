@@ -139,3 +139,29 @@ impl FpFmt for u64 {
         BigEndian::write_u64(reg, value);
     }
 }
+
+pub trait FpRoundExt {
+    fn round_to_even(&self) -> Self;
+}
+
+macro_rules! impl_round {
+    ($ty:ty) => {
+        impl FpRoundExt for $ty {
+            /// Very naive implementation of round-to-even.
+            fn round_to_even(&self) -> Self {
+                let i = self.floor();
+                let r = self - i;
+                match r.partial_cmp(&0.5) {
+                    Some(Ordering::Less)                    => i,
+                    Some(Ordering::Greater)                 => i + 1.0,
+                    Some(Ordering::Equal) if i % 2.0 == 0.0 => i,
+                    Some(Ordering::Equal)                   => i + 1.0,
+                    None                                    => *self,
+                }
+            }
+        }
+    }
+}
+
+impl_round!(f32);
+impl_round!(f64);

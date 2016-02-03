@@ -394,8 +394,8 @@ impl Cpu {
                     FCEILL  => self.fp_convert_2way(&instr, |a| a.ceil()  as i64, |a| a.ceil()  as i64),
                     FFLOORW => self.fp_convert_2way(&instr, |a| a.floor() as i32, |a| a.floor() as i32),
                     FFLOORL => self.fp_convert_2way(&instr, |a| a.floor() as i64, |a| a.floor() as i64),
-                    FROUNDW => self.fp_convert_2way(&instr, |a| a.round() as i32, |a| a.round() as i32),
-                    FROUNDL => self.fp_convert_2way(&instr, |a| a.round() as i64, |a| a.round() as i64),
+                    FROUNDW => self.fp_convert_2way(&instr, |a| a.round_to_even() as i32, |a| a.round_to_even() as i32),
+                    FROUNDL => self.fp_convert_2way(&instr, |a| a.round_to_even() as i64, |a| a.round_to_even() as i64),
                     FTRUNCW => self.fp_convert_2way(&instr, |a| a.trunc() as i32, |a| a.trunc() as i32),
                     FTRUNCL => self.fp_convert_2way(&instr, |a| a.trunc() as i64, |a| a.trunc() as i64),
                     // Compares
