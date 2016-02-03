@@ -1,6 +1,9 @@
 use std::fmt;
+use std::sync::mpsc;
+
 use byteorder::{BigEndian, ByteOrder};
 
+use ui::VideoMsg;
 use cic;
 use memmap::*;
 
@@ -147,10 +150,12 @@ pub struct Interconnect {
     pi: Pi,
     ri: Ri,
     si: Si,
+    interface: mpsc::Sender<VideoMsg>,
 }
 
 impl Interconnect {
-    pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>) -> Interconnect {
+    pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
+               interface: mpsc::Sender<VideoMsg>) -> Interconnect {
         Interconnect {
             pif_rom: pif_rom,
             pif_ram: vec![0; 16],
@@ -158,6 +163,7 @@ impl Interconnect {
             cart_rom: cart_rom,
             ram: vec![0; RAM_SIZE],
             spram: SpRam { dmem: vec![0; 1024], imem: vec![0; 1024] },
+            interface: interface,
             rd: Rd::default(),
             sp: Sp::default(),
             dp: Dp::default(),
@@ -278,7 +284,10 @@ impl Interconnect {
             VI_REG_ORIGIN          => self.vi.reg_origin,
             VI_REG_H_WIDTH         => self.vi.reg_width,
             VI_REG_V_INTR          => self.vi.reg_intr,
-            VI_REG_CURRENT         => self.vi.reg_current,
+            VI_REG_CURRENT         => {
+                self.vi.reg_current = (self.vi.reg_current + 1) % 525;
+                return Ok(self.vi.reg_current);  // bypass logging
+            },
             VI_REG_BURST           => self.vi.reg_burst,
             VI_REG_V_SYNC          => self.vi.reg_v_sync,
             VI_REG_H_SYNC          => self.vi.reg_h_sync,
@@ -325,21 +334,30 @@ impl Interconnect {
     }
 
     pub fn write_word(&mut self, addr: u32, mut word: u32) -> Result<(), &'static str> {
-        if addr > RDRAM_END && (addr < SP_DMEM_START || addr > SP_IMEM_END) {
+        if addr > RDRAM_END && (addr < SP_DMEM_START || addr > SP_IMEM_END) && addr != VI_REG_Y_SCALE {
             // Log all writes to non-RAM locations
             println!("Bus write: {:#10x} <- {:#10x}", addr, word);
         }
         match addr {
             RDRAM_START ... RDRAM_END => {
-                let addr = addr as usize;
+                let iaddr = addr as usize;
+                // Video RAM? (XXX size is variable)
+                if self.vi.reg_origin > 0 &&
+                    addr >= self.vi.reg_origin &&
+                    addr < self.vi.reg_origin + 0x12c000
+                {
+                    self.interface.send(VideoMsg::SetPixel(
+                        (addr - self.vi.reg_origin) as usize / 4,
+                        word >> 8)).unwrap();
+                }
                 // Cannot use byteorder: RAM is 16bits
-                self.ram[addr + 3] = word as u16 & 0xff;
+                self.ram[iaddr + 3] = word as u16 & 0xff;
                 word >>= 8;
-                self.ram[addr + 2] = word as u16 & 0xff;
+                self.ram[iaddr + 2] = word as u16 & 0xff;
                 word >>= 8;
-                self.ram[addr + 1] = word as u16 & 0xff;
+                self.ram[iaddr + 1] = word as u16 & 0xff;
                 word >>= 8;
-                self.ram[addr] = word as u16;
+                self.ram[iaddr] = word as u16;
             },
             PIF_RAM_START ... PIF_RAM_END => {
                 let rel_addr = (addr - PIF_RAM_START) as usize;
@@ -392,8 +410,15 @@ impl Interconnect {
             MI_REG_INTR_MASK       => self.mi.reg_intr_mask = word,
             // Video interface
             VI_REG_STATUS          => self.vi.reg_status = word,
-            VI_REG_ORIGIN          => self.vi.reg_origin = word,
-            VI_REG_H_WIDTH         => self.vi.reg_width = word,
+            VI_REG_ORIGIN          => {
+                self.vi.reg_origin = word - 0xa000_0000;  // XXX
+                println!("VRAM at {:#x}", word);
+            },
+            VI_REG_H_WIDTH         => {
+                self.interface.send(VideoMsg::SetMode(
+                    word as usize, (word * 3) as usize / 4)).unwrap();
+                self.vi.reg_width = word;
+            },
             VI_REG_V_INTR          => self.vi.reg_intr = word,
             VI_REG_CURRENT         => self.vi.reg_current = word,
             VI_REG_BURST           => self.vi.reg_burst = word,
@@ -404,7 +429,10 @@ impl Interconnect {
             VI_REG_V_START         => self.vi.reg_v_start = word,
             VI_REG_V_BURST         => self.vi.reg_v_burst = word,
             VI_REG_X_SCALE         => self.vi.reg_x_scale = word,
-            VI_REG_Y_SCALE         => self.vi.reg_y_scale = word,
+            VI_REG_Y_SCALE         => {
+                self.vi.reg_y_scale = word;
+                self.interface.send(VideoMsg::Update).unwrap();
+            },
             // Audio interface
             AI_REG_DRAM_ADDR       => self.ai.reg_dram_addr = word,
             AI_REG_LEN             => self.ai.reg_len = word,

@@ -1,14 +1,17 @@
-use super::cpu;
-use super::interconnect;
+use cpu;
+use interconnect;
+use ui;
 
 #[derive(Debug)]
 pub struct N64 {
-    cpu: cpu::Cpu
+    cpu: cpu::Cpu,
 }
 
 impl N64 {
     pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>) -> N64 {
-        let interconnect = interconnect::Interconnect::new(pif_rom, cart_rom);
+        let interface = ui::init_ui::<ui::minifb::MinifbInterface>();
+        let interconnect = interconnect::Interconnect::new(pif_rom, cart_rom,
+                                                           interface);
         let cpu = cpu::Cpu::new(interconnect);
 
         N64 {

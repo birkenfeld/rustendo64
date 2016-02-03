@@ -3,6 +3,7 @@
 extern crate byteorder;
 #[macro_use]
 extern crate clap;
+extern crate minifb;
 
 mod n64;
 mod cpu;
@@ -10,6 +11,7 @@ mod memmap;
 mod interconnect;
 mod cic;
 mod util;
+mod ui;
 
 use std::fs;
 use std::io::Read;
