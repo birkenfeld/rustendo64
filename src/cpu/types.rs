@@ -8,7 +8,6 @@ pub trait MemFmt: Copy + fmt::LowerHex {
     fn get_align() -> u64;
     fn load_from(&mut Cpu, u64) -> Self;
     fn store_to(&mut Cpu, u64, Self);
-    fn rotate_left(self, amount: u32) -> Self;
 }
 
 impl MemFmt for u8 {
@@ -25,7 +24,6 @@ impl MemFmt for u8 {
         word = (word & mask) | ((val as u32) << shift);
         cpu.write_word(addr & !3, word);
     }
-    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
 }
 
 impl MemFmt for u16 {
@@ -42,21 +40,18 @@ impl MemFmt for u16 {
         word = (word & mask) | ((val as u32) << shift);
         cpu.write_word(addr & !3, word);
     }
-    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
 }
 
 impl MemFmt for u32 {
     fn get_align() -> u64 { 4 }
     fn load_from(cpu: &mut Cpu, addr: u64) -> u32 { cpu.read_word(addr) }
     fn store_to(cpu: &mut Cpu, addr: u64, val: u32) { cpu.write_word(addr, val); }
-    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
 }
 
 impl MemFmt for u64 {
     fn get_align() -> u64 { 8 }
     fn load_from(cpu: &mut Cpu, addr: u64) -> u64 { cpu.read_dword(addr) }
     fn store_to(cpu: &mut Cpu, addr: u64, val: u64) { cpu.write_dword(addr, val); }
-    fn rotate_left(self, amount: u32) -> Self { self.rotate_left(amount) }
 }
 
 

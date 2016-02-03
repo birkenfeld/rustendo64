@@ -6,7 +6,7 @@ use super::exception::*;
 use super::cp0::Cp0;
 use super::types::*;
 use interconnect;
-use util::mult_64_64;
+use util::{mult_64_64_unsigned, mult_64_64_signed};
 
 const NUM_GPR: usize = 32;
 
@@ -137,12 +137,15 @@ impl Cpu {
         self.last_pc = self.reg_pc;
         let pc = self.reg_pc;
         // if pc == 0xffff_ffff_8020_0188 {
-        if pc > 0xffff_ffff_8000_4000 && pc < 0xffff_ffff_9000_0000 {
-            self.debug_instrs = true;
-        }
+        // if pc > 0xffff_ffff_8000_4000 && pc < 0xffff_ffff_9000_0000 {
+        //     self.debug_instrs = true;
+        // }
         self.last_instr = self.read_word(pc);
         let instr = Instruction(self.last_instr);
         dprintln!(self, "op: {:#x}   {:?}", self.reg_pc & 0xffff_ffff, instr);
+        // if self.instr_counter % 1000000 == 0 {
+        //     println!("{} instrs, at {:#x}   {:?}", self.instr_counter, pc, instr);
+        // }
 
         match instr.opcode() {
             LUI   => {
@@ -196,14 +199,10 @@ impl Cpu {
             SB    => self.mem_store(&instr, false, |data| data as u8),
             SH    => self.mem_store(&instr, false, |data| data as u16),
             SD    => self.mem_store(&instr, false, |data| data),
-            LWL   => self.mem_load_unaligned (&instr, false, |mask, reg, data: u32|
-                                              ((reg & !mask) | (data as u64 & mask)) as i32 as u64),
-            LWR   => self.mem_load_unaligned (&instr, true,  |mask, reg, data: u32|
-                                              ((reg & !mask) | (data as u64 & mask)) as i32 as u64),
-            LDL   => self.mem_load_unaligned (&instr, false, |mask, reg, data: u64|
-                                              (reg & !mask) | (data & mask)),
-            LDR   => self.mem_load_unaligned (&instr, true,  |mask, reg, data: u64|
-                                              (reg & !mask) | (data & mask)),
+            LWL   => self.mem_load_unaligned (&instr, false, |data: u32| data as i32 as u64),
+            LWR   => self.mem_load_unaligned (&instr, true,  |data: u32| data as i32 as u64),
+            LDL   => self.mem_load_unaligned (&instr, false, |data: u64| data),
+            LDR   => self.mem_load_unaligned (&instr, true,  |data: u64| data),
             SWL   => self.mem_store_unaligned(&instr, false, |mask, data: u32, reg|
                                               ((data as u64 & !mask) | (reg & mask)) as u32),
             SWR   => self.mem_store_unaligned(&instr, true,  |mask, data: u32, reg|
@@ -269,12 +268,8 @@ impl Cpu {
                                                            (a as i32 % b as i32) as u64)),
                 DIVU   => self.binary_hilo(&instr, |a, b| ((a as u32 / b as u32) as u64,
                                                            (a as u32 % b as u32) as u64)),
-                DMULT  => self.binary_hilo(&instr, |a, b| {
-                    let a = a as i64; let b = b as i64;
-                    let neg = (a < 0) ^ (b < 0);
-                    let (rl, rh) = mult_64_64(a.abs() as u64, b.abs() as u64);
-                    (rl, rh | (neg as u64) << 63) }),
-                DMULTU => self.binary_hilo(&instr, |a, b| mult_64_64(a, b)),
+                DMULT  => self.binary_hilo(&instr, |a, b| mult_64_64_signed(a, b)),
+                DMULTU => self.binary_hilo(&instr, |a, b| mult_64_64_unsigned(a, b)),
                 DDIV   => self.binary_hilo(&instr, |a, b| ((a as i64 / b as i64) as u64,
                                                            (a as i64 % b as i64) as u64)),
                 DDIVU  => self.binary_hilo(&instr, |a, b| (a / b, a % b)),
@@ -466,25 +461,19 @@ impl Cpu {
     }
 
     fn mem_load_unaligned<T: MemFmt, F>(&mut self, instr: &Instruction, right: bool, func: F)
-        where F: Fn(u64, u64, T) -> u64
+        where F: Fn(T) -> u64
     {
         let addr = self.aligned_addr(&instr, 1);
         let align = T::get_align();
-        let mut aligned_addr = addr & !(align - 1);
-        let mut shift = 8 * (addr % align);
-        if right {
-            if shift == 0 {
-                shift = 8 * align;
-            } else {
-                aligned_addr += align;
-            }
-        }
-        let data = T::load_from(self, aligned_addr);
-        let rotated_data = data.rotate_left(shift as u32);
-        let mut mask = (1 << shift) - 1;
-        if !right { mask = !mask; }
-        let reg = self.read_gpr(instr.rt());
-        let reg = func(mask, reg, rotated_data);
+        let aligned_addr = addr & !(align - 1);
+        let offset = addr & (align - 1);
+        let data = func(T::load_from(self, aligned_addr));
+        let shift = if right { (3 - offset) << 3 } else { offset << 3 };
+        let sh_data = if right { data >> shift } else { data << shift };
+        let mask = if right { ((1 << (8 * align)) - 1) >> shift } else { !0 << shift };
+        let orig_reg = self.read_gpr(instr.rt());
+        let reg = (orig_reg & !mask) | (sh_data & mask);
+        println!("{:x} {:x} {:x} {:x} {:x} {:x}", data, shift, sh_data, mask, orig_reg, reg);
         dprintln!(self, "{}       {:#18x} :  mem @ {:#x}", INDENT, data, aligned_addr);
         dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
                   INDENT, REG_NAMES[instr.rt()], reg, addr);
@@ -496,21 +485,16 @@ impl Cpu {
     {
         let addr = self.aligned_addr(&instr, 1);
         let align = T::get_align();
-        let mut aligned_addr = addr & !(align - 1);
-        let mut shift = 8 * (align - addr % align);
-        if right {
-            if shift == 8 * align{
-                shift = 0;
-            } else {
-                aligned_addr += align;
-            }
-        }
-        let rotated_reg = self.read_gpr(instr.rt()).rotate_left(shift as u32);
-        let mut mask = (1 << shift) - 1;
-        if !right { mask = !mask; }
+        let aligned_addr = addr & !(align - 1);
+        let offset = addr & (align - 1);
+        let reg = self.read_gpr(instr.rt());
+        let shift = if right { (3 - offset) << 3 } else { offset << 3 };
+        let sh_reg = if right { reg << shift } else { reg >> shift };
+        let mask = if right { !0 << shift } else { !0 >> shift };
         let orig_data = T::load_from(self, aligned_addr);
-        let data = func(mask, orig_data, rotated_reg);
-        dprintln!(self, "{}       {:#18x} :  mem @ {:#x}", INDENT, orig_data, aligned_addr);
+        let data = func(mask, orig_data, sh_reg);
+        dprintln!(self, "{}       {:#18x} :  mem @ {:#x}",
+                  INDENT, orig_data, aligned_addr);
         dprintln!(self, "{}       {:#18x} -> mem @ {:#x}", INDENT, data, addr);
         T::store_to(self, aligned_addr, data);
     }

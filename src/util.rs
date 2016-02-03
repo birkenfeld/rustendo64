@@ -1,21 +1,35 @@
-pub fn mult_64_64(a: u64, b: u64) -> (u64, u64) {
+pub fn mult_64_64_unsigned(a: u64, b: u64) -> (u64, u64) {
     // Extract the high and low 32-bit parts, keeping everything as u64s.
     let ah = a >> 32;
     let al = a & 0xFFFF_FFFF;
     let bh = b >> 32;
     let bl = b & 0xFFFF_FFFF;
     // Multiply them together.
-    let ll = al * bl;
-    let hh = ah * bh;
-    let m1 = al * bh;
-    let m2 = ah * bl;
-    // Extract low/high parts from the middle bits.
-    let ml1 = m1 << 32;
-    let ml2 = m2 << 32;
-    let ml = ml1.wrapping_add(ml2);
-    let mh = (m1 >> 32) + (m2 >> 32) + (ml < ml1) as u64;
-    // Now create the high and low parts, including carry.
-    let rl = ll.wrapping_add(ml);
-    let rh = hh + mh + (rl < ll) as u64;
-    (rl, rh)
+    let ll = al.wrapping_mul(bl);
+    let hh = ah.wrapping_mul(bh);
+    let m1 = al.wrapping_mul(bh);
+    let m2 = ah.wrapping_mul(bl);
+    // Add everything up.
+    let mm = m1.wrapping_add(m2).wrapping_add(ll >> 32);
+    let hi = hh.wrapping_add(mm >> 32);
+    let lo = (ll & 0xFFFF_FFFF).wrapping_add(mm << 32);
+    (lo, hi)
+}
+
+pub fn mult_64_64_signed(a: u64, b: u64) -> (u64, u64) {
+    // Extract the high and low 32-bit parts, keeping everything as u64s.
+    let ah = (a >> 32) as i32 as i64;
+    let al = a as u32 as i64;
+    let bh = (b >> 32) as i32 as i64;
+    let bl = b as  u32 as i64;
+    // Multiply them together.
+    let ll = al.wrapping_mul(bl);
+    let hh = ah.wrapping_mul(bh);
+    let m1 = al.wrapping_mul(bh);
+    let m2 = ah.wrapping_mul(bl);
+    // Add everything up.
+    let mm = m1.wrapping_add(m2).wrapping_add(ll >> 32);
+    let hi = hh.wrapping_add(mm >> 32);
+    let lo = (ll & 0xFFFF_FFFF).wrapping_add(mm << 32);
+    (lo as u64, hi as u64)
 }
