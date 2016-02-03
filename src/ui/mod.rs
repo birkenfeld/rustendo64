@@ -1,21 +1,36 @@
+use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 use std::sync::mpsc;
 use std::thread;
 
 pub mod minifb;
 
-pub enum VideoMsg {
+pub enum IfOutput {
     SetMode(usize, usize),  // width, height
     SetPixel(usize, u32),   // offset, value
     Update,
 }
 
+static CONTROLLER: AtomicUsize = ATOMIC_USIZE_INIT;
+
+pub struct InterfaceChannel(mpsc::Sender<IfOutput>);
+
+impl InterfaceChannel {
+    pub fn send(&mut self, out: IfOutput) {
+        self.0.send(out).unwrap();
+    }
+
+    pub fn get_input_state(&self) -> u32 {
+        CONTROLLER.load(Ordering::Relaxed) as u32
+    }
+}
+
 pub trait Interface {
-    fn new(receiver: mpsc::Receiver<VideoMsg>) -> Self;
+    fn new(mpsc::Receiver<IfOutput>) -> Self;
     fn run(&mut self);
 }
 
-pub fn init_ui<T: Interface>() -> mpsc::Sender<VideoMsg> {
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(|| T::new(receiver).run());
-    sender
+pub fn init_ui<T: Interface>() -> InterfaceChannel {
+    let (outsend, outrecv) = mpsc::channel();
+    thread::spawn(|| T::new(outrecv).run());
+    InterfaceChannel(outsend)
 }
