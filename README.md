@@ -10,7 +10,7 @@ The entire process is currently being streamed on [Twitch](http://www.twitch.tv/
 ## Helpful tools
 - [Hex Fiend](http://ridiculousfish.com/hexfiend/)
 - [Online disassembler](https://www.onlinedisassembler.com/odaweb/)
-- [Dash](https://kapeli.com/dash)
+- [Dash](https://kapeli.com/dash) (OS X / iOS) for documentation. Compatible alternatives for other platforms can be found linked from [Dash Docset Links](https://kapeli.com/docset_links).
 
 ## Literature
 - [VR4300 datasheet](http://datasheets.chipdb.org/NEC/Vr-Series/Vr43xx/U10504EJ7V0UMJ1.pdf)
@@ -19,9 +19,11 @@ The entire process is currently being streamed on [Twitch](http://www.twitch.tv/
 - [Alternate MIPS register names](http://www.cs.umd.edu/class/sum2003/cmsc311/Notes/Mips/altReg.html)
 
 ## Test ROM's
-Lac's Fire Demo (wasn't able to find a clean link)
-
-TODO: Fill this out more
+* [Pouet list](http://www.pouet.net/prodlist.php?platform[0]=Nintendo+64&page=1)
+* [Zophar](http://www.zophar.net/pdroms/n64.html)
+* [PDROMs](http://pdroms.de/news/nintendo64/)
+* [Micro-64](http://micro-64.com/features/aafeatures.shtml)
+* [PeterLemon's ROMs](https://github.com/PeterLemon/N64)
 
 ## License
 
@@ -32,8 +34,12 @@ Licensed under either of
 
 at your option.
 
-### Contribution
+### Contribution _(please read before submitting a PR!)_
 
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
-additional terms or conditions.
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+
+I do accept (and appreciate!) pull requests, but please, try to keep them to _small, meaningful, isolated changes only_ that I can go over completely on the stream. Significant outside contributions, as cool as they may be, somewhat defeat the most important part of this project - **documenting everything through livecoding**. I'm happy to accept small cosmetic changes/bugfixes, but please, consider what the larger audience as a whole might be missing out on when they don't get to see the thought process and resources that went into making the contribution (which is unfortunately what happens whenever I accept a PR).
+
+If you'd like to see a particular library or coding style used somewhere, opening an issue is much preferred over a PR, so we can discuss it beforehand and implement it live. This also keeps people from stepping on each others' toes and implementing the same things (yes, this has happened already).
+
+Issues, especially pertaining to accuracy/bugfixes, are always more than welcome!
