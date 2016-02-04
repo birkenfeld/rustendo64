@@ -2,9 +2,10 @@ use std::fmt;
 
 use byteorder::{BigEndian, ByteOrder};
 
-use ui::{IfOutput, InterfaceChannel};
 use cic;
 use memmap::*;
+use debug::DebugCondList;
+use ui::{IfOutput, InterfaceChannel};
 
 const PIF_ROM_SIZE: usize = 2048;
 const RAM_SIZE: usize = 8 * 1024 * 1024;
@@ -148,11 +149,13 @@ pub struct Interconnect {
     ri: Ri,
     si: Si,
     interface: InterfaceChannel,
+    pub debug_conds: DebugCondList,
 }
 
 impl Interconnect {
     pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
-               interface: InterfaceChannel) -> Interconnect {
+               interface: InterfaceChannel,
+               debug_conds: DebugCondList) -> Interconnect {
         Interconnect {
             pif_rom: pif_rom,
             pif_ram: vec![0; 16],
@@ -161,6 +164,7 @@ impl Interconnect {
             ram: vec![0; RAM_SIZE],
             spram: SpRam { dmem: vec![0; 1024], imem: vec![0; 1024] },
             interface: interface,
+            debug_conds: debug_conds,
             rd: Rd::default(),
             sp: Sp::default(),
             dp: Dp::default(),
@@ -323,18 +327,14 @@ impl Interconnect {
                 return Err("Unsupported read memory area");
             }
         };
-        if addr > RDRAM_END &&
-            (addr < SP_DMEM_START || addr > SP_IMEM_END) &&
-            (addr < CART_START || addr > PIF_ROM_END)
-        {
-            // Log all reads from non-RAM, non-ROM locations
+        if self.debug_conds.matches_mem(addr as u64, false) {
             println!("Bus read:  {:#10x} :  {:#10x}", addr, res);
         }
         Ok(res)
     }
 
     pub fn write_word(&mut self, addr: u32, mut word: u32) -> Result<(), &'static str> {
-        if addr > RDRAM_END && (addr < SP_DMEM_START || addr > SP_IMEM_END) && addr != VI_REG_Y_SCALE {
+        if self.debug_conds.matches_mem(addr as u64, true) {
             // Log all writes to non-RAM locations
             println!("Bus write: {:#10x} <- {:#10x}", addr, word);
         }
@@ -411,8 +411,9 @@ impl Interconnect {
             // Video interface
             VI_REG_STATUS          => self.vi.reg_status = word,
             VI_REG_ORIGIN          => {
-                self.vi.reg_origin = word - 0xa000_0000;  // XXX
+                self.vi.reg_origin = self.pseudo_translate(word);
                 println!("VRAM at {:#x}", word);
+                self.interface.send(IfOutput::Update);
             },
             VI_REG_H_WIDTH         => {
                 self.interface.send(IfOutput::SetMode(
@@ -469,7 +470,7 @@ impl Interconnect {
             SI_REG_DRAM_ADDR       => self.si.reg_dram_addr = word,
             SI_REG_PIF_ADDR_RD64B  => {
                 // transfer 64 bytes PIF ram -> main memory
-                let ram_start = self.si.reg_dram_addr as usize;  // offset is 0
+                let ram_start = self.pseudo_translate(self.si.reg_dram_addr) as usize;
                 let pif_start = (word - PIF_RAM_START) as usize / 4;  // XXX assumes alignment
                 for i in 0..16 {
                     let mut pif_word = self.pif_ram[pif_start + i];
@@ -488,7 +489,7 @@ impl Interconnect {
             },
             SI_REG_PIF_ADDR_WR64B  => {
                 // transfer 64 bytes main memory -> PIF ram
-                let ram_start = self.si.reg_dram_addr as usize;  // offset is 0
+                let ram_start = self.pseudo_translate(self.si.reg_dram_addr) as usize;
                 let pif_start = (word - PIF_RAM_START) as usize / 4;
                 for i in 0..16 {
                     let ram_word = ((self.ram[ram_start + 4*i] as u32) << 24) |
@@ -504,6 +505,17 @@ impl Interconnect {
             }
         }
         Ok(())
+    }
+
+    fn pseudo_translate(&self, addr: u32) -> u32 {
+        // TODO why are virtual addresses written into the registers anyway?
+        if addr > 0xa000_0000 {
+            addr - 0xa000_0000
+        } else if addr > 0x8000_0000 {
+            addr - 0x8000_0000
+        } else {
+            addr
+        }
     }
 }
 

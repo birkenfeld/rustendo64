@@ -12,6 +12,7 @@ mod interconnect;
 mod cic;
 mod util;
 mod ui;
+mod debug;
 
 use std::fs;
 use std::io::Read;
@@ -23,6 +24,11 @@ fn get_arguments<'a>() -> ArgMatches<'a> {
         .version(crate_version!())
         .author("ferris <jake@fusetools.com>")
         .about("Livecoding a Nintendo 64 emulator in Rust :D")
+        .arg(Arg::with_name("debug")
+                 .short("d")
+                 .long("debug")
+                 .takes_value(true)
+                 .multiple(true))
         .arg(Arg::with_name("pif")
                  .help("Sets the PIF ROM needed for booting")
                  .takes_value(true)
@@ -38,11 +44,20 @@ fn main() {
     let arguments = get_arguments();
     let pif_file_name = arguments.value_of("pif").unwrap();
     let rom_file_name = arguments.value_of("rom").unwrap();
+    let debug_conds = if let Some(args) = arguments.values_of("debug") {
+        args.filter_map(|arg| match arg.parse::<debug::DebugCond>() {
+            Ok(v)  => Some(v),
+            Err(_) => {
+                println!("Warning: ignoring unrecognized debug arg {}", arg);
+                None
+            }
+        }).collect()
+    } else { vec![] };
 
     let pif = read_bin(pif_file_name);
     let rom = read_bin(rom_file_name);
 
-    let mut n64 = n64::N64::new(pif, rom);
+    let mut n64 = n64::N64::new(pif, rom, debug::DebugCondList(debug_conds));
     n64.power_on_reset();
     n64.run();
 }

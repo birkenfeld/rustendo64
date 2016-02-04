@@ -36,7 +36,8 @@ impl MinifbInterface {
     fn setup(&mut self, w: usize, h: usize) {
         match Window::new(
             "Rustendo64_gb", w, h, WindowOptions {
-                scale: Scale::X1, ..WindowOptions::default() }) {
+                scale: if w < 640 { Scale::X2 } else { Scale::X1 },
+                ..WindowOptions::default() }) {
             Ok(win) => {
                 self.window = Some(win);
                 self.buffer = vec![0; w * h];

@@ -12,6 +12,7 @@ const NUM_GPR: usize = 32;
 
 pub struct Cpu {
     instr_counter: u32,
+    debug_instrs_until: u32,
     debug_instrs:  bool,
 
     reg_gpr:    [u64; NUM_GPR],
@@ -65,6 +66,7 @@ impl Cpu {
     pub fn new(interconnect: interconnect::Interconnect) -> Cpu {
         Cpu {
             instr_counter: 0,
+            debug_instrs_until: 0,
             debug_instrs: false,
             in_branch_delay: false,
             exc_pending: VecDeque::new(),
@@ -136,16 +138,18 @@ impl Cpu {
         self.instr_counter += 1;
         self.last_pc = self.reg_pc;
         let pc = self.reg_pc;
-        // if pc == 0xffff_ffff_8020_0188 {
-        // if pc > 0xffff_ffff_8000_4000 && pc < 0xffff_ffff_9000_0000 {
-        //     self.debug_instrs = true;
-        // }
+        let debug_for = self.interconnect.debug_conds.matches_pc(pc);
+        if debug_for > 0 {
+            self.debug_instrs = true;
+            if debug_for > 1 {
+                self.debug_instrs_until = self.instr_counter + debug_for;
+            }
+        } else if self.debug_instrs && self.instr_counter > self.debug_instrs_until {
+            self.debug_instrs = false;
+        }
         self.last_instr = self.read_word(pc);
         let instr = Instruction(self.last_instr);
         dprintln!(self, "op: {:#x}   {:?}", self.reg_pc & 0xffff_ffff, instr);
-        // if self.instr_counter % 1000000 == 0 {
-        //     println!("{} instrs, at {:#x}   {:?}", self.instr_counter, pc, instr);
-        // }
 
         match instr.opcode() {
             LUI   => {
@@ -473,7 +477,6 @@ impl Cpu {
         let mask = if right { ((1 << (8 * align)) - 1) >> shift } else { !0 << shift };
         let orig_reg = self.read_gpr(instr.rt());
         let reg = (orig_reg & !mask) | (sh_data & mask);
-        println!("{:x} {:x} {:x} {:x} {:x} {:x}", data, shift, sh_data, mask, orig_reg, reg);
         dprintln!(self, "{}       {:#18x} :  mem @ {:#x}", INDENT, data, aligned_addr);
         dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
                   INDENT, REG_NAMES[instr.rt()], reg, addr);

@@ -1,6 +1,7 @@
 use cpu;
-use interconnect;
 use ui;
+use interconnect;
+use debug::DebugCondList;
 
 #[derive(Debug)]
 pub struct N64 {
@@ -8,10 +9,11 @@ pub struct N64 {
 }
 
 impl N64 {
-    pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>) -> N64 {
+    pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
+               debug_conds: DebugCondList) -> N64 {
         let interface = ui::init_ui::<ui::minifb::MinifbInterface>();
         let interconnect = interconnect::Interconnect::new(pif_rom, cart_rom,
-                                                           interface);
+                                                           interface, debug_conds);
         let cpu = cpu::Cpu::new(interconnect);
 
         N64 {
