@@ -16,6 +16,14 @@ macro_rules! define_registers {
     ($base:expr, $name:ident) => { pub const $name: u32 = $base; };
 }
 
+// Basic processor constants ---------------------------------------------------
+
+pub const RESET_VECTOR:   u64 = 0xffff_ffff_bfc0_0000;
+pub const BS_EXC_VECTOR:  u64 = 0xffff_ffff_bfc0_0200;
+pub const DEF_EXC_VECTOR: u64 = 0xffff_ffff_8000_0000;
+pub const KSEG0_START:    u64 = 0xffff_ffff_8000_0000;
+pub const KSEG1_START:    u64 = 0xffff_ffff_a000_0000;
+
 // RDRAM -----------------------------------------------------------------------
 
 define_consts!(

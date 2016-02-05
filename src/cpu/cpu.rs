@@ -5,17 +5,17 @@ use super::instruction::*;
 use super::exception::*;
 use super::cp0::Cp0;
 use super::types::*;
+use mem_map::*;
 use interconnect;
-use debug::{Debugger, DebuggerResult};
+use debug::{Debugger, DebugCondList};
 use util::{mult_64_64_unsigned, mult_64_64_signed};
 
 const NUM_GPR: usize = 32;
 
 pub struct Cpu {
-    instr_counter: u32,
+    instr_counter:      u32,
     debug_instrs_until: u32,
-    debug_instrs:  bool,
-    break_next:    bool,
+    debug_instrs:       bool,
 
     reg_gpr:    [u64; NUM_GPR],
     reg_fpr:    [[u8; 8]; NUM_GPR],
@@ -66,12 +66,12 @@ pub const INDENT: &'static str = "                                       ";
 impl Cpu {
     pub fn new(interconnect: interconnect::Interconnect) -> Cpu {
         Cpu {
-            instr_counter: 0,
+            instr_counter:      0,
             debug_instrs_until: 0,
-            debug_instrs: false,
-            break_next: false,
+            debug_instrs:       false,
+
             in_branch_delay: false,
-            exc_pending: VecDeque::new(),
+            exc_pending:     VecDeque::new(),
 
             reg_gpr:    [0; NUM_GPR],
             reg_fpr:    [[0; 8]; NUM_GPR],
@@ -94,7 +94,7 @@ impl Cpu {
         self.cp0.power_on_reset();
         self.interconnect.power_on_reset();
 
-        self.reg_pc = 0xffff_ffff_bfc0_0000; // TODO: Move to const
+        self.reg_pc = RESET_VECTOR;
     }
 
     // TODO: Different interface
@@ -105,6 +105,9 @@ impl Cpu {
     }
 
     pub fn run_branch_delay_slot(&mut self) {
+        if self.in_branch_delay {
+            bug!(self, "Branching in branch delay slot -- check semantics!");
+        }
         self.in_branch_delay = true;
         self.run_instruction();
         self.in_branch_delay = false;
@@ -143,22 +146,17 @@ impl Cpu {
         self.last_instr = self.read_word(pc);
         let instr = Instruction(self.last_instr);
 
-        // Debug options
-        let (debug_for, dump_here, break_here) = self.interconnect.debug.check_pc(pc);
-        if break_here || self.break_next {
-            println!("At {:#10x}  {:?}", pc as u32, instr);
+        // Debug stuff. This might not really belong here?
+        let (debug_for, dump_here, break_here) = self.debug_conds().check_instr(pc);
+        if break_here {
+            println!("at: {:#10x}   {:?}", pc as u32, instr);
             if dump_here {
                 println!("{:?}", self);
             }
-            self.break_next = false;
             let mut debugger = Debugger::new();
-            match debugger.run_loop(self) {
-                DebuggerResult::Quit => panic!("quit"),  // TODO
-                DebuggerResult::Step => self.break_next = true, // TODO
-                DebuggerResult::Continue => { }
-            }
+            debugger.run_loop(self);
         } else if dump_here {
-            println!("CPU state before {:#10x}  {:?}", pc as u32, instr);
+            println!("at: {:#10x}   {:?}", pc as u32, instr);
             println!("{:?}", self);
         }
         if debug_for > 0 {
@@ -595,8 +593,7 @@ impl Cpu {
             self.write_gpr(31, return_addr);
         }
         dprintln!(self, "{} branch: {}", INDENT, if take { "taken" } else { "not taken" });
-        // Run the delay slot (XXX what happens if the delay slot is
-        // another branch?)
+        // Run the delay slot
         self.reg_pc += 4;
         if take || !likely {
             self.run_branch_delay_slot();
@@ -771,10 +768,10 @@ impl Cpu {
 
         if addr_bit_values == 0b101 {
             // kseg1
-            virt_addr - 0xffff_ffff_a000_0000
+            virt_addr - KSEG1_START
         } else if addr_bit_values == 0b100 {
             // kseg0 (cached)
-            virt_addr - 0xffff_ffff_8000_0000
+            virt_addr - KSEG0_START
         } else {
             // TODO
             bug!(self, "Unrecognized virtual address: {:#x}", virt_addr);
@@ -803,5 +800,13 @@ impl Cpu {
         println!("last instr was:    {:?}", Instruction(self.last_instr));
         println!("#instrs executed:  {}", self.instr_counter);
         panic!(msg);
+    }
+
+    pub fn read_pc(&self) -> u64 {
+        self.reg_pc
+    }
+
+    pub fn debug_conds(&mut self) -> &mut DebugCondList {
+        &mut self.interconnect.debug
     }
 }

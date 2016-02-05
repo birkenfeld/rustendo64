@@ -1,4 +1,5 @@
 use super::cp0::InterruptMask;
+use mem_map::*;
 
 #[derive(Debug)]
 pub struct Exception {
@@ -45,7 +46,7 @@ impl Exception {
             ExcType::InstrXTLBMiss | ExcType::DataXTLBMiss(_) => 0x080,
             _                                                 => 0x180,
         };
-        offset + if bootstrap { 0xffff_ffff_bfc0_0200 } else { 0xffff_ffff_8000_0000 }
+        offset + if bootstrap { BS_EXC_VECTOR } else { DEF_EXC_VECTOR }
     }
 
     pub fn coprocessor(&self) -> u8 {

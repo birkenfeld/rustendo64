@@ -14,26 +14,31 @@
 // - single-step
 // - continue
 
+use std::cmp::max;
 use std::env;
 use std::str::FromStr;
 use std::str;
+use std::u32;
+use std::process;
 use std::path::PathBuf;
 use rustyline::Editor;
 use nom::IResult;
 use nom::{eof, hex_u32};
 
-use cpu::Cpu;
+use cpu::{Cpu, Instruction};
 
 #[derive(Debug)]
 pub struct MemAccess(bool, bool); // read, write
 
 #[derive(Debug)]
 pub enum DebugCond {
-    InsnRange(u64, u64),
-    InsnFrom(u64, Option<u32>),
     MemRange(MemAccess, u64, u64),
-    DumpAt(u64),
-    BreakAt(u64),
+    InsnRange(u64, u64),
+    InsnFrom(u64, u32),
+    InsnFor(u64),
+    StateAt(u64),
+    BreakAt(u64, bool),  // if true, remove breakpoint after hit
+    BreakIn(u64),
 }
 
 pub struct DebugCondParseErr;
@@ -52,11 +57,11 @@ named!(addr_range<(u64, u64)>, chain!(
 ));
 
 named!(breakat<DebugCond>, preceded!(
-    tag!("b:"), map!(hex_addr, DebugCond::BreakAt)
+    tag!("b:"), map!(hex_addr, |a| DebugCond::BreakAt(a, false))
 ));
 
 named!(dumpat<DebugCond>, preceded!(
-    tag!("d:"), map!(hex_addr, DebugCond::DumpAt)
+    tag!("d:"), map!(hex_addr, DebugCond::StateAt)
 ));
 
 named!(memrange<DebugCond>, chain!(
@@ -71,7 +76,7 @@ named!(insnfrom<DebugCond>, chain!(
         tag!("i+:") ~
     ad: hex_addr     ~
     ct: opt!(complete!(preceded!(tag!(":"), dec_u32))),
-    || { DebugCond::InsnFrom(ad, ct) }
+    || { DebugCond::InsnFrom(ad, ct.unwrap_or(u32::MAX)) }
 ));
 
 named!(insn<DebugCond>, preceded!(
@@ -95,29 +100,50 @@ impl FromStr for DebugCond {
 pub struct DebugCondList(pub Vec<DebugCond>);
 
 impl DebugCondList {
-    pub fn check_pc(&self, pc: u64) -> (u32, bool, bool) {
+    pub fn add_condition(&mut self, cond: DebugCond) {
+        self.0.push(cond);
+    }
+
+    pub fn conditions(&mut self) -> &mut Vec<DebugCond> {
+        &mut self.0
+    }
+
+    pub fn check_instr(&mut self, pc: u64) -> (u32, bool, bool) {
         let mut debug_for = 0;
         let mut dump = false;
-        let mut breakpoint = false;
-        for c in &self.0 {
+        let mut breakpt = false;
+        for c in &mut self.0 {
             match *c {
-                DebugCond::InsnRange(a, b) if a <= pc && pc <= b => debug_for = 1,
-                DebugCond::InsnFrom(a, ref howlong) if pc == a => {
-                    if let &Some(duration) = howlong {
-                        debug_for = duration;
-                    } else {
-                        debug_for = 1;
-                    }
-                },
-                DebugCond::DumpAt(a) if a == pc => dump = true,
-                DebugCond::BreakAt(a) if a == pc => {
+                DebugCond::InsnRange(a, b) if a <= pc && pc <= b => {
+                    debug_for = max(debug_for, 1);
+                }
+                DebugCond::InsnFrom(a, duration) if pc == a => {
+                    debug_for = max(debug_for, duration);
+                }
+                DebugCond::StateAt(a) if a == pc => {
                     dump = true;
-                    breakpoint = true;
-                },
+                }
+                DebugCond::BreakAt(a, _) if a == pc => {
+                    debug_for = max(debug_for, 1);
+                    dump = true;
+                    breakpt = true;
+                }
+                DebugCond::BreakIn(ref mut n) => {
+                    *n -= 1;
+                    debug_for = max(debug_for, 1);
+                    if *n == 0 {
+                        breakpt = true;
+                    }
+                }
                 _ => {}
             }
         }
-        (debug_for, dump, breakpoint)
+        self.0.retain(|v| match *v {
+            DebugCond::BreakAt(a, true) if a == pc  => false,
+            DebugCond::BreakIn(0)                   => false,
+            _ => true
+        });
+        (debug_for, dump, breakpt)
     }
 
     pub fn matches_mem(&self, addr: u64, write: bool) -> bool {
@@ -160,64 +186,140 @@ impl<'c> Debugger<'c> {
         }
     }
 
-    pub fn run_loop(&mut self, cpu: &mut Cpu) -> DebuggerResult {
+    pub fn run_loop(&mut self, cpu: &mut Cpu) {
         loop {
             match self.editor.readline("- ") {
-                Err(_) => return DebuggerResult::Quit,
+                Err(_) => {
+                    println!("Quit/Interrupted.");
+                    process::exit(1);
+                }
                 Ok(input) => {
                     if input.len() > 0 {
                         self.editor.add_history_entry(&input);
                     }
-                    if let Some(res) = self.dispatch(cpu, input) {
+                    if self.dispatch(cpu, input) {
                         if let Some(ref fp) = self.histfile {
                             let _ = self.editor.save_history(fp);
                         }
-                        return res;
+                        return;
                     }
                 }
             }
         }
     }
 
-    fn dispatch(&mut self, cpu: &mut Cpu, input: String) -> Option<DebuggerResult> {
+    fn dispatch(&mut self, cpu: &mut Cpu, input: String) -> bool {
         let parts = input.split_whitespace().collect::<Vec<_>>();
+        let optional_addr = |n| parts.get(n).and_then(|v| u64::from_str_radix(v, 16).ok());
+        let optional_count = |n| parts.get(n).and_then(|v| u64::from_str_radix(v, 10).ok());
         if parts.len() == 0 {
             return self.repeat_last(cpu);
         }
         match parts[0] {
-            "c"  => Some(DebuggerResult::Continue),
-            "q"  => Some(DebuggerResult::Quit),
-            "s"  => Some(DebuggerResult::Step),
-            "d"  => { println!("CPU dump:\n{:?}", cpu); None },
+            "q"  => { println!("Quit."); process::exit(1); },
+            "c"  => self.cont(cpu, optional_addr(1)),
+            "s"  => self.step(cpu, optional_count(1)),
+            "b"  => self.add_break(cpu, optional_addr(1)),
+            "bd" => self.del_break(cpu, optional_addr(1)),
+            "d"  => self.dump(cpu, true, false, false),
+            "dm" => self.dump(cpu, false, true, false),
+            "df" => self.dump(cpu, false, false, true),
+            "da" => self.dump(cpu, true, true, true),
+            "l"  => self.list(cpu, optional_count(1)),
             "?" | "h" => self.help(),
-            _         => { println!("unrecognized debugger command"); None },
+            _         => { println!("unrecognized debugger command"); false },
             // TODO:
-            // - dump FPR
-            // - dump CP0
-            // - disassemble around PC
             // - write word
             // - read word
         }
     }
 
-    fn repeat_last(&mut self, cpu: &mut Cpu) -> Option<DebuggerResult> {
+    fn repeat_last(&mut self, cpu: &mut Cpu) -> bool {
         let last_line = {
             let hist = self.editor.get_history();
             if hist.len() == 0 {
-                return None;
+                return false;
             }
             hist.get(hist.len() - 1).unwrap().to_owned()
         };
         self.dispatch(cpu, last_line)
     }
 
-    fn help(&self) -> Option<DebuggerResult> {
+    fn cont(&self, cpu: &mut Cpu, until: Option<u64>) -> bool {
+        if let Some(addr) = until {
+            cpu.debug_conds().add_condition(DebugCond::BreakAt(addr, true));
+        }
+        true
+    }
+
+    fn step(&self, cpu: &mut Cpu, n: Option<u64>) -> bool {
+        cpu.debug_conds().add_condition(DebugCond::BreakIn(n.unwrap_or(1)));
+        true
+    }
+
+    fn add_break(&self, cpu: &mut Cpu, addr: Option<u64>) -> bool {
+        if let Some(addr) = addr {
+            cpu.debug_conds().add_condition(DebugCond::BreakAt(addr, false));
+            println!("Added breakpoint.");
+        } else {
+            println!("Need an address to break at.");
+        }
+        false
+    }
+
+    fn del_break(&self, cpu: &mut Cpu, addr: Option<u64>) -> bool {
+        if let Some(addr) = addr {
+            let mut removed = false;
+            cpu.debug_conds().conditions().retain(|c| match *c {
+                DebugCond::BreakAt(a, false) if a == addr => {
+                    removed = true;
+                    false
+                },
+                _ => true
+            });
+            if removed {
+                println!("Removed breakpoint.");
+            } else {
+                println!("Breakpoint not found.")
+            }
+        } else {
+            println!("Need an address to break at.");
+        }
+        false
+    }
+
+    fn dump(&self, cpu: &Cpu, gpr: bool, cp0: bool, cp1: bool) -> bool {
+        if gpr {
+            println!("CPU dump:\n{:?}", cpu);
+        }
+        // TODO: cp0, cp1
+        false
+    }
+
+    fn list(&self, cpu: &mut Cpu, n: Option<u64>) -> bool {
+        for i in 0..n.unwrap_or(10) {
+            let addr = cpu.read_pc() + 4 * i;
+            let instr = Instruction(cpu.read_word(addr));
+            println!(" {} {:#10x}   {:?}",
+                     if i == 0 { "->" } else { "  " }, addr as u32, instr);
+        }
+        false
+    }
+
+    fn help(&self) -> bool {
         println!("Debugger commands:
-c  - continue
-s  - single step
-d  - dump CPU state
-q  - quit
+c [addr]  - continue [until pc = addr]
+s [n]     - single step [over n instrs]
+d         - dump CPU state
+dm        - dump CP0 (MMU) state
+df        - dump CP1 (FPU) state
+da        - dump everything
+l [n]     - list n instructions from pc
+b addr    - set breakpoint at addr
+bd addr   - remove breakpoint at addr
+bl        - list all breakpoints
+q         - quit
 ");
-        None
+        false
     }
 }
