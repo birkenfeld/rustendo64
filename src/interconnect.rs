@@ -149,13 +149,13 @@ pub struct Interconnect {
     ri: Ri,
     si: Si,
     interface: InterfaceChannel,
-    pub debug_conds: DebugCondList,
+    pub debug: DebugCondList,
 }
 
 impl Interconnect {
     pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
                interface: InterfaceChannel,
-               debug_conds: DebugCondList) -> Interconnect {
+               debug: DebugCondList) -> Interconnect {
         Interconnect {
             pif_rom: pif_rom,
             pif_ram: vec![0; 16],
@@ -164,7 +164,7 @@ impl Interconnect {
             ram: vec![0; RAM_SIZE],
             spram: SpRam { dmem: vec![0; 1024], imem: vec![0; 1024] },
             interface: interface,
-            debug_conds: debug_conds,
+            debug: debug,
             rd: Rd::default(),
             sp: Sp::default(),
             dp: Dp::default(),
@@ -327,14 +327,14 @@ impl Interconnect {
                 return Err("Unsupported read memory area");
             }
         };
-        if self.debug_conds.matches_mem(addr as u64, false) {
+        if self.debug.matches_mem(addr as u64, false) {
             println!("Bus read:  {:#10x} :  {:#10x}", addr, res);
         }
         Ok(res)
     }
 
     pub fn write_word(&mut self, addr: u32, mut word: u32) -> Result<(), &'static str> {
-        if self.debug_conds.matches_mem(addr as u64, true) {
+        if self.debug.matches_mem(addr as u64, true) {
             // Log all writes to non-RAM locations
             println!("Bus write: {:#10x} <- {:#10x}", addr, word);
         }

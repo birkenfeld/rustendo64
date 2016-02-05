@@ -15,6 +15,12 @@
 // - continue
 
 use std::str::FromStr;
+use std::str;
+use rustyline::Editor;
+use nom::IResult;
+use nom::{eof, hex_u32};
+
+use cpu::Cpu;
 
 #[derive(Debug)]
 pub struct MemAccess(bool, bool); // read, write
@@ -30,84 +36,86 @@ pub enum DebugCond {
 
 pub struct DebugCondParseErr;
 
-fn paddr(s: &str) -> Result<u64, ::std::num::ParseIntError> {
-    u32::from_str_radix(s, 16).map(|v| v as i32 as u64)
-}
+named!(hex_addr<u64>, map!(hex_u32, |v| v as i32 as u64));
+
+named!(dec_u32<u32>, map_res!(
+       map_res!(is_a!(b"0123456789"), str::from_utf8),
+       |s| { u32::from_str_radix(s, 10) }
+));
+
+named!(addr_range<(u64, u64)>, chain!(
+    a1: hex_addr ~
+    a2: opt!(complete!(preceded!(tag!(":"), hex_addr))),
+    || { (a1, a2.unwrap_or(a1)) }
+));
+
+named!(breakat<DebugCond>, preceded!(
+    tag!("b:"), map!(hex_addr, DebugCond::BreakAt)
+));
+
+named!(dumpat<DebugCond>, preceded!(
+    tag!("d:"), map!(hex_addr, DebugCond::DumpAt)
+));
+
+named!(memrange<DebugCond>, chain!(
+    ac: alt!(tag!("m:")  => { |_| MemAccess(true, true) }   |
+             tag!("mr:") => { |_| MemAccess(true, false) }  |
+             tag!("mw:") => { |_| MemAccess(false, true) }) ~
+    ad: addr_range ,
+    || { DebugCond::MemRange(ac, ad.0, ad.1) }
+));
+
+named!(insnfrom<DebugCond>, chain!(
+        tag!("i+:") ~
+    ad: hex_addr     ~
+    ct: opt!(complete!(preceded!(tag!(":"), dec_u32))),
+    || { DebugCond::InsnFrom(ad, ct) }
+));
+
+named!(insn<DebugCond>, preceded!(
+    tag!("i:"), map!(addr_range, |(a1, a2)| { DebugCond::InsnRange(a1, a2) })
+));
+
+named!(debugspec<DebugCond>, terminated!(
+    alt!(insn | insnfrom | memrange | breakat | dumpat),
+    eof));
 
 impl FromStr for DebugCond {
     type Err = DebugCondParseErr;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parts = s.split(':').collect::<Vec<_>>();
-        match parts[0] {
-            "i" => {
-                if parts.len() == 3 {
-                    if let (Ok(a), Ok(b)) = (paddr(parts[1]), paddr(parts[2])) {
-                        return Ok(DebugCond::InsnRange(a, b));
-                    }
-                } else if parts.len() == 2 {
-                    if let Ok(a) = paddr(parts[1]) {
-                        return Ok(DebugCond::InsnFrom(a, None));
-                    }
-                }
-            },
-            "i+" => {
-                if parts.len() == 3 {
-                    if let (Ok(a), Ok(b)) = (paddr(parts[1]), parts[2].parse()) {
-                        return Ok(DebugCond::InsnFrom(a, Some(b)));
-                    }
-                }
-            }
-            "m" | "mw" | "mr" => {
-                let access = if parts[0] == "m" { MemAccess(true, true) } else
-                    if parts[0] == "mw" { MemAccess(false, true) } else
-                    { MemAccess(true, false) };
-                if parts.len() == 3 {
-                    if let (Ok(a), Ok(b)) = (paddr(parts[1]), paddr(parts[2])) {
-                        return Ok(DebugCond::MemRange(access, a, b));
-                    }
-                } else if parts.len() == 2 {
-                    if let Ok(a) = paddr(parts[1]) {
-                        return Ok(DebugCond::MemRange(access, a, a));
-                    }
-                }
-            },
-            "d" => {
-                if parts.len() == 2 {
-                    if let Ok(a) = paddr(parts[1]) {
-                        return Ok(DebugCond::DumpAt(a));
-                    }
-                }
-            },
-            "b" => {
-                if parts.len() == 2 {
-                    if let Ok(a) = paddr(parts[1]) {
-                        return Ok(DebugCond::BreakAt(a));
-                    }
-                }
-            },
-            _ => {}
+        match debugspec(s.as_bytes()) {
+            IResult::Done(_, o) => Ok(o),
+            _                   => Err(DebugCondParseErr)
         }
-        Err(DebugCondParseErr)
     }
 }
 
 pub struct DebugCondList(pub Vec<DebugCond>);
 
 impl DebugCondList {
-    pub fn matches_pc(&self, pc: u64) -> u32 {
+    pub fn check_pc(&self, pc: u64) -> (u32, bool, bool) {
+        let mut debug_for = 0;
+        let mut dump = false;
+        let mut breakpoint = false;
         for c in &self.0 {
             match *c {
-                DebugCond::InsnRange(a, b) if a <= pc && pc <= b => return 1,
+                DebugCond::InsnRange(a, b) if a <= pc && pc <= b => debug_for = 1,
                 DebugCond::InsnFrom(a, ref howlong) if pc == a => {
                     if let &Some(duration) = howlong {
-                        return duration;
+                        debug_for = duration;
+                    } else {
+                        debug_for = 1;
                     }
-                    return 1;
-                }
+                },
+                DebugCond::DumpAt(a) if a == pc => dump = true,
+                DebugCond::BreakAt(a) if a == pc => {
+                    dump = true;
+                    breakpoint = true;
+                },
                 _ => {}
             }
         }
-        0
+        (debug_for, dump, breakpoint)
     }
 
     pub fn matches_mem(&self, addr: u64, write: bool) -> bool {
@@ -123,5 +131,46 @@ impl DebugCondList {
             }
         }
         false
+    }
+}
+
+pub enum DebuggerResult {
+    Step,
+    Continue,
+    Quit,
+}
+
+pub struct Debugger<'c> {
+    editor: Editor<'c>,
+}
+
+impl<'c> Debugger<'c> {
+    pub fn new<'a>() -> Debugger<'a> {
+        Debugger {
+            editor: Editor::new(),
+        }
+    }
+
+    pub fn run_loop(&mut self, cpu: &mut Cpu) -> DebuggerResult {
+        loop {
+            match self.editor.readline("- ") {
+                Err(_) => return DebuggerResult::Quit,
+                Ok(input) => {
+                    match &input[..] {
+                        "c"  => return DebuggerResult::Continue,
+                        "q"  => return DebuggerResult::Quit,
+                        "s"  => return DebuggerResult::Step,
+                        "d"  => println!("CPU dump:\n{:?}", cpu),
+                        _    => println!("unrecognized debugger command"),
+                        // TODO:
+                        // - dump FPR
+                        // - dump CP0
+                        // - disassemble around PC
+                        // - write word
+                        // - read word
+                    }
+                }
+            }
+        }
     }
 }

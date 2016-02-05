@@ -6,6 +6,7 @@ use super::exception::*;
 use super::cp0::Cp0;
 use super::types::*;
 use interconnect;
+use debug::{Debugger, DebuggerResult};
 use util::{mult_64_64_unsigned, mult_64_64_signed};
 
 const NUM_GPR: usize = 32;
@@ -14,6 +15,7 @@ pub struct Cpu {
     instr_counter: u32,
     debug_instrs_until: u32,
     debug_instrs:  bool,
+    break_next:    bool,
 
     reg_gpr:    [u64; NUM_GPR],
     reg_fpr:    [[u8; 8]; NUM_GPR],
@@ -46,7 +48,6 @@ macro_rules! dprintln {
 
 impl fmt::Debug for Cpu {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        try!(write!(f, "\nCPU dump:\n"));
         for row in 0..8 {
             for col in 0..4 {
                 let i = row + col * 8;
@@ -68,6 +69,7 @@ impl Cpu {
             instr_counter: 0,
             debug_instrs_until: 0,
             debug_instrs: false,
+            break_next: false,
             in_branch_delay: false,
             exc_pending: VecDeque::new(),
 
@@ -138,7 +140,25 @@ impl Cpu {
         self.instr_counter += 1;
         self.last_pc = self.reg_pc;
         let pc = self.reg_pc;
-        let debug_for = self.interconnect.debug_conds.matches_pc(pc);
+        self.last_instr = self.read_word(pc);
+        let instr = Instruction(self.last_instr);
+
+        // Debug options
+        let (debug_for, dump_here, break_here) = self.interconnect.debug.check_pc(pc);
+        if dump_here || self.break_next {
+            println!("CPU state before {:#10x}  {:?}", pc as u32, instr);
+            println!("{:?}", self);
+            if break_here || self.break_next {
+                // TODO: break before or after instruction
+                self.break_next = false;
+                let mut debugger = Debugger::new();
+                match debugger.run_loop(self) {
+                    DebuggerResult::Quit => panic!("quit"),  // TODO
+                    DebuggerResult::Step => self.break_next = true,
+                    DebuggerResult::Continue => { }
+                }
+            }
+        }
         if debug_for > 0 {
             self.debug_instrs = true;
             if debug_for > 1 {
@@ -147,27 +167,31 @@ impl Cpu {
         } else if self.debug_instrs && self.instr_counter > self.debug_instrs_until {
             self.debug_instrs = false;
         }
-        self.last_instr = self.read_word(pc);
-        let instr = Instruction(self.last_instr);
-        dprintln!(self, "op: {:#x}   {:?}", self.reg_pc & 0xffff_ffff, instr);
+        dprintln!(self, "op: {:#10x}   {:?}", pc as u32, instr);
 
+        self.dispatch_instr(&instr);
+
+        self.reg_pc += 4;
+    }
+
+    fn dispatch_instr(&mut self, instr: &Instruction) {
         match instr.opcode() {
             LUI   => {
                 let val = instr.imm_sign_extended() << 16;
                 dprintln!(self, "{} {} <- {:#x}", INDENT, REG_NAMES[instr.rt()], val);
                 self.write_gpr(instr.rt(), val);
             }
-            LW    => self.mem_load (&instr, false, |word: u32| word as i32 as u64),
-            LWU   => self.mem_load (&instr, false, |word: u32| word as u64),
-            SW    => self.mem_store(&instr, false, |data| data as u32),
+            LW    => self.mem_load (instr, false, |word: u32| word as i32 as u64),
+            LWU   => self.mem_load (instr, false, |word: u32| word as u64),
+            SW    => self.mem_store(instr, false, |data| data as u32),
             // TODO: overflow exception
-            ADDI  => self.binary_imm(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
-            ADDIU => self.binary_imm(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
-            ANDI  => self.binary_imm(&instr, |rs| rs & instr.imm()),
-            ORI   => self.binary_imm(&instr, |rs| rs | instr.imm()),
-            XORI  => self.binary_imm(&instr, |rs| rs ^ instr.imm()),
-            SLTI  => self.binary_imm(&instr, |rs| ((rs as i64) < instr.imm_sign_extended() as i64) as u64),
-            SLTIU => self.binary_imm(&instr, |rs| (rs < instr.imm_sign_extended()) as u64),
+            ADDI  => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
+            ADDIU => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
+            ANDI  => self.binary_imm(instr, |rs| rs & instr.imm()),
+            ORI   => self.binary_imm(instr, |rs| rs | instr.imm()),
+            XORI  => self.binary_imm(instr, |rs| rs ^ instr.imm()),
+            SLTI  => self.binary_imm(instr, |rs| ((rs as i64) < instr.imm_sign_extended() as i64) as u64),
+            SLTIU => self.binary_imm(instr, |rs| (rs < instr.imm_sign_extended()) as u64),
             J     => {
                 let addr = ((self.reg_pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
                 self.jump(addr, 0);
@@ -176,49 +200,49 @@ impl Cpu {
                 let addr = ((self.reg_pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
                 self.jump(addr, 31);
             }
-            BEQ   => self.branch(&instr, false, false, |cpu|
+            BEQ   => self.branch(instr, false, false, |cpu|
                                  cpu.read_gpr(instr.rs()) == cpu.read_gpr(instr.rt())),
-            BEQL  => self.branch(&instr, true, false, |cpu|
+            BEQL  => self.branch(instr, true, false, |cpu|
                                  cpu.read_gpr(instr.rs()) == cpu.read_gpr(instr.rt())),
-            BNE   => self.branch(&instr, false, false, |cpu|
+            BNE   => self.branch(instr, false, false, |cpu|
                                  cpu.read_gpr(instr.rs()) != cpu.read_gpr(instr.rt())),
-            BNEL  => self.branch(&instr, true, false, |cpu|
+            BNEL  => self.branch(instr, true, false, |cpu|
                                  cpu.read_gpr(instr.rs()) != cpu.read_gpr(instr.rt())),
-            BGTZ  => self.branch(&instr, false, false, |cpu| {
+            BGTZ  => self.branch(instr, false, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v != 0 && (v >> 63) == 0 }),
-            BGTZL => self.branch(&instr, true, false, |cpu| {
+            BGTZL => self.branch(instr, true, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v != 0 && (v >> 63) == 0 }),
-            BLEZ  => self.branch(&instr, false, false, |cpu| {
+            BLEZ  => self.branch(instr, false, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
-            BLEZL => self.branch(&instr, true, false, |cpu| {
+            BLEZL => self.branch(instr, true, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
             // TODO: overflow exception
-            DADDI => self.binary_imm(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
-            DADDIU => self.binary_imm(&instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
-            LB    => self.mem_load (&instr, false, |byte: u8| byte as i8 as u64),
-            LBU   => self.mem_load (&instr, false, |byte: u8| byte as u64),
-            LH    => self.mem_load (&instr, false, |hword: u16| hword as i16 as u64),
-            LHU   => self.mem_load (&instr, false, |hword: u16| hword as u64),
-            LD    => self.mem_load (&instr, false, |dword: u64| dword),
-            SB    => self.mem_store(&instr, false, |data| data as u8),
-            SH    => self.mem_store(&instr, false, |data| data as u16),
-            SD    => self.mem_store(&instr, false, |data| data),
-            LWL   => self.mem_load_unaligned (&instr, false, |data: u32| data as i32 as u64),
-            LWR   => self.mem_load_unaligned (&instr, true,  |data: u32| data as i32 as u64),
-            LDL   => self.mem_load_unaligned (&instr, false, |data: u64| data),
-            LDR   => self.mem_load_unaligned (&instr, true,  |data: u64| data),
-            SWL   => self.mem_store_unaligned(&instr, false, |mask, data: u32, reg|
+            DADDI => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
+            DADDIU => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
+            LB    => self.mem_load (instr, false, |byte: u8| byte as i8 as u64),
+            LBU   => self.mem_load (instr, false, |byte: u8| byte as u64),
+            LH    => self.mem_load (instr, false, |hword: u16| hword as i16 as u64),
+            LHU   => self.mem_load (instr, false, |hword: u16| hword as u64),
+            LD    => self.mem_load (instr, false, |dword: u64| dword),
+            SB    => self.mem_store(instr, false, |data| data as u8),
+            SH    => self.mem_store(instr, false, |data| data as u16),
+            SD    => self.mem_store(instr, false, |data| data),
+            LWL   => self.mem_load_unaligned (instr, false, |data: u32| data as i32 as u64),
+            LWR   => self.mem_load_unaligned (instr, true,  |data: u32| data as i32 as u64),
+            LDL   => self.mem_load_unaligned (instr, false, |data: u64| data),
+            LDR   => self.mem_load_unaligned (instr, true,  |data: u64| data),
+            SWL   => self.mem_store_unaligned(instr, false, |mask, data: u32, reg|
                                               ((data as u64 & !mask) | (reg & mask)) as u32),
-            SWR   => self.mem_store_unaligned(&instr, true,  |mask, data: u32, reg|
+            SWR   => self.mem_store_unaligned(instr, true,  |mask, data: u32, reg|
                                               ((data as u64 & !mask) | (reg & mask)) as u32),
-            SDL   => self.mem_store_unaligned(&instr, false, |mask, data: u64, reg|
+            SDL   => self.mem_store_unaligned(instr, false, |mask, data: u64, reg|
                                               (data & !mask) | (reg & mask)),
-            SDR   => self.mem_store_unaligned(&instr, true,  |mask, data: u64, reg|
+            SDR   => self.mem_store_unaligned(instr, true,  |mask, data: u64, reg|
                                               (data & !mask) | (reg & mask)),
-            LL    => self.mem_load (&instr, true, |data: u32| data as i32 as u64),
-            LLD   => self.mem_load (&instr, true, |data: u64| data),
-            SC    => self.mem_store(&instr, true, |data| data as u32),
-            SCD   => self.mem_store(&instr, true, |data| data),
+            LL    => self.mem_load (instr, true, |data: u32| data as i32 as u64),
+            LLD   => self.mem_load (instr, true, |data: u64| data),
+            SC    => self.mem_store(instr, true, |data| data as u32),
+            SCD   => self.mem_store(instr, true, |data| data),
             CACHE => {
                 // TODO: Check if we need to implement this
             }
@@ -226,71 +250,71 @@ impl Cpu {
                 JR   => { let addr = self.read_gpr(instr.rs()); self.jump(addr, 0); }
                 JALR => { let addr = self.read_gpr(instr.rs()); self.jump(addr, instr.rd()); }
                 // TODO: Overflow exception
-                ADD  => self.binary(&instr, |rs, rt| (rs as i32).wrapping_add(rt as i32) as i32 as u64),
-                ADDU => self.binary(&instr, |rs, rt| (rs as u32).wrapping_add(rt as u32) as i32 as u64),
+                ADD  => self.binary(instr, |rs, rt| (rs as i32).wrapping_add(rt as i32) as i32 as u64),
+                ADDU => self.binary(instr, |rs, rt| (rs as u32).wrapping_add(rt as u32) as i32 as u64),
                 // TODO: Overflow exception
-                SUB  => self.binary(&instr, |rs, rt| (rs as i32).wrapping_sub(rt as i32) as i32 as u64),
-                SUBU => self.binary(&instr, |rs, rt| (rs as u32).wrapping_sub(rt as u32) as i32 as u64),
-                AND  => self.binary(&instr, |rs, rt| rs & rt),
-                OR   => self.binary(&instr, |rs, rt| rs | rt),
-                XOR  => self.binary(&instr, |rs, rt| rs ^ rt),
-                NOR  => self.binary(&instr, |rs, rt| !(rs | rt)),
-                SLT  => self.binary(&instr, |rs, rt| ((rs as i64) < rt as i64) as u64),
-                SLTU => self.binary(&instr, |rs, rt| (rs < rt) as u64),
-                SLLV => self.binary(&instr, |rs, rt| (rt << (rs & 0b11111)) as i32 as u64),
-                SRAV => self.binary(&instr, |rs, rt| (rt as i32 >> (rs & 0b11111)) as u64),
-                SRLV => self.binary(&instr, |rs, rt| (rt as u32 >> (rs & 0b11111)) as i32 as u64),
-                SLL  => if instr.sa() != 0 { self.unary(&instr, |rt| (rt << instr.sa()) as i32 as u64) },
-                SRA  => self.unary(&instr, |rt| (rt as i32 >> instr.sa()) as i32 as u64),
-                SRL  => self.unary(&instr, |rt| (rt as u32 >> instr.sa()) as i32 as u64),
+                SUB  => self.binary(instr, |rs, rt| (rs as i32).wrapping_sub(rt as i32) as i32 as u64),
+                SUBU => self.binary(instr, |rs, rt| (rs as u32).wrapping_sub(rt as u32) as i32 as u64),
+                AND  => self.binary(instr, |rs, rt| rs & rt),
+                OR   => self.binary(instr, |rs, rt| rs | rt),
+                XOR  => self.binary(instr, |rs, rt| rs ^ rt),
+                NOR  => self.binary(instr, |rs, rt| !(rs | rt)),
+                SLT  => self.binary(instr, |rs, rt| ((rs as i64) < rt as i64) as u64),
+                SLTU => self.binary(instr, |rs, rt| (rs < rt) as u64),
+                SLLV => self.binary(instr, |rs, rt| (rt << (rs & 0b11111)) as i32 as u64),
+                SRAV => self.binary(instr, |rs, rt| (rt as i32 >> (rs & 0b11111)) as u64),
+                SRLV => self.binary(instr, |rs, rt| (rt as u32 >> (rs & 0b11111)) as i32 as u64),
+                SLL  => if instr.sa() != 0 { self.unary(instr, |rt| (rt << instr.sa()) as i32 as u64) },
+                SRA  => self.unary(instr, |rt| (rt as i32 >> instr.sa()) as i32 as u64),
+                SRL  => self.unary(instr, |rt| (rt as u32 >> instr.sa()) as i32 as u64),
                 // TODO: Overflow exception
-                DADD   => self.binary(&instr, |rs, rt| rs.wrapping_add(rt)),
-                DADDU  => self.binary(&instr, |rs, rt| rs.wrapping_add(rt)),
+                DADD   => self.binary(instr, |rs, rt| rs.wrapping_add(rt)),
+                DADDU  => self.binary(instr, |rs, rt| rs.wrapping_add(rt)),
                 // TODO: Overflow exception
-                DSUB   => self.binary(&instr, |rs, rt| rs.wrapping_sub(rt)),
-                DSUBU  => self.binary(&instr, |rs, rt| rs.wrapping_sub(rt)),
-                DSLLV  => self.binary(&instr, |rs, rt| rt << (rs & 0b111111)),
-                DSRAV  => self.binary(&instr, |rs, rt| (rt as i64 >> (rs & 0b111111)) as u64),
-                DSRLV  => self.binary(&instr, |rs, rt| rt >> (rs & 0b111111)),
-                DSLL   => self.unary(&instr, |rt| rt << instr.sa()),
-                DSLL32 => self.unary(&instr, |rt| rt << (instr.sa() + 32)),
-                DSRA   => self.unary(&instr, |rt| (rt as i64 >> instr.sa()) as u64),
-                DSRA32 => self.unary(&instr, |rt| (rt as i64 >> (instr.sa() + 32)) as u64),
-                DSRL   => self.unary(&instr, |rt| rt >> instr.sa()),
-                DSRL32 => self.unary(&instr, |rt| rt >> (instr.sa() + 32)),
+                DSUB   => self.binary(instr, |rs, rt| rs.wrapping_sub(rt)),
+                DSUBU  => self.binary(instr, |rs, rt| rs.wrapping_sub(rt)),
+                DSLLV  => self.binary(instr, |rs, rt| rt << (rs & 0b111111)),
+                DSRAV  => self.binary(instr, |rs, rt| (rt as i64 >> (rs & 0b111111)) as u64),
+                DSRLV  => self.binary(instr, |rs, rt| rt >> (rs & 0b111111)),
+                DSLL   => self.unary(instr, |rt| rt << instr.sa()),
+                DSLL32 => self.unary(instr, |rt| rt << (instr.sa() + 32)),
+                DSRA   => self.unary(instr, |rt| (rt as i64 >> instr.sa()) as u64),
+                DSRA32 => self.unary(instr, |rt| (rt as i64 >> (instr.sa() + 32)) as u64),
+                DSRL   => self.unary(instr, |rt| rt >> instr.sa()),
+                DSRL32 => self.unary(instr, |rt| rt >> (instr.sa() + 32)),
                 MFHI   => { let val = self.reg_hi; self.write_gpr(instr.rd(), val); }
                 MFLO   => { let val = self.reg_lo; self.write_gpr(instr.rd(), val); }
                 MTHI   => { let val = self.read_gpr(instr.rs()); self.reg_hi = val; }
                 MTLO   => { let val = self.read_gpr(instr.rs()); self.reg_lo = val; }
-                MULT   => self.binary_hilo(&instr, |a, b| {
+                MULT   => self.binary_hilo(instr, |a, b| {
                     let res = (a as i32 as i64) * (b as i32 as i64);
                     (res as i32 as u64, (res >> 32) as i32 as u64) }),
-                MULTU  => self.binary_hilo(&instr, |a, b| {
+                MULTU  => self.binary_hilo(instr, |a, b| {
                     let res = (a & 0xffff_ffff) * (b & 0xffff_ffff);
                     (res as i32 as u64, (res >> 32) as i32 as u64) }),
-                DIV    => self.binary_hilo(&instr, |a, b| ((a as i32 / b as i32) as u64,
+                DIV    => self.binary_hilo(instr, |a, b| ((a as i32 / b as i32) as u64,
                                                            (a as i32 % b as i32) as u64)),
-                DIVU   => self.binary_hilo(&instr, |a, b| ((a as u32 / b as u32) as u64,
+                DIVU   => self.binary_hilo(instr, |a, b| ((a as u32 / b as u32) as u64,
                                                            (a as u32 % b as u32) as u64)),
-                DMULT  => self.binary_hilo(&instr, |a, b| mult_64_64_signed(a, b)),
-                DMULTU => self.binary_hilo(&instr, |a, b| mult_64_64_unsigned(a, b)),
-                DDIV   => self.binary_hilo(&instr, |a, b| ((a as i64 / b as i64) as u64,
+                DMULT  => self.binary_hilo(instr, |a, b| mult_64_64_signed(a, b)),
+                DMULTU => self.binary_hilo(instr, |a, b| mult_64_64_unsigned(a, b)),
+                DDIV   => self.binary_hilo(instr, |a, b| ((a as i64 / b as i64) as u64,
                                                            (a as i64 % b as i64) as u64)),
-                DDIVU  => self.binary_hilo(&instr, |a, b| (a / b, a % b)),
+                DDIVU  => self.binary_hilo(instr, |a, b| (a / b, a % b)),
                 // TEQ, TGE, TGEU, TLT, TLTU, TNE
                 SYNC  => { }
                 // SYSCALL
                 _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
             },
             REGIMM => match instr.regimm_op() {
-                BGEZ    => self.branch(&instr, false, false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
-                BGEZL   => self.branch(&instr, true,  false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
-                BGEZAL  => self.branch(&instr, false, true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
-                BGEZALL => self.branch(&instr, true,  true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
-                BLTZ    => self.branch(&instr, false, false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
-                BLTZL   => self.branch(&instr, true,  false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
-                BLTZAL  => self.branch(&instr, false, true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
-                BLTZALL => self.branch(&instr, true,  true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BGEZ    => self.branch(instr, false, false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BGEZL   => self.branch(instr, true,  false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BGEZAL  => self.branch(instr, false, true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BGEZALL => self.branch(instr, true,  true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BLTZ    => self.branch(instr, false, false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BLTZL   => self.branch(instr, true,  false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BLTZAL  => self.branch(instr, false, true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BLTZALL => self.branch(instr, true,  true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
                 // TEQI, TGEI, TGEIU, TLTI, TLTIU, TNEI
                 _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
             },
@@ -336,10 +360,10 @@ impl Cpu {
                 _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
             },
             COP1 => match instr.cop_op() {
-                MF  => self.reg_store_fp(&instr, |v: i32| v as u64),
-                DMF => self.reg_store_fp(&instr, |v: u64| v),
-                MT  => self.reg_load_fp (&instr, |v| v as u32),
-                DMT => self.reg_load_fp (&instr, |v| v),
+                MF  => self.reg_store_fp(instr, |v: i32| v as u64),
+                DMF => self.reg_store_fp(instr, |v: u64| v),
+                MT  => self.reg_load_fp (instr, |v| v as u32),
+                DMT => self.reg_load_fp (instr, |v| v),
                 CF  => {
                     let data = match instr.fs() {
                         31 => self.reg_fcr31,
@@ -361,75 +385,73 @@ impl Cpu {
                     }
                 }
                 BC  => match instr.regimm_op() {
-                    BCF  => self.branch(&instr, false, false, |cpu| cpu.reg_fcr31 & 0x80_0000 == 0),
-                    BCFL => self.branch(&instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 == 0),
-                    BCT  => self.branch(&instr, false, false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
-                    BCTL => self.branch(&instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
+                    BCF  => self.branch(instr, false, false, |cpu| cpu.reg_fcr31 & 0x80_0000 == 0),
+                    BCFL => self.branch(instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 == 0),
+                    BCT  => self.branch(instr, false, false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
+                    BCTL => self.branch(instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
                     _    => bug!(self, "#UD: {:#b} -- {:?}", instr.0, instr)
                 },
                 _   => match instr.fp_op() {
                     // TODO: exceptions
                     // Binary operations
-                    FADD    => self.fp_binary_2way(&instr, |a, b| a + b, |a, b| a + b),
-                    FSUB    => self.fp_binary_2way(&instr, |a, b| a - b, |a, b| a - b),
-                    FMUL    => self.fp_binary_2way(&instr, |a, b| a * b, |a, b| a * b),
-                    FDIV    => self.fp_binary_2way(&instr, |a, b| a / b, |a, b| a / b),
+                    FADD    => self.fp_binary_2way(instr, |a, b| a + b, |a, b| a + b),
+                    FSUB    => self.fp_binary_2way(instr, |a, b| a - b, |a, b| a - b),
+                    FMUL    => self.fp_binary_2way(instr, |a, b| a * b, |a, b| a * b),
+                    FDIV    => self.fp_binary_2way(instr, |a, b| a / b, |a, b| a / b),
                     // Unary operations
-                    FMOV    => self.fp_unary_2way(&instr, |a| a,        |a| a),
-                    FNEG    => self.fp_unary_2way(&instr, |a| -a,       |a| -a),
-                    FABS    => self.fp_unary_2way(&instr, |a| a.abs(),  |a| a.abs()),
-                    FSQRT   => self.fp_unary_2way(&instr, |a| a.sqrt(), |a| a.sqrt()),
+                    FMOV    => self.fp_unary_2way(instr, |a| a,        |a| a),
+                    FNEG    => self.fp_unary_2way(instr, |a| -a,       |a| -a),
+                    FABS    => self.fp_unary_2way(instr, |a| a.abs(),  |a| a.abs()),
+                    FSQRT   => self.fp_unary_2way(instr, |a| a.sqrt(), |a| a.sqrt()),
                     // Conversions
                     FCVTS   => match instr.fp_fmt() {
-                        FMT_D => self.fp_convert::<f64, _, _>(&instr, |a| a as f32),
-                        FMT_W => self.fp_convert::<i32, _, _>(&instr, |a| a as f32),
-                        FMT_L => self.fp_convert::<i64, _, _>(&instr, |a| a as f32),
+                        FMT_D => self.fp_convert::<f64, _, _>(instr, |a| a as f32),
+                        FMT_W => self.fp_convert::<i32, _, _>(instr, |a| a as f32),
+                        FMT_L => self.fp_convert::<i64, _, _>(instr, |a| a as f32),
                         _     => bug!(self, "invalid FP source format: {:?}", instr)
                     },
                     FCVTD   => match instr.fp_fmt() {
-                        FMT_S => self.fp_convert::<f32, _, _>(&instr, |a| a as f64),
-                        FMT_W => self.fp_convert::<i32, _, _>(&instr, |a| a as f64),
-                        FMT_L => self.fp_convert::<i64, _, _>(&instr, |a| a as f64),
+                        FMT_S => self.fp_convert::<f32, _, _>(instr, |a| a as f64),
+                        FMT_W => self.fp_convert::<i32, _, _>(instr, |a| a as f64),
+                        FMT_L => self.fp_convert::<i64, _, _>(instr, |a| a as f64),
                         _     => bug!(self, "invalid FP source format: {:?}", instr)
                     },
-                    FCVTW   => self.fp_convert_2way(&instr, |a| a.round() as i32, |a| a.round() as i32),
-                    FCVTL   => self.fp_convert_2way(&instr, |a| a.round() as i64, |a| a.round() as i64),
-                    FCEILW  => self.fp_convert_2way(&instr, |a| a.ceil()  as i32, |a| a.ceil()  as i32),
-                    FCEILL  => self.fp_convert_2way(&instr, |a| a.ceil()  as i64, |a| a.ceil()  as i64),
-                    FFLOORW => self.fp_convert_2way(&instr, |a| a.floor() as i32, |a| a.floor() as i32),
-                    FFLOORL => self.fp_convert_2way(&instr, |a| a.floor() as i64, |a| a.floor() as i64),
-                    FROUNDW => self.fp_convert_2way(&instr, |a| a.round_to_even() as i32, |a| a.round_to_even() as i32),
-                    FROUNDL => self.fp_convert_2way(&instr, |a| a.round_to_even() as i64, |a| a.round_to_even() as i64),
-                    FTRUNCW => self.fp_convert_2way(&instr, |a| a.trunc() as i32, |a| a.trunc() as i32),
-                    FTRUNCL => self.fp_convert_2way(&instr, |a| a.trunc() as i64, |a| a.trunc() as i64),
+                    FCVTW   => self.fp_convert_2way(instr, |a| a.round() as i32, |a| a.round() as i32),
+                    FCVTL   => self.fp_convert_2way(instr, |a| a.round() as i64, |a| a.round() as i64),
+                    FCEILW  => self.fp_convert_2way(instr, |a| a.ceil()  as i32, |a| a.ceil()  as i32),
+                    FCEILL  => self.fp_convert_2way(instr, |a| a.ceil()  as i64, |a| a.ceil()  as i64),
+                    FFLOORW => self.fp_convert_2way(instr, |a| a.floor() as i32, |a| a.floor() as i32),
+                    FFLOORL => self.fp_convert_2way(instr, |a| a.floor() as i64, |a| a.floor() as i64),
+                    FROUNDW => self.fp_convert_2way(instr, |a| a.round_to_even() as i32, |a| a.round_to_even() as i32),
+                    FROUNDL => self.fp_convert_2way(instr, |a| a.round_to_even() as i64, |a| a.round_to_even() as i64),
+                    FTRUNCW => self.fp_convert_2way(instr, |a| a.trunc() as i32, |a| a.trunc() as i32),
+                    FTRUNCL => self.fp_convert_2way(instr, |a| a.trunc() as i64, |a| a.trunc() as i64),
                     // Compares
-                    FCF     => self.fp_compare_2way(&instr, false, |_| false),
-                    FCUN    => self.fp_compare_2way(&instr, false, |r| r == FpOrd::No),
-                    FCEQ    => self.fp_compare_2way(&instr, false, |r| r == FpOrd::Eq),
-                    FCUEQ   => self.fp_compare_2way(&instr, false, |r| r == FpOrd::Eq || r == FpOrd::No),
-                    FCOLT   => self.fp_compare_2way(&instr, false, |r| r == FpOrd::Lt),
-                    FCULT   => self.fp_compare_2way(&instr, false, |r| r == FpOrd::Lt || r == FpOrd::No),
-                    FCOLE   => self.fp_compare_2way(&instr, false, |r| r != FpOrd::Gt && r != FpOrd::No),
-                    FCULE   => self.fp_compare_2way(&instr, false, |r| r != FpOrd::Gt),
-                    FCSF    => self.fp_compare_2way(&instr, true,  |_| false),
-                    FCNGLE  => self.fp_compare_2way(&instr, true,  |r| r == FpOrd::No),
-                    FCSEQ   => self.fp_compare_2way(&instr, true,  |r| r == FpOrd::Eq),
-                    FCNGL   => self.fp_compare_2way(&instr, true,  |r| r == FpOrd::Eq || r == FpOrd::No),
-                    FCLT    => self.fp_compare_2way(&instr, true,  |r| r == FpOrd::Lt),
-                    FCNGE   => self.fp_compare_2way(&instr, true,  |r| r == FpOrd::Lt || r == FpOrd::No),
-                    FCLE    => self.fp_compare_2way(&instr, true,  |r| r != FpOrd::Gt && r != FpOrd::No),
-                    FCNGT   => self.fp_compare_2way(&instr, true,  |r| r != FpOrd::Gt),
+                    FCF     => self.fp_compare_2way(instr, false, |_| false),
+                    FCUN    => self.fp_compare_2way(instr, false, |r| r == FpOrd::No),
+                    FCEQ    => self.fp_compare_2way(instr, false, |r| r == FpOrd::Eq),
+                    FCUEQ   => self.fp_compare_2way(instr, false, |r| r == FpOrd::Eq || r == FpOrd::No),
+                    FCOLT   => self.fp_compare_2way(instr, false, |r| r == FpOrd::Lt),
+                    FCULT   => self.fp_compare_2way(instr, false, |r| r == FpOrd::Lt || r == FpOrd::No),
+                    FCOLE   => self.fp_compare_2way(instr, false, |r| r != FpOrd::Gt && r != FpOrd::No),
+                    FCULE   => self.fp_compare_2way(instr, false, |r| r != FpOrd::Gt),
+                    FCSF    => self.fp_compare_2way(instr, true,  |_| false),
+                    FCNGLE  => self.fp_compare_2way(instr, true,  |r| r == FpOrd::No),
+                    FCSEQ   => self.fp_compare_2way(instr, true,  |r| r == FpOrd::Eq),
+                    FCNGL   => self.fp_compare_2way(instr, true,  |r| r == FpOrd::Eq || r == FpOrd::No),
+                    FCLT    => self.fp_compare_2way(instr, true,  |r| r == FpOrd::Lt),
+                    FCNGE   => self.fp_compare_2way(instr, true,  |r| r == FpOrd::Lt || r == FpOrd::No),
+                    FCLE    => self.fp_compare_2way(instr, true,  |r| r != FpOrd::Gt && r != FpOrd::No),
+                    FCNGT   => self.fp_compare_2way(instr, true,  |r| r != FpOrd::Gt),
                     _       => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
                 }
             },
-            LDC1 => self.mem_load_fp::<u64>(&instr),
-            LWC1 => self.mem_load_fp::<u32>(&instr),
-            SDC1 => self.mem_store_fp::<u64>(&instr),
-            SWC1 => self.mem_store_fp::<u32>(&instr),
+            LDC1 => self.mem_load_fp::<u64>(instr),
+            LWC1 => self.mem_load_fp::<u32>(instr),
+            SDC1 => self.mem_store_fp::<u64>(instr),
+            SWC1 => self.mem_store_fp::<u32>(instr),
             _    => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
         }
-
-        self.reg_pc += 4;
     }
 
     fn mem_load<T: MemFmt, F>(&mut self, instr: &Instruction, linked: bool, func: F)
@@ -775,7 +797,7 @@ impl Cpu {
     #[cold]
     fn bug(&self, msg: String) -> ! {
         //println!("{:#?}", $cpu.interconnect);
-        println!("{:?}", self);
+        println!("\nCPU dump:\n{:?}", self);
         println!("last instr was:    {:?}", Instruction(self.last_instr));
         println!("#instrs executed:  {}", self.instr_counter);
         panic!(msg);

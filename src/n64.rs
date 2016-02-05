@@ -10,10 +10,10 @@ pub struct N64 {
 
 impl N64 {
     pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
-               debug_conds: DebugCondList) -> N64 {
+               debug: DebugCondList) -> N64 {
         let interface = ui::init_ui::<ui::minifb::MinifbInterface>();
         let interconnect = interconnect::Interconnect::new(pif_rom, cart_rom,
-                                                           interface, debug_conds);
+                                                           interface, debug);
         let cpu = cpu::Cpu::new(interconnect);
 
         N64 {
