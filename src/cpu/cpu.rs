@@ -7,7 +7,7 @@ use super::cp0::Cp0;
 use super::types::*;
 use mem_map::*;
 use interconnect;
-use debug::{Debugger, DebugCondList};
+use debug::{Debugger, DebugSpecList};
 use util::{mult_64_64_unsigned, mult_64_64_signed};
 
 const NUM_GPR: usize = 32;
@@ -147,7 +147,7 @@ impl Cpu {
         let instr = Instruction(self.last_instr);
 
         // Debug stuff. This might not really belong here?
-        let (debug_for, dump_here, break_here) = self.debug_conds().check_instr(pc);
+        let (debug_for, dump_here, break_here) = self.debug_specs().check_instr(pc);
         if break_here {
             println!("at: {:#10x}   {:?}", pc as u32, instr);
             if dump_here {
@@ -174,6 +174,7 @@ impl Cpu {
         self.reg_pc += 4;
     }
 
+    #[inline(always)]
     fn dispatch_instr(&mut self, instr: &Instruction) {
         match instr.opcode() {
             LUI   => {
@@ -806,7 +807,7 @@ impl Cpu {
         self.reg_pc
     }
 
-    pub fn debug_conds(&mut self) -> &mut DebugCondList {
-        &mut self.interconnect.debug
+    pub fn debug_specs(&mut self) -> &mut DebugSpecList {
+        &mut self.interconnect.debug_specs
     }
 }

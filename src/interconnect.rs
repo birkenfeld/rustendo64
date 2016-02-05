@@ -4,7 +4,7 @@ use byteorder::{BigEndian, ByteOrder};
 
 use cic;
 use mem_map::*;
-use debug::DebugCondList;
+use debug::DebugSpecList;
 use ui::{IfOutput, InterfaceChannel};
 use rsp::Rsp;
 
@@ -152,13 +152,13 @@ pub struct Interconnect {
     ri: Ri,
     si: Si,
     interface: InterfaceChannel,
-    pub debug: DebugCondList,
+    pub debug_specs: DebugSpecList,
 }
 
 impl Interconnect {
     pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
                interface: InterfaceChannel,
-               debug: DebugCondList) -> Interconnect {
+               debug: DebugSpecList) -> Interconnect {
         Interconnect {
             rsp: Rsp::default(),
 
@@ -169,7 +169,7 @@ impl Interconnect {
             ram: vec![0; RAM_SIZE],
             spram: SpRam { dmem: vec![0; 1024], imem: vec![0; 1024] },
             interface: interface,
-            debug: debug,
+            debug_specs: debug,
             rd: Rd::default(),
             sp: Sp::default(),
             dp: Dp::default(),
@@ -332,14 +332,14 @@ impl Interconnect {
                 return Err("Unsupported read memory area");
             }
         };
-        if self.debug.matches_mem(addr as u64, false) {
+        if self.debug_specs.matches_mem(addr as u64, false) {
             println!("Bus read:  {:#10x} :  {:#10x}", addr, res);
         }
         Ok(res)
     }
 
     pub fn write_word(&mut self, addr: u32, mut word: u32) -> Result<(), &'static str> {
-        if self.debug.matches_mem(addr as u64, true) {
+        if self.debug_specs.matches_mem(addr as u64, true) {
             // Log all writes to non-RAM locations
             println!("Bus write: {:#10x} <- {:#10x}", addr, word);
         }

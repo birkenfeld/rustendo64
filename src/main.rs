@@ -50,7 +50,7 @@ fn main() {
     let pif_file_name = arguments.value_of("pif").unwrap();
     let rom_file_name = arguments.value_of("rom").unwrap();
     let debug = if let Some(args) = arguments.values_of("debug") {
-        args.filter_map(|arg| match arg.parse::<debug::DebugCond>() {
+        args.filter_map(|arg| match arg.parse::<debug::DebugSpec>() {
             Ok(v)  => Some(v),
             Err(_) => {
                 println!("Warning: ignoring unrecognized debug arg {}", arg);
@@ -62,7 +62,7 @@ fn main() {
     let pif = read_bin(pif_file_name);
     let rom = read_bin(rom_file_name);
 
-    let mut n64 = n64::N64::new(pif, rom, debug::DebugCondList(debug));
+    let mut n64 = n64::N64::new(pif, rom, debug::DebugSpecList(debug));
     n64.power_on_reset();
     n64.run();
 }
