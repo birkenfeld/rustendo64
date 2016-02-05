@@ -8,7 +8,7 @@ dependencies = [
  "minifb 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "nom 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num 0.1.30 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustyline 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustyline 0.2.0 (git+http://github.com/birkenfeld/rustyline)",
 ]
 
 [[package]]
@@ -168,7 +168,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "rustyline"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "git+http://github.com/birkenfeld/rustyline#aece71e222dce0e8d99b2b502946674bd0ba5b73"
 dependencies = [
  "libc 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",

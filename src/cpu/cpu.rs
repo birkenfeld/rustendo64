@@ -145,19 +145,21 @@ impl Cpu {
 
         // Debug options
         let (debug_for, dump_here, break_here) = self.interconnect.debug.check_pc(pc);
-        if dump_here || self.break_next {
+        if break_here || self.break_next {
+            println!("At {:#10x}  {:?}", pc as u32, instr);
+            if dump_here {
+                println!("{:?}", self);
+            }
+            self.break_next = false;
+            let mut debugger = Debugger::new();
+            match debugger.run_loop(self) {
+                DebuggerResult::Quit => panic!("quit"),  // TODO
+                DebuggerResult::Step => self.break_next = true, // TODO
+                DebuggerResult::Continue => { }
+            }
+        } else if dump_here {
             println!("CPU state before {:#10x}  {:?}", pc as u32, instr);
             println!("{:?}", self);
-            if break_here || self.break_next {
-                // TODO: break before or after instruction
-                self.break_next = false;
-                let mut debugger = Debugger::new();
-                match debugger.run_loop(self) {
-                    DebuggerResult::Quit => panic!("quit"),  // TODO
-                    DebuggerResult::Step => self.break_next = true,
-                    DebuggerResult::Continue => { }
-                }
-            }
         }
         if debug_for > 0 {
             self.debug_instrs = true;

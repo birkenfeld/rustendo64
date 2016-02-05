@@ -14,8 +14,10 @@
 // - single-step
 // - continue
 
+use std::env;
 use std::str::FromStr;
 use std::str;
+use std::path::PathBuf;
 use rustyline::Editor;
 use nom::IResult;
 use nom::{eof, hex_u32};
@@ -141,13 +143,20 @@ pub enum DebuggerResult {
 }
 
 pub struct Debugger<'c> {
+    histfile: Option<PathBuf>,
     editor: Editor<'c>,
 }
 
 impl<'c> Debugger<'c> {
     pub fn new<'a>() -> Debugger<'a> {
+        let mut editor = Editor::new();
+        let histfile = env::home_dir().map(|p| p.join(".rustendo64dbg"));
+        if let Some(ref fp) = histfile {
+            let _ = editor.load_history(fp);
+        }
         Debugger {
-            editor: Editor::new(),
+            editor: editor,
+            histfile: histfile,
         }
     }
 
@@ -156,21 +165,59 @@ impl<'c> Debugger<'c> {
             match self.editor.readline("- ") {
                 Err(_) => return DebuggerResult::Quit,
                 Ok(input) => {
-                    match &input[..] {
-                        "c"  => return DebuggerResult::Continue,
-                        "q"  => return DebuggerResult::Quit,
-                        "s"  => return DebuggerResult::Step,
-                        "d"  => println!("CPU dump:\n{:?}", cpu),
-                        _    => println!("unrecognized debugger command"),
-                        // TODO:
-                        // - dump FPR
-                        // - dump CP0
-                        // - disassemble around PC
-                        // - write word
-                        // - read word
+                    if input.len() > 0 {
+                        self.editor.add_history_entry(&input);
+                    }
+                    if let Some(res) = self.dispatch(cpu, input) {
+                        if let Some(ref fp) = self.histfile {
+                            let _ = self.editor.save_history(fp);
+                        }
+                        return res;
                     }
                 }
             }
         }
+    }
+
+    fn dispatch(&mut self, cpu: &mut Cpu, input: String) -> Option<DebuggerResult> {
+        let parts = input.split_whitespace().collect::<Vec<_>>();
+        if parts.len() == 0 {
+            return self.repeat_last(cpu);
+        }
+        match parts[0] {
+            "c"  => Some(DebuggerResult::Continue),
+            "q"  => Some(DebuggerResult::Quit),
+            "s"  => Some(DebuggerResult::Step),
+            "d"  => { println!("CPU dump:\n{:?}", cpu); None },
+            "?" | "h" => self.help(),
+            _         => { println!("unrecognized debugger command"); None },
+            // TODO:
+            // - dump FPR
+            // - dump CP0
+            // - disassemble around PC
+            // - write word
+            // - read word
+        }
+    }
+
+    fn repeat_last(&mut self, cpu: &mut Cpu) -> Option<DebuggerResult> {
+        let last_line = {
+            let hist = self.editor.get_history();
+            if hist.len() == 0 {
+                return None;
+            }
+            hist.get(hist.len() - 1).unwrap().to_owned()
+        };
+        self.dispatch(cpu, last_line)
+    }
+
+    fn help(&self) -> Option<DebuggerResult> {
+        println!("Debugger commands:
+c  - continue
+s  - single step
+d  - dump CPU state
+q  - quit
+");
+        None
     }
 }
