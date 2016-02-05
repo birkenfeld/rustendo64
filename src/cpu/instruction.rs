@@ -1,5 +1,9 @@
 use std::fmt;
 
+// not yet
+// use num::FromPrimitive;
+// use super::opcode::Opcode;
+
 // Opcodes
 pub const LUI:     u32 = 0b001111;
 pub const LW:      u32 = 0b100011;
@@ -209,7 +213,6 @@ pub const FP_FORMATS: [&'static str; 32] = [
     "?", "?", "?", "?", "?", "?", "?", "?",
     "s", "d", "?", "?", "w", "l", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?"];
-
 
 #[derive(Clone, Copy)]
 pub struct Instruction(pub u32);

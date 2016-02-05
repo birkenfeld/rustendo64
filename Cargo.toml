@@ -9,6 +9,8 @@ byteorder = "0.4.2"
 minifb = "0.4.0"
 rustyline = "0.2.0"
 nom = "1.1.0"
+num = "0.1.30"
+enum_primitive = "0.1.0"
 
 [dependencies.clap]
 version = "2.0.1"

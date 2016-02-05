@@ -3,9 +3,10 @@ use std::fmt;
 use byteorder::{BigEndian, ByteOrder};
 
 use cic;
-use memmap::*;
+use mem_map::*;
 use debug::DebugCondList;
 use ui::{IfOutput, InterfaceChannel};
+use rsp::Rsp;
 
 const PIF_ROM_SIZE: usize = 2048;
 const RAM_SIZE: usize = 8 * 1024 * 1024;
@@ -133,6 +134,8 @@ struct Si {
 }
 
 pub struct Interconnect {
+    rsp: Rsp,
+
     pif_rom: Vec<u8>,
     pif_ram: Vec<u32>,
     pif_status: u32,
@@ -157,6 +160,8 @@ impl Interconnect {
                interface: InterfaceChannel,
                debug: DebugCondList) -> Interconnect {
         Interconnect {
+            rsp: Rsp::default(),
+
             pif_rom: pif_rom,
             pif_ram: vec![0; 16],
             pif_status: 0,

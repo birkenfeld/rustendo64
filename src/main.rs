@@ -2,14 +2,17 @@
 
 #[macro_use] extern crate clap;
 #[macro_use] extern crate nom;
+#[macro_use] extern crate enum_primitive;
+extern crate num;
 extern crate minifb;
 extern crate byteorder;
 extern crate rustyline;
 
 mod n64;
 mod cpu;
-mod memmap;
+mod rsp;
 mod interconnect;
+mod mem_map;
 mod cic;
 mod util;
 mod ui;
