@@ -29,6 +29,7 @@ use nom::{eof, hex_u32};
 use cpu::Cpu;
 use cpu::instruction::*;
 
+#[derive(Clone)]
 pub struct MemAccess(bool, bool); // read, write
 
 impl fmt::Debug for MemAccess {
@@ -42,6 +43,7 @@ impl fmt::Debug for MemAccess {
     }
 }
 
+#[derive(Clone)]
 pub enum DebugSpec {
     MemRange(MemAccess, u64, u64),
     InsnRange(u64, u64),
@@ -301,6 +303,7 @@ impl<'c> Debugger<'c> {
             "c"  => self.cont(cpu, int_arg(1)),
             "s"  => self.step(cpu, int_arg(1)),
             "b"  => self.add_break(cpu, int_arg(1)),
+            "bm" => self.add_mem_break(cpu, parts.get(1), int_arg(2)),
             "bd" => self.del_break(cpu, int_arg(1)),
             "bl" => self.list_breaks(cpu),
             "r"  => self.read_mem(cpu, int_arg(1), int_arg(2)),
@@ -377,13 +380,44 @@ impl<'c> Debugger<'c> {
         false
     }
 
-    fn del_break(&self, cpu: &mut Cpu, addr: Option<u64>) -> bool {
-        if let Some(addr) = addr {
+    fn add_mem_break(&self, cpu: &mut Cpu, rw: Option<&&str>, addr: Option<u64>) -> bool {
+        if let Some(rw) = rw {
+            let acc = if *rw == "r" {
+                MemAccess(true, false)
+            } else if *rw == "w" {
+                MemAccess(false, true)
+            } else if *rw == "rw" {
+                MemAccess(true, true)
+            } else {
+                println!("Assuming read/write for {}.", rw);
+                MemAccess(true, true)
+            };
+            if let Some(addr) = addr {
+                cpu.debug_specs().add_spec(DebugSpec::MemBreak(acc, addr));
+                println!("Added breakpoint.");
+            } else {
+                println!("Need an address to break at.");
+            }
+        } else {
+            println!("Need r, w or rw as first argument.");
+        }
+        false
+    }
+
+    fn del_break(&self, cpu: &mut Cpu, n: Option<u64>) -> bool {
+        if let Some(n) = n {
+            let mut i = 0;
             let mut removed = false;
             cpu.debug_specs().specs().retain(|c| match *c {
-                DebugSpec::BreakAt(a, false) if a == addr => {
-                    removed = true;
-                    false
+                DebugSpec::BreakAt(_, false) |
+                DebugSpec::MemBreak(..) => {
+                    i += 1;
+                    if i == n + 1 {
+                        removed = true;
+                        false
+                    } else {
+                        true
+                    }
                 },
                 _ => true
             });
@@ -393,20 +427,30 @@ impl<'c> Debugger<'c> {
                 println!("Breakpoint not found.")
             }
         } else {
-            println!("Need an address to break at.");
+            println!("Need a breakpoint number (listed by bl).");
         }
         false
     }
 
     fn list_breaks(&self, cpu: &mut Cpu) -> bool {
-        println!("address      instruction");
-        println!("------------ -------------------------");
-        let addrs = cpu.debug_specs().specs().iter().filter_map(|spec|
-            if let DebugSpec::BreakAt(addr, false) = *spec {
-                Some(addr) } else { None }).collect::<Vec<_>>();
-        for addr in addrs {
-            println!("{:#10x}   {:?}", addr as u32,
-                     Instruction(cpu.read_word(addr, true)));
+        println!("#   type address      instruction/access");
+        println!("--- ---- ------------ -------------------------");
+        let specs = cpu.debug_specs().specs().iter().filter_map(|spec| {
+            match *spec {
+                DebugSpec::BreakAt(_, false) => Some(spec.clone()),
+                DebugSpec::MemBreak(..) => Some(spec.clone()),
+                _ => None
+            }
+        }).collect::<Vec<_>>();
+        for (i, spec) in specs.into_iter().enumerate() {
+            match spec {
+                DebugSpec::BreakAt(addr, _) =>
+                    println!("{:3} pc   {:#10x}   {:?}", i, addr as u32,
+                             Instruction(cpu.read_word(addr, true))),
+                DebugSpec::MemBreak(ref acc, addr) =>
+                    println!("{:3} mem  {:#10x}   {:?}", i, addr as u32, acc),
+                _ => {}
+            }
         }
         false
     }
@@ -465,7 +509,8 @@ c [addr]   - continue until pc = addr (or forever)
 s [n]      - single step over n (=1) instrs
 
 b addr     - set breakpoint at addr
-bd addr    - remove breakpoint at addr
+bm rw addr - set memory breakpoint at addr (rw can be r, w, or rw)
+bd num     - remove breakpoint #num
 bl         - list all breakpoints
 
 r addr [n] - read n (=1) words from memory starting at addr
