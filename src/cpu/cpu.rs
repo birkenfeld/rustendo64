@@ -1,5 +1,7 @@
 use std::fmt;
+use std::u32;
 use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
 use ansi_term::Colour;
 
 use super::instruction::*;
@@ -10,6 +12,7 @@ use mem_map::*;
 use interconnect;
 use debug::{Debugger, DebugSpecList};
 use util::{mult_64_64_unsigned, mult_64_64_signed};
+use INTR;
 
 const NUM_GPR: usize = 32;
 
@@ -150,8 +153,12 @@ impl Cpu {
         let instr = Instruction(self.last_instr);
 
         // Debug stuff. This might not really belong here?
-        let (debug_for, dump_here, break_here) =
+        let (debug_for, mut dump_here, mut break_here) =
             self.interconnect.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
+        if INTR.load(Ordering::Relaxed) {
+            dump_here = true;
+            break_here = true;
+        }
         if break_here {
             println!("{}", Colour::Red.paint(
                 format!("at: {:#10x}   {:?}", pc as u32, instr)));
@@ -167,7 +174,9 @@ impl Cpu {
         }
         if debug_for > 0 {
             self.debug_instrs = true;
-            if debug_for > 1 {
+            if debug_for == u32::MAX {
+                self.debug_instrs_until = u32::MAX;
+            } else if debug_for > 1 {
                 self.debug_instrs_until = self.instr_counter + debug_for;
             }
         } else if self.debug_instrs && self.instr_counter > self.debug_instrs_until {

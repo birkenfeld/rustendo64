@@ -8,6 +8,7 @@ extern crate minifb;
 extern crate byteorder;
 extern crate rustyline;
 extern crate ansi_term;
+extern crate chan_signal;
 
 mod n64;
 mod cpu;
@@ -22,7 +23,11 @@ mod debug;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
+use std::thread;
+use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 use clap::{App, Arg, ArgMatches};
+
+pub static INTR: AtomicBool = ATOMIC_BOOL_INIT;
 
 fn get_arguments<'a>() -> ArgMatches<'a> {
     App::new("rustendo64")
@@ -62,6 +67,13 @@ fn main() {
 
     let pif = read_bin(pif_file_name);
     let rom = read_bin(rom_file_name);
+
+    let sig = chan_signal::notify(&[chan_signal::Signal::INT]);
+    thread::spawn(move || {
+        if let Some(_) = sig.recv() {
+            INTR.store(true, Ordering::Relaxed);
+        }
+    });
 
     let mut n64 = n64::N64::new(pif, rom, debug::DebugSpecList(debug));
     n64.power_on_reset();

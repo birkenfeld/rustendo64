@@ -11,6 +11,7 @@ nom = "1.1.0"
 num = "0.1.30"
 enum_primitive = "0.1.0"
 ansi_term = "0.7.0"
+chan-signal = "0.1.5"
 
 [dependencies.clap]
 version = "2.0.1"

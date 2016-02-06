@@ -270,7 +270,7 @@ impl<'c> Debugger<'c> {
         loop {
             match self.editor.readline("- ") {
                 Err(_) => {
-                    println!("Quit/Interrupted.");
+                    println!("Interrupt/Quit.");
                     process::exit(1);
                 }
                 Ok(input) => {
