@@ -352,19 +352,12 @@ impl Interconnect {
                 return Err("Unsupported read memory area");
             }
         };
-        if self.debug_specs.matches_mem(addr as u64, false) {
-            println!("Bus read:  {:#10x} :  {:#10x}", addr, res);
-        }
         Ok(res)
     }
 
     pub fn write_word(&mut self, addr: u32, word: u32) -> Result<(), &'static str> {
         if addr & 0x3 != 0 {
             return Err("unaligned access");
-        }
-        if self.debug_specs.matches_mem(addr as u64, true) {
-            // Log all writes to non-RAM locations
-            println!("Bus write: {:#10x} <- {:#10x}", addr, word);
         }
         match addr {
             RDRAM_START ... RDRAM_END => {

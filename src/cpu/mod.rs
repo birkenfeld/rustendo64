@@ -1,7 +1,7 @@
 mod cpu;
 mod cp0;
 mod opcode;
-mod instruction;
+pub mod instruction;
 mod exception;
 mod types;
 

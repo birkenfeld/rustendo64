@@ -26,10 +26,21 @@ use rustyline::Editor;
 use nom::IResult;
 use nom::{eof, hex_u32};
 
-use cpu::{Cpu, Instruction};
+use cpu::Cpu;
+use cpu::instruction::*;
 
-#[derive(Debug)]
 pub struct MemAccess(bool, bool); // read, write
+
+impl fmt::Debug for MemAccess {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match (self.0, self.1) {
+            (true, true)  => write!(f, "r/w"),
+            (true, false) => write!(f, "r"),
+            (false, true) => write!(f, "w"),
+            _ => write!(f, "no")
+        }
+    }
+}
 
 pub enum DebugSpec {
     MemRange(MemAccess, u64, u64),
@@ -37,6 +48,7 @@ pub enum DebugSpec {
     InsnFrom(u64, u64),
     StateAt(u64),
     BreakAt(u64, bool),  // if true, remove breakpoint after hit
+    MemBreak(MemAccess, u64),
     BreakIn(u64),
 }
 
@@ -61,8 +73,16 @@ named!(breakat<DebugSpec>, preceded!(
     tag!("b:"), map!(integer, |a| DebugSpec::BreakAt(a, false))
 ));
 
-named!(dumpat<DebugSpec>, preceded!(
+named!(stateat<DebugSpec>, preceded!(
     tag!("d:"), map!(integer, DebugSpec::StateAt)
+));
+
+named!(membreak<DebugSpec>, chain!(
+    ac: alt!(tag!("bm:")  => { |_| MemAccess(true, true) }   |
+             tag!("bmr:") => { |_| MemAccess(true, false) }  |
+             tag!("bmw:") => { |_| MemAccess(false, true) }) ~
+    ad: integer ,
+    || { DebugSpec::MemBreak(ac, ad) }
 ));
 
 named!(memrange<DebugSpec>, chain!(
@@ -85,7 +105,7 @@ named!(insn<DebugSpec>, preceded!(
 ));
 
 named!(debugspec<DebugSpec>, terminated!(
-    alt!(insn | insnfrom | memrange | breakat | dumpat),
+    alt!(insn | insnfrom | memrange | breakat | membreak | stateat),
     eof));
 
 impl FromStr for DebugSpec {
@@ -101,7 +121,8 @@ impl FromStr for DebugSpec {
 impl DebugSpec {
     pub fn is_dump(&self) -> bool {
         match *self {
-            DebugSpec::BreakAt(..) | DebugSpec::BreakIn(..) => false,
+            DebugSpec::BreakAt(..) | DebugSpec::BreakIn(..) |
+                DebugSpec::MemBreak(..) => false,
             _ => true
         }
     }
@@ -114,6 +135,8 @@ impl fmt::Debug for DebugSpec {
                 write!(f, "break at {:#x}{}", a, if temp {" once"} else {""}),
             DebugSpec::BreakIn(n)       =>
                 write!(f, "break in {} instrs", n),
+            DebugSpec::MemBreak(ref acc, a) =>
+                write!(f, "break at {:?} memory access at {:#x}", acc, a),
             DebugSpec::InsnFrom(a, n)   =>
                 write!(f, "print {} insns from pc {:#x}", n, a),
             DebugSpec::InsnRange(a, b)  =>
@@ -121,13 +144,7 @@ impl fmt::Debug for DebugSpec {
             DebugSpec::StateAt(a)       =>
                 write!(f, "print CPU state at pc {:#x}", a),
             DebugSpec::MemRange(ref acc, a, b) =>
-                write!(f, "print {} memory access from {:#x} to {:#x}",
-                       match (acc.0, acc.1) {
-                           (true, true)  => "r/w",
-                           (true, false) => "r",
-                           (false, true) => "w",
-                           _ => "no"
-                       }, a, b),
+                write!(f, "print {:?} memory access from {:#x} to {:#x}", acc, a, b),
         }
     }
 }
@@ -143,7 +160,8 @@ impl DebugSpecList {
         &mut self.0
     }
 
-    pub fn check_instr(&mut self, pc: u64) -> (u32, bool, bool) {
+    pub fn check_instr(&mut self, pc: u64, instr: &Instruction, gprs: &[u64])
+                       -> (u32, bool, bool) {
         let mut debug_for = 0;
         let mut dump = false;
         let mut breakpt = false;
@@ -165,9 +183,34 @@ impl DebugSpecList {
                 }
                 DebugSpec::BreakIn(ref mut n) => {
                     *n -= 1;
-                    debug_for = max(debug_for, 1);
+                    if *n < 10 {
+                        debug_for = max(debug_for, 1);
+                    }
                     if *n == 0 {
                         breakpt = true;
+                    }
+                }
+                DebugSpec::MemBreak(ref acc, addr) => {
+                    let hit = match instr.opcode() {
+                        LW | LWU | LB | LBU | LH | LHU | LD |
+                        LWL | LWR | LDL | LL | LLD | LDC1 | LWC1 => {
+                            acc.0
+                        }
+                        SW | SB | SH | SD | SWL | SWR | SDL | SDR |
+                        SC | SCD | SDC1 | SWC1 => {
+                            acc.1
+                        }
+                        _ => false
+                    };
+                    // TODO: currently these are virtual addrs!
+                    if hit {
+                        let op_addr = gprs[instr.base()]
+                            .wrapping_add(instr.imm_sign_extended()) & !0b11;
+                        if op_addr == addr {
+                            debug_for = max(debug_for, 1);
+                            dump = true;
+                            breakpt = true;
+                        }
                     }
                 }
                 _ => {}
@@ -300,7 +343,8 @@ impl<'c> Debugger<'c> {
     fn read_mem(&self, cpu: &mut Cpu, addr: Option<u64>, n: Option<u64>) -> bool {
         if let Some(addr) = addr {
             for i in 0..n.unwrap_or(1) {
-                let word = cpu.read_word(addr + 4*i);
+                // TODO: use a non-panicking version
+                let word = cpu.read_word(addr + 4*i, false);
                 println!("{:#10x}  {:#10x}", addr + 4*i, word);
             }
         } else {
@@ -312,6 +356,7 @@ impl<'c> Debugger<'c> {
     fn write_mem(&self, cpu: &mut Cpu, addr: Option<u64>, word: Option<u64>) -> bool {
         if let Some(addr) = addr {
             if let Some(word) = word {
+                // TODO: use a non-panicking version
                 cpu.write_word(addr, word as u32);
             } else {
                 println!("Need a word to write.");
@@ -361,7 +406,7 @@ impl<'c> Debugger<'c> {
                 Some(addr) } else { None }).collect::<Vec<_>>();
         for addr in addrs {
             println!("{:#10x}   {:?}", addr as u32,
-                     Instruction(cpu.read_word(addr)));
+                     Instruction(cpu.read_word(addr, true)));
         }
         false
     }
@@ -407,7 +452,7 @@ impl<'c> Debugger<'c> {
     fn list(&self, cpu: &mut Cpu, n: Option<u64>) -> bool {
         for i in 0..n.unwrap_or(10) {
             let addr = cpu.read_pc() + 4 * i;
-            let instr = Instruction(cpu.read_word(addr));
+            let instr = Instruction(cpu.read_word(addr, true));
             println!(" {} {:#10x}   {:?}",
                      if i == 0 { "->" } else { "  " }, addr as u32, instr);
         }

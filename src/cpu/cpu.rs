@@ -143,11 +143,12 @@ impl Cpu {
         self.instr_counter += 1;
         self.last_pc = self.reg_pc;
         let pc = self.reg_pc;
-        self.last_instr = self.read_word(pc);
+        self.last_instr = self.read_word(pc, true);
         let instr = Instruction(self.last_instr);
 
         // Debug stuff. This might not really belong here?
-        let (debug_for, dump_here, break_here) = self.debug_specs().check_instr(pc);
+        let (debug_for, dump_here, break_here) =
+            self.interconnect.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
         if break_here {
             println!("at: {:#10x}   {:?}", pc as u32, instr);
             if dump_here {
@@ -734,10 +735,15 @@ impl Cpu {
         self.write_gpr(instr.rt(), func(value));
     }
 
-    pub fn read_word(&mut self, virt_addr: u64) -> u32 {
+    pub fn read_word(&mut self, virt_addr: u64, load_instr: bool) -> u32 {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         match self.interconnect.read_word(phys_addr as u32) {
-            Ok(res) => res,
+            Ok(res) => {
+                if !load_instr && self.debug_specs().matches_mem(phys_addr as u64, false) {
+                    println!("Bus read:  {:#10x} :  {:#10x}", phys_addr, res);
+                }
+                res
+            }
             Err(desc) => {
                 bug!(self, "{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr);
             }
@@ -749,13 +755,17 @@ impl Cpu {
         if (phys_addr as u32) & !0xF == self.cp0.reg_lladdr {
             self.reg_llbit = false;
         }
+        if self.debug_specs().matches_mem(phys_addr as u64, true) {
+            println!("Bus write: {:#10x} <- {:#10x}", phys_addr, word);
+        }
         if let Err(desc) = self.interconnect.write_word(phys_addr as u32, word) {
             bug!(self, "{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr);
         }
     }
 
     pub fn read_dword(&mut self, virt_addr: u64) -> u64 {
-        (self.read_word(virt_addr) as u64) << 32 | self.read_word(virt_addr + 4) as u64
+        (self.read_word(virt_addr, false) as u64) << 32 |
+        self.read_word(virt_addr + 4, false) as u64
     }
 
     pub fn write_dword(&mut self, virt_addr: u64, dword: u64) {
