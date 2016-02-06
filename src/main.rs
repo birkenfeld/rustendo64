@@ -23,9 +23,11 @@ mod debug;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
+use std::process;
 use std::thread;
 use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 use clap::{App, Arg, ArgMatches};
+use chan_signal::{notify, Signal};
 
 pub static INTR: AtomicBool = ATOMIC_BOOL_INIT;
 
@@ -68,10 +70,15 @@ fn main() {
     let pif = read_bin(pif_file_name);
     let rom = read_bin(rom_file_name);
 
-    let sig = chan_signal::notify(&[chan_signal::Signal::INT]);
+    let sig = notify(&[Signal::INT, Signal::TERM, Signal::QUIT]);
     thread::spawn(move || {
-        while let Some(_) = sig.recv() {
-            INTR.store(true, Ordering::Relaxed);
+        while let Some(sig) = sig.recv() {
+            match sig {
+                Signal::INT  => INTR.store(true, Ordering::Relaxed),
+                Signal::TERM => process::exit(2),
+                Signal::QUIT => process::exit(2),
+                _ => {}
+            }
         }
     });
 
