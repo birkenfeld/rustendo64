@@ -22,12 +22,14 @@ use std::str;
 use std::u64;
 use std::process;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use rustyline::Editor;
 use nom::IResult;
 use nom::{eof, hex_u32};
 
 use cpu::Cpu;
 use cpu::instruction::*;
+use INTR;
 
 #[derive(Clone)]
 pub struct MemAccess(bool, bool); // read, write
@@ -167,6 +169,12 @@ impl DebugSpecList {
         let mut debug_for = 0;
         let mut dump = false;
         let mut breakpt = false;
+        if INTR.load(Ordering::Relaxed) {
+            INTR.store(false, Ordering::Relaxed);
+            debug_for = 1;
+            dump = true;
+            breakpt = true;
+        }
         for c in &mut self.0 {
             match *c {
                 DebugSpec::InsnRange(a, b) if a <= pc && pc <= b => {
