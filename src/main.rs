@@ -70,7 +70,7 @@ fn main() {
 
     let sig = chan_signal::notify(&[chan_signal::Signal::INT]);
     thread::spawn(move || {
-        if let Some(_) = sig.recv() {
+        while let Some(_) = sig.recv() {
             INTR.store(true, Ordering::Relaxed);
         }
     });
