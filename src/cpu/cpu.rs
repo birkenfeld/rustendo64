@@ -810,4 +810,22 @@ impl Cpu {
     pub fn debug_specs(&mut self) -> &mut DebugSpecList {
         &mut self.interconnect.debug_specs
     }
+
+    pub fn cp0_dump(&self) {
+        println!("{:#?}", self.cp0);
+    }
+
+    pub fn cp1_dump(&self) {
+        for i in 0..32 {
+            println!("  $f{:02} = {:12.6}s {:16.10}d {:11}w {:21}l", i,
+                     f32::read_fpr(&self.reg_fpr[i]),
+                     f64::read_fpr(&self.reg_fpr[i]),
+                     i32::read_fpr(&self.reg_fpr[i]),
+                     i64::read_fpr(&self.reg_fpr[i]));
+        }
+        println!(" fcr31 = {:#034b}", self.reg_fcr31);
+        println!("           -------FC-----EVZOUIVZOUIVZOUIRM");
+        println!("                         Cause Enab Flag   ");
+        println!("");
+    }
 }

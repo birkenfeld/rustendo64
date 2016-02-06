@@ -393,7 +393,14 @@ impl<'c> Debugger<'c> {
         if gpr {
             println!("CPU dump:\n{:?}", cpu);
         }
-        // TODO: cp0, cp1
+        if cp0 {
+            println!("CP0 dump:");
+            cpu.cp0_dump();
+        }
+        if cp1 {
+            println!("FPU dump:");
+            cpu.cp1_dump();
+        }
         false
     }
 
