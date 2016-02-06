@@ -153,9 +153,22 @@ impl fmt::Debug for DebugSpec {
     }
 }
 
-pub struct DebugSpecList(pub Vec<DebugSpec>);
+pub struct DebugSpecList(Vec<DebugSpec>);
 
 impl DebugSpecList {
+    pub fn from_args(args: Vec<String>) -> DebugSpecList {
+        let specs = args.into_iter().filter_map(|arg| {
+            match arg.parse::<DebugSpec>() {
+                Ok(v)  => Some(v),
+                Err(_) => {
+                    println!("Warning: unparseable debug spec {} ignored", arg);
+                    None
+                }
+            }
+        }).collect();
+        DebugSpecList(specs)
+    }
+
     pub fn add_spec(&mut self, spec: DebugSpec) {
         self.0.push(spec);
     }
