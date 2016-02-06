@@ -6,7 +6,7 @@ use cic;
 use mem_map::*;
 use debug::DebugSpecList;
 use ui::{IfOutput, InterfaceChannel};
-use rsp::Rsp;
+//use rsp::Rsp;
 
 const PIF_ROM_SIZE: usize = 2048;
 const RAM_SIZE: usize = 8 * 1024 * 1024;
@@ -150,15 +150,75 @@ struct Ri {
 
 #[derive(Default, Debug)]
 struct Si {
+    pif_ram: Vec<u8>,
     reg_dram_addr: u32,
     reg_status: u32,
 }
 
-pub struct Interconnect {
-    rsp: Rsp,
+impl Si {
+    fn dma_read(&mut self, ram: &mut [u32]) {
+        // transfer 64 bytes PIF ram -> main memory
+        let ram_start = self.reg_dram_addr as usize / 4;
+        for i in 0..16 {
+            ram[ram_start + i] = BigEndian::read_u32(&self.pif_ram[4*i..]);
+        }
+        // println!("PIF read:\n{:#?}", &ram[ram_start..ram_start+16]);
+    }
 
+    fn dma_write(&mut self, ram: &[u32], cstate: u32) {
+        // transfer 64 bytes main memory -> PIF ram
+        let ram_start = self.reg_dram_addr as usize / 4;
+        // println!("PIF write:\n{:#?}", &ram[ram_start..ram_start+16]);
+        for i in 0..16 {
+            BigEndian::write_u32(&mut self.pif_ram[4*i..], ram[ram_start + i]);
+        }
+        self.execute(cstate);
+    }
+
+    fn execute(&mut self, cstate: u32) {
+        // nothing to do?
+        if self.pif_ram[15] & 1 == 0 { return; }
+        let mut channel = 0;
+        let mut byte = 0;
+        while byte < 63 {
+            byte += 1;
+            let ntrans = self.pif_ram[byte - 1];
+            if ntrans == 0xfe { break; }
+            if ntrans >= 0x80 { continue; }
+            channel += 1;
+            if ntrans == 0 { continue; }
+            // XXX check indices for overflow
+            byte += 1;
+            let nrecv = self.pif_ram[byte - 1];
+            byte += ntrans as usize;
+            let command = self.pif_ram[byte - 1];
+            // XXX check channel
+            if command == 0 {
+                if ntrans == 1 && nrecv == 3 {
+                    // type: controller, nothing plugged in
+                    self.pif_ram[byte]     = 0x05;
+                    self.pif_ram[byte + 1] = 0x0;
+                    self.pif_ram[byte + 2] = 0x02;
+                } else {
+                    self.pif_ram[byte - 2] |= 0x40;
+                }
+            } else if command == 1 {
+                if ntrans == 1 && nrecv == 4 {
+                    BigEndian::write_u32(&mut self.pif_ram[byte..], cstate);
+                } else {
+                    self.pif_ram[byte - 2] |= 0x40;
+                }
+            } else {
+                // error: invalid, marked in recv byte
+                self.pif_ram[byte - 2] |= 0x80;
+            }
+            byte += nrecv as usize;
+        }
+    }
+}
+
+pub struct Interconnect {
     pif_rom: Vec<u8>,
-    pif_ram: Vec<u32>,
     pif_status: u32,
     cart_rom: Vec<u8>,
     ram: Vec<u32>,
@@ -181,10 +241,7 @@ impl Interconnect {
                interface: InterfaceChannel,
                debug: DebugSpecList) -> Interconnect {
         Interconnect {
-            rsp: Rsp::default(),
-
             pif_rom: pif_rom,
-            pif_ram: vec![0; 16],
             pif_status: 0,
             cart_rom: cart_rom,
             ram: vec![0; RAM_SIZE / 4],
@@ -199,13 +256,13 @@ impl Interconnect {
             ai: Ai::default(),
             pi: Pi::default(),
             ri: Ri::default(),
-            si: Si::default(),
+            si: Si { pif_ram: vec![0; 64], ..Si::default() },
         }
     }
 
     pub fn power_on_reset(&mut self) {
         if let Some(seed) = cic::get_cic_seed(&self.cart_rom) {
-            self.pif_ram[(0x07e4 - 0x7c0) / 4] = seed;
+            BigEndian::write_u32(&mut self.si.pif_ram[0x07e4 - 0x7c0..], seed);
         } else {
             println!("Warning: no CIC seed found for this ROM");
         }
@@ -239,15 +296,12 @@ impl Interconnect {
                 let rel_addr = (addr - PIF_RAM_START) as usize;
                 if rel_addr == 0x3c {
                     self.pif_status
-                } else if rel_addr == 0x4 {
-                    // controller state
-                    self.interface.get_input_state()
                 } else {
                     if rel_addr == 0x24 {
                         // hack to avoid looping at the end of the PIF rom
                         self.pif_status = 0x80;
                     }
-                    self.pif_ram[rel_addr / 4]
+                    BigEndian::read_u32(&self.si.pif_ram[rel_addr..])
                 }
             },
             SP_DMEM_START ... SP_DMEM_END => {
@@ -364,7 +418,8 @@ impl Interconnect {
                 self.ram[addr as usize / 4] = word;
             },
             PIF_RAM_START ... PIF_RAM_END => {
-                self.pif_ram[(addr - PIF_RAM_START) as usize / 4] = word;
+                let rel_addr = (addr - PIF_RAM_START) as usize;
+                BigEndian::write_u32(&mut self.si.pif_ram[rel_addr..], word);
             },
             SP_DMEM_START ... SP_DMEM_END => {
                 self.spram.dmem[(addr - SP_DMEM_START) as usize / 4] = word;
@@ -419,7 +474,7 @@ impl Interconnect {
             },
             VI_REG_ORIGIN          => {
                 self.vi.reg_origin = self.pseudo_translate(word);
-                println!("VRAM at {:#x}", word);
+                // println!("VRAM at {:#x}", word);
                 self.vi.update();
                 self.interface.send(IfOutput::Update(
                     self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
@@ -479,28 +534,13 @@ impl Interconnect {
             PI_REG_BSD_DOM2_PGS    => self.pi.reg_bsd_dom2_pgs = word,
             PI_REG_BSD_DOM2_RLS    => self.pi.reg_bsd_dom2_rls = word,
             // Serial interface
-            SI_REG_DRAM_ADDR       => self.si.reg_dram_addr = word,
-            SI_REG_PIF_ADDR_RD64B  => {
-                // transfer 64 bytes PIF ram -> main memory
-                let ram_start = self.pseudo_translate(self.si.reg_dram_addr) as usize / 4;
-                let pif_start = (word - PIF_RAM_START) as usize / 4;
-                for i in 0..16 {
-                    let mut pif_word = self.pif_ram[pif_start + i];
-                    if i == 0x4 {
-                        pif_word = self.interface.get_input_state();
-                    }
-                    self.ram[ram_start + i] = pif_word;
-                }
+            SI_REG_DRAM_ADDR       => {
+                self.si.reg_dram_addr = self.pseudo_translate(word)
             },
-            SI_REG_PIF_ADDR_WR64B  => {
-                // transfer 64 bytes main memory -> PIF ram
-                let ram_start = self.pseudo_translate(self.si.reg_dram_addr) as usize / 4;
-                let pif_start = (word - PIF_RAM_START) as usize / 4;
-                for i in 0..16 {
-                    self.pif_ram[pif_start + i] = self.ram[ram_start + i];
-                }
-            },
-            SI_REG_STATUS          => self.si.reg_status = word,
+            SI_REG_PIF_ADDR_RD64B  => self.si.dma_read(&mut self.ram),
+            SI_REG_PIF_ADDR_WR64B  => self.si.dma_write(
+                &self.ram, self.interface.get_input_state()),
+            SI_REG_STATUS          => { /* TODO */ }
             _ => {
                 return Err("Unsupported memory write area");
             }
@@ -523,7 +563,6 @@ impl Interconnect {
 impl fmt::Debug for Interconnect {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Interconnect")
-         .field("pif_ram", &self.pif_ram)
          .field("pif_status", &self.pif_status)
          .field("rd", &self.rd)
          .field("sp", &self.sp)
