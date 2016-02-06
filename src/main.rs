@@ -26,8 +26,28 @@ use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 use clap::{App, Arg, ArgMatches};
 use chan_signal::{notify, Signal};
 
-pub static INTR: AtomicBool = ATOMIC_BOOL_INIT;
+/// Set to true when SIGINT is caught.
+pub static CAUGHT_SIGINT: AtomicBool = ATOMIC_BOOL_INIT;
 
+/// Main entry point for the emulator.
+fn main() {
+    let arguments = get_arguments();
+    let pif_file_name = arguments.value_of("pif").unwrap();
+    let rom_file_name = arguments.value_of("rom").unwrap();
+    let debug_specs = debug::DebugSpecList::from_args(
+        arguments.values_of_lossy("debug").unwrap_or_default());
+
+    let pif_data = util::read_bin(pif_file_name);
+    let rom_data = util::read_bin(rom_file_name);
+
+    setup_signal_handler();
+
+    let mut n64 = n64::N64::new(pif_data, rom_data, debug_specs);
+    n64.power_on_reset();
+    n64.run();
+}
+
+/// Parse the command line with clap.
 fn get_arguments<'a>() -> ArgMatches<'a> {
     App::new("rustendo64")
         .version(crate_version!())
@@ -50,29 +70,15 @@ fn get_arguments<'a>() -> ArgMatches<'a> {
         .get_matches()
 }
 
-fn main() {
-    let arguments = get_arguments();
-    let pif_file_name = arguments.value_of("pif").unwrap();
-    let rom_file_name = arguments.value_of("rom").unwrap();
-    let debug_specs = debug::DebugSpecList::from_args(
-        arguments.values_of_lossy("debug").unwrap_or_default());
-
-    let pif_data = util::read_bin(pif_file_name);
-    let rom_data = util::read_bin(rom_file_name);
-
-    setup_signal_handler();
-
-    let mut n64 = n64::N64::new(pif_data, rom_data, debug_specs);
-    n64.power_on_reset();
-    n64.run();
-}
-
+/// Set up a signal handler to break into the debugger on Ctrl-C.
 fn setup_signal_handler() {
     let sig = notify(&[Signal::INT, Signal::TERM, Signal::QUIT]);
     thread::spawn(move || {
         while let Some(sig) = sig.recv() {
             match sig {
-                Signal::INT  => INTR.store(true, Ordering::Relaxed),
+                Signal::INT  => CAUGHT_SIGINT.store(true, Ordering::Relaxed),
+                // We need to handle these, currently chan-signal does
+                // block them otherwise.
                 Signal::TERM => process::exit(2),
                 Signal::QUIT => process::exit(2),
                 _ => {}

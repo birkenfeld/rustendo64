@@ -1,36 +1,43 @@
-// Debug options
-//
-// at program start: set debug conditions
-//
-// - debug insns at PC range x..y
-// - debug insns from PC x (N insns or forever)
-// - debug memory access at range x..y
-// - debug memory access for peripheral x (translated to range)
-// - break at PC x
-//
-// in debugger prompt:
-//
-// - add/remove debug condition
-// - single-step
-// - continue
+//! Debugger interface.
+//!
+//! There are two components to this:
+//!
+//! * Debug specs select conditions when to trigger debug actions.
+//!   Actions include dumping state, or entering the interactive debugger.
+//!
+//! * The interactive debugger allows to inspect and change the
+//!   execution environment with many commands common to debuggers
+//!   (dump data, read/write memory, set/clear breakpoints).
 
 use std::cmp::max;
 use std::env;
 use std::fmt;
 use std::str::FromStr;
-use std::str;
-use std::u64;
 use std::process;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use rustyline::Editor;
 use nom::IResult;
-use nom::{eof, hex_u32};
 
 use cpu::Cpu;
 use cpu::instruction::*;
-use INTR;
+use CAUGHT_SIGINT;
 
+/// Represents the different conditions on which a debugging action can be
+/// triggered.  Actions are dumping the current instruction, dumping the
+/// CPU state, or breaking into the debugger prompt.
+#[derive(Clone)]
+pub enum DebugSpec {
+    MemRange(MemAccess, u64, u64),
+    InsnRange(u64, u64),
+    InsnFrom(u64, u64),
+    StateAt(u64),
+    BreakAt(u64, bool),  // if true, remove breakpoint after hit
+    MemBreak(MemAccess, u64),
+    BreakIn(u64),
+}
+
+/// Represents the desired access type for a memory condition.
 #[derive(Clone)]
 pub struct MemAccess(bool, bool); // read, write
 
@@ -45,77 +52,73 @@ impl fmt::Debug for MemAccess {
     }
 }
 
-#[derive(Clone)]
-pub enum DebugSpec {
-    MemRange(MemAccess, u64, u64),
-    InsnRange(u64, u64),
-    InsnFrom(u64, u64),
-    StateAt(u64),
-    BreakAt(u64, bool),  // if true, remove breakpoint after hit
-    MemBreak(MemAccess, u64),
-    BreakIn(u64),
+/// Nom parsers for debug specs as given on the command line.
+mod parsers  {
+    use std::{str, u64};
+    use nom::{eof, hex_u32};
+    use super::{DebugSpec, MemAccess};
+
+    named!(dec_u32<u32>, map_res!(
+           map_res!(is_a!(b"0123456789"), str::from_utf8),
+           |s| { u32::from_str_radix(s, 10) }
+    ));
+
+    named!(pub integer<u64>, map!(
+        alt!( complete!(preceded!(tag!("0x"), hex_u32)) |
+              dec_u32 ),
+        |s| s as i32 as u64
+    ));
+
+    named!(addr_range<(u64, u64)>, chain!(
+        a1: integer ~
+        a2: opt!(complete!(preceded!(tag!(":"), integer))),
+        || { (a1, a2.unwrap_or(a1)) }
+    ));
+
+    named!(breakat<DebugSpec>, preceded!(
+        tag!("b:"), map!(integer, |a| DebugSpec::BreakAt(a, false))
+    ));
+
+    named!(stateat<DebugSpec>, preceded!(
+        tag!("d:"), map!(integer, DebugSpec::StateAt)
+    ));
+
+    named!(membreak<DebugSpec>, chain!(
+        ac: alt!(tag!("bm:")  => { |_| MemAccess(true, true) }   |
+                 tag!("bmr:") => { |_| MemAccess(true, false) }  |
+                 tag!("bmw:") => { |_| MemAccess(false, true) }) ~
+        ad: integer ,
+        || { DebugSpec::MemBreak(ac, ad) }
+    ));
+
+    named!(memrange<DebugSpec>, chain!(
+        ac: alt!(tag!("m:")  => { |_| MemAccess(true, true) }   |
+                 tag!("mr:") => { |_| MemAccess(true, false) }  |
+                 tag!("mw:") => { |_| MemAccess(false, true) }) ~
+        ad: addr_range ,
+        || { DebugSpec::MemRange(ac, ad.0, ad.1) }
+    ));
+
+    named!(insnfrom<DebugSpec>, chain!(
+            tag!("ix:") ~
+        ad: integer     ~
+        ct: opt!(complete!(preceded!(tag!(":"), integer))) ,
+        || { DebugSpec::InsnFrom(ad, ct.unwrap_or(u64::MAX)) }
+    ));
+
+    named!(insn<DebugSpec>, preceded!(
+        tag!("i:"), map!(addr_range, |(a1, a2)| { DebugSpec::InsnRange(a1, a2) })
+    ));
+
+    named!(pub debugspec<DebugSpec>, terminated!(
+        alt!(insn | insnfrom | memrange | breakat | membreak | stateat),
+        eof));
 }
-
-named!(dec_u32<u32>, map_res!(
-       map_res!(is_a!(b"0123456789"), str::from_utf8),
-       |s| { u32::from_str_radix(s, 10) }
-));
-
-named!(integer<u64>, map!(
-    alt!( complete!(preceded!(tag!("0x"), hex_u32)) |
-          dec_u32 ),
-    |s| s as i32 as u64
-));
-
-named!(addr_range<(u64, u64)>, chain!(
-    a1: integer ~
-    a2: opt!(complete!(preceded!(tag!(":"), integer))),
-    || { (a1, a2.unwrap_or(a1)) }
-));
-
-named!(breakat<DebugSpec>, preceded!(
-    tag!("b:"), map!(integer, |a| DebugSpec::BreakAt(a, false))
-));
-
-named!(stateat<DebugSpec>, preceded!(
-    tag!("d:"), map!(integer, DebugSpec::StateAt)
-));
-
-named!(membreak<DebugSpec>, chain!(
-    ac: alt!(tag!("bm:")  => { |_| MemAccess(true, true) }   |
-             tag!("bmr:") => { |_| MemAccess(true, false) }  |
-             tag!("bmw:") => { |_| MemAccess(false, true) }) ~
-    ad: integer ,
-    || { DebugSpec::MemBreak(ac, ad) }
-));
-
-named!(memrange<DebugSpec>, chain!(
-    ac: alt!(tag!("m:")  => { |_| MemAccess(true, true) }   |
-             tag!("mr:") => { |_| MemAccess(true, false) }  |
-             tag!("mw:") => { |_| MemAccess(false, true) }) ~
-    ad: addr_range ,
-    || { DebugSpec::MemRange(ac, ad.0, ad.1) }
-));
-
-named!(insnfrom<DebugSpec>, chain!(
-        tag!("ix:") ~
-    ad: integer     ~
-    ct: opt!(complete!(preceded!(tag!(":"), integer))),
-    || { DebugSpec::InsnFrom(ad, ct.unwrap_or(u64::MAX)) }
-));
-
-named!(insn<DebugSpec>, preceded!(
-    tag!("i:"), map!(addr_range, |(a1, a2)| { DebugSpec::InsnRange(a1, a2) })
-));
-
-named!(debugspec<DebugSpec>, terminated!(
-    alt!(insn | insnfrom | memrange | breakat | membreak | stateat),
-    eof));
 
 impl FromStr for DebugSpec {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match debugspec(s.as_bytes()) {
+        match parsers::debugspec(s.as_bytes()) {
             IResult::Done(_, o) => Ok(o),
             _                   => Err(())
         }
@@ -182,8 +185,8 @@ impl DebugSpecList {
         let mut debug_for = 0;
         let mut dump = false;
         let mut breakpt = false;
-        if INTR.load(Ordering::Relaxed) {
-            INTR.store(false, Ordering::Relaxed);
+        if CAUGHT_SIGINT.load(Ordering::Relaxed) {
+            CAUGHT_SIGINT.store(false, Ordering::Relaxed);
             debug_for = 1;
             dump = true;
             breakpt = true;
@@ -312,7 +315,7 @@ impl<'c> Debugger<'c> {
     fn dispatch(&mut self, cpu: &mut Cpu, input: String) -> bool {
         let parts = input.split_whitespace().collect::<Vec<_>>();
         let int_arg = |n| parts.get(n).and_then(|v|
-                match integer(v.as_bytes()) {
+                match parsers::integer(v.as_bytes()) {
                     IResult::Done(_, o) => Some(o),
                     _                   => None
                 });
