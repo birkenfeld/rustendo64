@@ -5,9 +5,10 @@ use std::thread;
 pub mod minifb;
 
 pub enum IfOutput {
-    SetMode(usize, usize),  // width, height
-    SetPixel(usize, u32),   // offset, value
-    Update,
+    SetSize(usize, usize),  // width, height
+    SetMode(u32),
+    //SetPixel(usize, u32),   // offset, value
+    Update(Vec<u32>),
 }
 
 static CONTROLLER: AtomicUsize = ATOMIC_USIZE_INIT;

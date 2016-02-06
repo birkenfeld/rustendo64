@@ -7,7 +7,8 @@ use ui::{Interface, IfOutput, CONTROLLER};
 
 pub struct MinifbInterface {
     receiver: mpsc::Receiver<IfOutput>,
-    buffer: Vec<u32>,
+    size: (usize, usize),
+    mode: u32,
     window: Option<Window>,
 }
 
@@ -15,17 +16,18 @@ impl Interface for MinifbInterface {
     fn new(outrecv: mpsc::Receiver<IfOutput>) -> Self {
         MinifbInterface {
             receiver: outrecv,
-            buffer: Vec::new(),
             window: None,
+            mode: 0,
+            size: (0, 0),
         }
     }
 
     fn run(&mut self) {
         while let Ok(msg) = self.receiver.recv() {
             match msg {
-                IfOutput::SetMode(w, h) => self.setup(w, h),
-                IfOutput::SetPixel(o, p) => self.set(o, p),
-                IfOutput::Update => self.update(),
+                IfOutput::SetSize(w, h) => self.setsize(w, h),
+                IfOutput::SetMode(m) => self.setmode(m),
+                IfOutput::Update(v) => self.update(v),
             }
         }
     }
@@ -33,14 +35,14 @@ impl Interface for MinifbInterface {
 }
 
 impl MinifbInterface {
-    fn setup(&mut self, w: usize, h: usize) {
+    fn setsize(&mut self, w: usize, h: usize) {
         match Window::new(
             "Rustendo64_gb", w, h, WindowOptions {
                 scale: if w < 640 { Scale::X2 } else { Scale::X1 },
                 ..WindowOptions::default() }) {
             Ok(win) => {
+                self.size = (w, h);
                 self.window = Some(win);
-                self.buffer = vec![0; w * h];
             }
             Err(err) => {
                 println!("Unable to create window: {}", err);
@@ -49,15 +51,38 @@ impl MinifbInterface {
         }
     }
 
-    fn set(&mut self, o: usize, p: u32) {
-        if o < self.buffer.len() {
-            self.buffer[o] = p;
-        }
+    fn setmode(&mut self, mode: u32) {
+        self.mode = mode;
     }
 
-    fn update(&mut self) {
+    fn update(&mut self, mut buffer: Vec<u32>) {
         if let Some(ref mut win) = self.window {
-            win.update_with_buffer(&self.buffer);
+            let pixelsize = self.mode & 0b11;
+            if pixelsize == 0b11 {
+                if buffer.len() == self.size.0 * self.size.1 {
+                    for w in &mut buffer {
+                        *w >>= 8;
+                    }
+                    win.update_with_buffer(&buffer);
+                } else {
+                    println!("strange buffer size?")
+                }
+            } else if pixelsize == 0b10 {
+                if buffer.len() == self.size.0 * self.size.1 / 2 {
+                    let mut buf32 = vec![0; buffer.len() * 2];
+                    for i in 0..buffer.len() {
+                        let pixel = buffer[i];
+                        // convert 2 * 5-5-5-1 into 8-8-8
+                        buf32[2*i]     = ((pixel >> 27) & 0b11111) << 19 |
+                                         ((pixel >> 22) & 0b11111) << 11 |
+                                         ((pixel >> 17) & 0b11111) << 3;
+                        buf32[2*i + 1] = ((pixel >> 11) & 0b11111) << 19 |
+                                         ((pixel >>  6) & 0b11111) << 11 |
+                                         ((pixel >>  1) & 0b11111) << 3;
+                    }
+                    win.update_with_buffer(&buf32);
+                }
+            } // else it's blank
             if let Some(cstate) = win.get_keys().map(|keys| {
                 keys.iter().fold(0, |a, &key| a | match key {
                     Key::LeftShift  => 1 << 15,  // A

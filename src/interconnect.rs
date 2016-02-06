@@ -88,6 +88,27 @@ struct Vi {
     reg_v_burst: u32,
     reg_x_scale: u32,
     reg_y_scale: u32,
+
+    video_height: usize,
+    vram_start: usize,
+    vram_end: usize,
+    vram_pixelsize: usize,
+}
+
+impl Vi {
+    fn update(&mut self) {
+        self.video_height = (self.reg_width * 3) as usize / 4;
+        self.vram_start = self.reg_origin as usize / 4;
+        self.vram_end   = self.vram_start +
+            self.reg_width as usize * self.video_height * self.vram_pixelsize / 4;
+        self.vram_pixelsize = match self.reg_status & 0b11 {
+            0b00 => 0,
+            0b01 => panic!("using reserved video mode"),
+            0b10 => 2,
+            0b11 => 4,
+            _    => unreachable!()
+        };
+    }
 }
 
 #[derive(Default, Debug)]
@@ -140,7 +161,7 @@ pub struct Interconnect {
     pif_ram: Vec<u32>,
     pif_status: u32,
     cart_rom: Vec<u8>,
-    ram: Vec<u16>,
+    ram: Vec<u32>,
     spram: SpRam,
     rd: Rd,
     sp: Sp,
@@ -166,7 +187,7 @@ impl Interconnect {
             pif_ram: vec![0; 16],
             pif_status: 0,
             cart_rom: cart_rom,
-            ram: vec![0; RAM_SIZE],
+            ram: vec![0; RAM_SIZE / 4],
             spram: SpRam { dmem: vec![0; 1024], imem: vec![0; 1024] },
             interface: interface,
             debug_specs: debug,
@@ -199,14 +220,12 @@ impl Interconnect {
     }
 
     pub fn read_word(&mut self, addr: u32) -> Result<u32, &'static str> {
+        if addr & 0x3 != 0 {
+            return Err("unaligned access");
+        }
         let res = match addr {
             RDRAM_START ... RDRAM_END => {
-                let addr = addr as usize;
-                // Cannot use byteorder: RAM is 16bits
-                ((self.ram[addr] as u32) << 24) |
-                ((self.ram[addr + 1] as u32) << 16) |
-                ((self.ram[addr + 2] as u32) << 8) |
-                 (self.ram[addr + 3] as u32)
+                self.ram[addr as usize / 4]
             },
             CART_START ... CART_END => {
                 let rel_addr = (addr - CART_START) as usize;
@@ -289,11 +308,12 @@ impl Interconnect {
             MI_REG_INTR            => self.mi.reg_intr,
             MI_REG_INTR_MASK       => self.mi.reg_intr_mask,
             // Video interface
-            VI_REG_STATUS          => self.vi.reg_status,
+            VI_REG_STATUS          => 0, // self.vi.reg_status,
             VI_REG_ORIGIN          => self.vi.reg_origin,
             VI_REG_H_WIDTH         => self.vi.reg_width,
             VI_REG_V_INTR          => self.vi.reg_intr,
             VI_REG_CURRENT         => {
+                // TODO
                 self.vi.reg_current = (self.vi.reg_current + 1) % 525;
                 return Ok(self.vi.reg_current);  // bypass logging
             },
@@ -338,36 +358,20 @@ impl Interconnect {
         Ok(res)
     }
 
-    pub fn write_word(&mut self, addr: u32, mut word: u32) -> Result<(), &'static str> {
+    pub fn write_word(&mut self, addr: u32, word: u32) -> Result<(), &'static str> {
+        if addr & 0x3 != 0 {
+            return Err("unaligned access");
+        }
         if self.debug_specs.matches_mem(addr as u64, true) {
             // Log all writes to non-RAM locations
             println!("Bus write: {:#10x} <- {:#10x}", addr, word);
         }
         match addr {
             RDRAM_START ... RDRAM_END => {
-                let iaddr = addr as usize;
-                // Video RAM? (XXX size is variable)
-                if self.vi.reg_origin > 0 &&
-                    addr >= self.vi.reg_origin &&
-                    addr < self.vi.reg_origin + 0x12c000
-                {
-                    self.interface.send(IfOutput::SetPixel(
-                        (addr - self.vi.reg_origin) as usize / 4,
-                        word >> 8));
-                }
-                // Cannot use byteorder: RAM is 16bits
-                self.ram[iaddr + 3] = word as u16 & 0xff;
-                word >>= 8;
-                self.ram[iaddr + 2] = word as u16 & 0xff;
-                word >>= 8;
-                self.ram[iaddr + 1] = word as u16 & 0xff;
-                word >>= 8;
-                self.ram[iaddr] = word as u16;
+                self.ram[addr as usize / 4] = word;
             },
             PIF_RAM_START ... PIF_RAM_END => {
-                let rel_addr = (addr - PIF_RAM_START) as usize;
-                // XXX assumes alignment
-                self.pif_ram[rel_addr / 4] = word;
+                self.pif_ram[(addr - PIF_RAM_START) as usize / 4] = word;
             },
             SP_DMEM_START ... SP_DMEM_END => {
                 self.spram.dmem[(addr - SP_DMEM_START) as usize / 4] = word;
@@ -414,16 +418,24 @@ impl Interconnect {
             MI_REG_MODE            => self.mi.reg_mode = word,
             MI_REG_INTR_MASK       => self.mi.reg_intr_mask = word,
             // Video interface
-            VI_REG_STATUS          => self.vi.reg_status = word,
+            VI_REG_STATUS          => {
+                self.vi.reg_status = word;
+                println!("Video mode: {:#034b}", word);
+                self.vi.update();
+                self.interface.send(IfOutput::SetMode(word));
+            },
             VI_REG_ORIGIN          => {
                 self.vi.reg_origin = self.pseudo_translate(word);
                 println!("VRAM at {:#x}", word);
-                self.interface.send(IfOutput::Update);
+                self.vi.update();
+                self.interface.send(IfOutput::Update(
+                    self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
             },
             VI_REG_H_WIDTH         => {
-                self.interface.send(IfOutput::SetMode(
-                    word as usize, (word * 3) as usize / 4));
                 self.vi.reg_width = word;
+                self.vi.update();
+                self.interface.send(IfOutput::SetSize(
+                    word as usize, self.vi.video_height));
             },
             VI_REG_V_INTR          => self.vi.reg_intr = word,
             VI_REG_CURRENT         => self.vi.reg_current = word,
@@ -437,7 +449,8 @@ impl Interconnect {
             VI_REG_X_SCALE         => self.vi.reg_x_scale = word,
             VI_REG_Y_SCALE         => {
                 self.vi.reg_y_scale = word;
-                self.interface.send(IfOutput::Update);
+                self.interface.send(IfOutput::Update(
+                    self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
             },
             // Audio interface
             AI_REG_DRAM_ADDR       => self.ai.reg_dram_addr = word,
@@ -453,13 +466,14 @@ impl Interconnect {
             PI_REG_WR_LEN          => {
                 self.pi.reg_wr_len = word;
                 // DMA transfer ROM -> main memory
-                let ram_start = self.pi.reg_dram_addr as usize;  // offset is 0
+                let ram_start = self.pi.reg_dram_addr as usize / 4;
                 let rom_start = self.pi.reg_cart_addr as usize - 0x1000_0000;
                 let length = (word + 1) as usize;
                 println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
                          length, rom_start, ram_start);
-                for i in 0..length {
-                    self.ram[ram_start + i] = self.cart_rom[rom_start + i] as u16;
+                for i in 0..length/4 {
+                    self.ram[ram_start + i] =
+                        BigEndian::read_u32(&self.cart_rom[rom_start + 4*i..]);
                 }
             },
             PI_REG_STATUS          => { /* TODO */ },
@@ -475,33 +489,22 @@ impl Interconnect {
             SI_REG_DRAM_ADDR       => self.si.reg_dram_addr = word,
             SI_REG_PIF_ADDR_RD64B  => {
                 // transfer 64 bytes PIF ram -> main memory
-                let ram_start = self.pseudo_translate(self.si.reg_dram_addr) as usize;
-                let pif_start = (word - PIF_RAM_START) as usize / 4;  // XXX assumes alignment
+                let ram_start = self.pseudo_translate(self.si.reg_dram_addr) as usize / 4;
+                let pif_start = (word - PIF_RAM_START) as usize / 4;
                 for i in 0..16 {
                     let mut pif_word = self.pif_ram[pif_start + i];
                     if i == 0x4 {
                         pif_word = self.interface.get_input_state();
                     }
-                    let iaddr = ram_start + 4 * i;
-                    self.ram[iaddr + 3] = pif_word as u16 & 0xff;
-                    pif_word >>= 8;
-                    self.ram[iaddr + 2] = pif_word as u16 & 0xff;
-                    pif_word >>= 8;
-                    self.ram[iaddr + 1] = pif_word as u16 & 0xff;
-                    pif_word >>= 8;
-                    self.ram[iaddr] = pif_word as u16;
+                    self.ram[ram_start + i] = pif_word;
                 }
             },
             SI_REG_PIF_ADDR_WR64B  => {
                 // transfer 64 bytes main memory -> PIF ram
-                let ram_start = self.pseudo_translate(self.si.reg_dram_addr) as usize;
+                let ram_start = self.pseudo_translate(self.si.reg_dram_addr) as usize / 4;
                 let pif_start = (word - PIF_RAM_START) as usize / 4;
                 for i in 0..16 {
-                    let ram_word = ((self.ram[ram_start + 4*i] as u32) << 24) |
-                                   ((self.ram[ram_start + 4*i + 1] as u32) << 16) |
-                                   ((self.ram[ram_start + 4*i + 2] as u32) << 8) |
-                                    (self.ram[ram_start + 4*i + 3] as u32);
-                    self.pif_ram[pif_start + i] = ram_word;
+                    self.pif_ram[pif_start + i] = self.ram[ram_start + i];
                 }
             },
             SI_REG_STATUS          => self.si.reg_status = word,
