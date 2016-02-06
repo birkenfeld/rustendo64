@@ -310,7 +310,7 @@ impl<'c> Debugger<'c> {
             "w"  => self.write_mem(cpu, int_arg(1), int_arg(2)),
             "sa" => self.add_spec(cpu, parts.get(1)),
             "sl" => self.list_specs(cpu),
-            "l"  => self.list(cpu, int_arg(1)),
+            "l"  => self.list(cpu, int_arg(1), int_arg(2)),
             "d"  => self.dump(cpu, true, false, false),
             "dm" => self.dump(cpu, false, true, false),
             "df" => self.dump(cpu, false, false, true),
@@ -493,9 +493,10 @@ impl<'c> Debugger<'c> {
         false
     }
 
-    fn list(&self, cpu: &mut Cpu, n: Option<u64>) -> bool {
+    fn list(&self, cpu: &mut Cpu, n: Option<u64>, addr: Option<u64>) -> bool {
+        let base_addr = addr.unwrap_or(cpu.read_pc());
         for i in 0..n.unwrap_or(10) {
-            let addr = cpu.read_pc() + 4 * i;
+            let addr = base_addr + 4 * i;
             let instr = Instruction(cpu.read_word(addr, true));
             println!(" {} {:#10x}   {:?}",
                      if i == 0 { "->" } else { "  " }, addr as u32, instr);
@@ -505,27 +506,27 @@ impl<'c> Debugger<'c> {
 
     fn help(&self) -> bool {
         println!("Debugger commands:
-c [addr]   - continue until pc = addr (or forever)
-s [n]      - single step over n (=1) instrs
+c [addr]     - continue until pc = addr (or forever)
+s [n]        - single step over n (=1) instrs
 
-b addr     - set breakpoint at addr
-bm rw addr - set memory breakpoint at addr (rw can be r, w, or rw)
-bd num     - remove breakpoint #num
-bl         - list all breakpoints
+b addr       - set breakpoint at addr
+bm rw addr   - set memory breakpoint at addr (rw can be r, w, or rw)
+bd num       - remove breakpoint #num
+bl           - list all breakpoints
 
-r addr [n] - read n (=1) words from memory starting at addr
-w addr val - write word val to memory at addr
+r addr [n]   - read n (=1) words from memory starting at addr
+w addr val   - write word val to memory at addr
 
-sa spec    - add a debug spec
-sl         - list currently active debug specs
+sa spec      - add a debug spec
+sl           - list currently active debug specs
 
-l [n]      - list n (=10) instructions from pc
-d          - dump CPU state
-dm         - dump CP0 (MMU) state
-df         - dump CP1 (FPU) state
-da         - dump everything
+l [n] [addr] - list n (=10) instructions from addr (or pc)
+d            - dump CPU state
+dm           - dump CP0 (MMU) state
+df           - dump CP1 (FPU) state
+da           - dump everything
 
-q          - quit
+q            - quit
 ");
         false
     }
