@@ -1,5 +1,6 @@
 use std::fmt;
 use std::collections::VecDeque;
+use ansi_term::Colour;
 
 use super::instruction::*;
 use super::exception::*;
@@ -41,7 +42,9 @@ macro_rules! bug {
 }
 
 macro_rules! dprintln {
-    ($cpu:expr, $($args:expr),+) => { if $cpu.debug_instrs { println!($($args),+) } }
+    ($cpu:expr, $($args:expr),+) => { if $cpu.debug_instrs {
+        println!("{}", Colour::Blue.paint(format!($($args),+)));
+    } }
     //($cpu:expr, $($args:expr),+) => { }
 }
 
@@ -150,14 +153,16 @@ impl Cpu {
         let (debug_for, dump_here, break_here) =
             self.interconnect.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
         if break_here {
-            println!("at: {:#10x}   {:?}", pc as u32, instr);
+            println!("{}", Colour::Red.paint(
+                format!("at: {:#10x}   {:?}", pc as u32, instr)));
             if dump_here {
                 println!("{:?}", self);
             }
             let mut debugger = Debugger::new();
             debugger.run_loop(self);
         } else if dump_here {
-            println!("at: {:#10x}   {:?}", pc as u32, instr);
+            println!("{}", Colour::Red.paint(
+                format!("at: {:#10x}   {:?}", pc as u32, instr)));
             println!("{:?}", self);
         }
         if debug_for > 0 {

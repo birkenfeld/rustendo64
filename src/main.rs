@@ -7,6 +7,7 @@ extern crate num;
 extern crate minifb;
 extern crate byteorder;
 extern crate rustyline;
+extern crate ansi_term;
 
 mod n64;
 mod cpu;
