@@ -1,4 +1,5 @@
 use std::fmt;
+use std::mem::replace;
 
 use byteorder::{BigEndian, ByteOrder};
 
@@ -89,6 +90,7 @@ struct Vi {
     reg_x_scale: u32,
     reg_y_scale: u32,
 
+    video_width: usize,
     video_height: usize,
     vram_start: usize,
     vram_end: usize,
@@ -97,10 +99,11 @@ struct Vi {
 
 impl Vi {
     fn update(&mut self) {
-        self.video_height = (self.reg_width * 3) as usize / 4;
+        self.video_width = self.reg_width as usize;
+        self.video_height = (self.video_width * 3) / 4;
         self.vram_start = self.reg_origin as usize / 4;
         self.vram_end   = self.vram_start +
-            self.reg_width as usize * self.video_height * self.vram_pixelsize / 4;
+            self.video_width * self.video_height * self.vram_pixelsize / 4;
         self.vram_pixelsize = match self.reg_status & 0b11 {
             0b00 => 0,
             0b01 => panic!("using reserved video mode"),
@@ -358,7 +361,7 @@ impl Interconnect {
             SP_REG_STATUS          => self.sp.reg_status,
             SP_REG_DMA_FULL        => self.sp.reg_dma_full,
             SP_REG_DMA_BUSY        => self.sp.reg_dma_busy,
-            SP_REG_SEMAPHORE       => self.sp.reg_semaphore,
+            SP_REG_SEMAPHORE       => replace(&mut self.sp.reg_semaphore, 1),
             SP_REG_PC              => self.sp.reg_pc,
             SP_REG_IBIST           => self.sp.reg_ibist,
             // RDP registers
@@ -456,85 +459,90 @@ impl Interconnect {
             RDRAM_REG_MIN_INTERVAL => self.rd.reg_min_interval = word,
             RDRAM_REG_ADDR_SELECT  => self.rd.reg_addr_select = word,
             // RI registers
-            RI_REG_MODE            => self.ri.reg_mode = word,
-            RI_REG_CONFIG          => self.ri.reg_config = word,
+            RI_REG_MODE            => self.ri.reg_mode = word & 0xf,
+            RI_REG_CONFIG          => self.ri.reg_config = word & 0x7f,
             RI_REG_CURRENT_LOAD    => { /* TODO */ },
-            RI_REG_SELECT          => self.ri.reg_select = word,
-            RI_REG_REFRESH         => self.ri.reg_refresh = word,
-            RI_REG_LATENCY         => self.ri.reg_latency = word,
+            RI_REG_SELECT          => self.ri.reg_select = word & 0x3f,
+            RI_REG_REFRESH         => self.ri.reg_refresh = word & 0x7_ffff,
+            RI_REG_LATENCY         => self.ri.reg_latency = word & 0xf,
             RI_REG_WERROR          => { /* TODO */ },
             // RSP registers
-            SP_REG_MEM_ADDR        => self.sp.reg_mem_addr = word,
-            SP_REG_DRAM_ADDR       => self.sp.reg_dram_addr = word,
+            SP_REG_MEM_ADDR        => self.sp.reg_mem_addr = word & 0x1fff,
+            SP_REG_DRAM_ADDR       => self.sp.reg_dram_addr = word & 0xff_ffff,
             SP_REG_RD_LEN          => self.sp.reg_rd_len = word,
             SP_REG_WR_LEN          => self.sp.reg_wr_len = word,
-            SP_REG_STATUS          => self.sp.reg_status = word,
-            SP_REG_SEMAPHORE       => self.sp.reg_semaphore = word,
-            SP_REG_PC              => self.sp.reg_pc = word,
-            SP_REG_IBIST           => self.sp.reg_ibist = word,
+            SP_REG_STATUS          => {
+                if word & 0b1 == 1 {
+                    println!("Would start RSP");
+                }
+                /* TODO */
+            }
+            SP_REG_SEMAPHORE       => self.sp.reg_semaphore = 0,
+            SP_REG_PC              => self.sp.reg_pc = word & 0xfff,
+            SP_REG_IBIST           => self.sp.reg_ibist = word & 0x7,
             // RDP registers
-            DPC_REG_START          => self.dp.reg_start = word,
-            DPC_REG_END            => self.dp.reg_end = word,
-            DPC_REG_STATUS         => self.dp.reg_status = word,
-            DPS_REG_TBIST          => self.dp.reg_tbist = word,
-            DPS_REG_TEST_MODE      => self.dp.reg_test_mode = word,
-            DPS_REG_BUFTEST_ADDR   => self.dp.reg_buftest_addr = word,
+            DPC_REG_START          => self.dp.reg_start = word & 0xff_ffff,
+            DPC_REG_END            => self.dp.reg_end = word & 0xff_ffff,
+            DPC_REG_STATUS         => { /* TODO */ },
+            DPS_REG_TBIST          => self.dp.reg_tbist = word & 0x7,
+            DPS_REG_TEST_MODE      => self.dp.reg_test_mode = word & 0x1,
+            DPS_REG_BUFTEST_ADDR   => self.dp.reg_buftest_addr = word & 0x7f,
             DPS_REG_BUFTEST_DATA   => self.dp.reg_buftest_data = word,
             // MIPS interface
-            MI_REG_MODE            => self.mi.reg_mode = word,
-            MI_REG_INTR_MASK       => self.mi.reg_intr_mask = word,
+            MI_REG_MODE            => { /* TODO */ },
+            MI_REG_INTR_MASK       => { /* TODO */ },
             // Video interface
             VI_REG_STATUS          => {
-                self.vi.reg_status = word;
+                self.vi.reg_status = word & 0xffff;
                 println!("Video mode: {:#034b}", word);
                 self.vi.update();
-                self.interface.send(IfOutput::SetMode(word));
+                self.interface.send(IfOutput::SetMode(word & 0xffff));
             },
             VI_REG_ORIGIN          => {
-                self.vi.reg_origin = self.pseudo_translate(word);
+                self.vi.reg_origin = word & 0xff_ffff;  // only 24 bits
                 // println!("VRAM at {:#x}", word);
                 self.vi.update();
                 self.interface.send(IfOutput::Update(
                     self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
             },
             VI_REG_H_WIDTH         => {
-                self.vi.reg_width = word;
+                self.vi.reg_width = word & 0xfff;
                 self.vi.update();
                 self.interface.send(IfOutput::SetSize(
-                    word as usize, self.vi.video_height));
+                    self.vi.video_width, self.vi.video_height));
             },
-            VI_REG_V_INTR          => self.vi.reg_intr = word,
-            VI_REG_CURRENT         => self.vi.reg_current = word,
-            VI_REG_BURST           => self.vi.reg_burst = word,
-            VI_REG_V_SYNC          => self.vi.reg_v_sync = word,
-            VI_REG_H_SYNC          => self.vi.reg_h_sync = word,
-            VI_REG_LEAP            => self.vi.reg_leap = word,
-            VI_REG_H_START         => self.vi.reg_h_start = word,
-            VI_REG_V_START         => self.vi.reg_v_start = word,
-            VI_REG_V_BURST         => self.vi.reg_v_burst = word,
-            VI_REG_X_SCALE         => self.vi.reg_x_scale = word,
+            VI_REG_V_INTR          => self.vi.reg_intr = word & 0x3ff,
+            VI_REG_CURRENT         => self.vi.reg_current = word & 0x3ff,
+            VI_REG_BURST           => self.vi.reg_burst = word & 0x3fff_ffff,
+            VI_REG_V_SYNC          => self.vi.reg_v_sync = word & 0x3ff,
+            VI_REG_H_SYNC          => self.vi.reg_h_sync = word & 0x1f_ffff,
+            VI_REG_LEAP            => self.vi.reg_leap = word & 0xfff_ffff,
+            VI_REG_H_START         => self.vi.reg_h_start = word & 0x3ff_ffff,
+            VI_REG_V_START         => self.vi.reg_v_start = word & 0x3ff_ffff,
+            VI_REG_V_BURST         => self.vi.reg_v_burst = word & 0x3ff_ffff,
+            VI_REG_X_SCALE         => self.vi.reg_x_scale = word & 0xfff_ffff,
             VI_REG_Y_SCALE         => {
-                self.vi.reg_y_scale = word;
+                self.vi.reg_y_scale = word & 0xfff_ffff;
                 self.interface.send(IfOutput::Update(
                     self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
             },
             // Audio interface
-            AI_REG_DRAM_ADDR       => self.ai.reg_dram_addr = word,
-            AI_REG_LEN             => self.ai.reg_len = word,
-            AI_REG_CONTROL         => self.ai.reg_control = word,
+            AI_REG_DRAM_ADDR       => self.ai.reg_dram_addr = word & 0xff_ffff,
+            AI_REG_LEN             => self.ai.reg_len = word & 0x3_ffff,
+            AI_REG_CONTROL         => self.ai.reg_control = word & 0x1,
             AI_REG_STATUS          => self.ai.reg_status = word,
-            AI_REG_DACRATE         => self.ai.reg_dacrate = word,
-            AI_REG_BITRATE         => self.ai.reg_bitrate = word,
+            AI_REG_DACRATE         => self.ai.reg_dacrate = word & 0x3fff,
+            AI_REG_BITRATE         => self.ai.reg_bitrate = word & 0xf,
             // Peripheral interface
-            PI_REG_DRAM_ADDR       => self.pi.reg_dram_addr = word,
+            PI_REG_DRAM_ADDR       => self.pi.reg_dram_addr = word & 0xff_ffff,
             PI_REG_CART_ADDR       => self.pi.reg_cart_addr = word,
-            PI_REG_RD_LEN          => self.pi.reg_rd_len = word,
+            PI_REG_RD_LEN          => self.pi.reg_rd_len = word & 0xff_ffff,
             PI_REG_WR_LEN          => {
-                self.pi.reg_wr_len = word;
+                self.pi.reg_wr_len = word & 0xff_ffff;
                 // DMA transfer ROM -> main memory
                 let ram_start = self.pi.reg_dram_addr as usize / 4;
                 let rom_start = self.pi.reg_cart_addr as usize - 0x1000_0000;
-                let length = (word + 1) as usize;
+                let length = (self.pi.reg_wr_len + 1) as usize;
                 println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
                          length, rom_start, ram_start);
                 for i in 0..length/4 {
@@ -543,17 +551,17 @@ impl Interconnect {
                 }
             },
             PI_REG_STATUS          => { /* TODO */ },
-            PI_REG_BSD_DOM1_LAT    => self.pi.reg_bsd_dom1_lat = word,
-            PI_REG_BSD_DOM1_PWD    => self.pi.reg_bsd_dom1_pwd = word,
-            PI_REG_BSD_DOM1_PGS    => self.pi.reg_bsd_dom1_pgs = word,
-            PI_REG_BSD_DOM1_RLS    => self.pi.reg_bsd_dom1_rls = word,
-            PI_REG_BSD_DOM2_LAT    => self.pi.reg_bsd_dom2_lat = word,
-            PI_REG_BSD_DOM2_PWD    => self.pi.reg_bsd_dom2_pwd = word,
-            PI_REG_BSD_DOM2_PGS    => self.pi.reg_bsd_dom2_pgs = word,
-            PI_REG_BSD_DOM2_RLS    => self.pi.reg_bsd_dom2_rls = word,
+            PI_REG_BSD_DOM1_LAT    => self.pi.reg_bsd_dom1_lat = word & 0xff,
+            PI_REG_BSD_DOM1_PWD    => self.pi.reg_bsd_dom1_pwd = word & 0xff,
+            PI_REG_BSD_DOM1_PGS    => self.pi.reg_bsd_dom1_pgs = word & 0xf,
+            PI_REG_BSD_DOM1_RLS    => self.pi.reg_bsd_dom1_rls = word & 0x3,
+            PI_REG_BSD_DOM2_LAT    => self.pi.reg_bsd_dom2_lat = word & 0xff,
+            PI_REG_BSD_DOM2_PWD    => self.pi.reg_bsd_dom2_pwd = word & 0xff,
+            PI_REG_BSD_DOM2_PGS    => self.pi.reg_bsd_dom2_pgs = word & 0xf,
+            PI_REG_BSD_DOM2_RLS    => self.pi.reg_bsd_dom2_rls = word & 0x3,
             // Serial interface
             SI_REG_DRAM_ADDR       => {
-                self.si.reg_dram_addr = self.pseudo_translate(word)
+                self.si.reg_dram_addr = word & 0xff_ffff;
             },
             SI_REG_PIF_ADDR_RD64B  => self.si.dma_read(&mut self.ram),
             SI_REG_PIF_ADDR_WR64B  => self.si.dma_write(
@@ -564,17 +572,6 @@ impl Interconnect {
             }
         }
         Ok(())
-    }
-
-    fn pseudo_translate(&self, addr: u32) -> u32 {
-        // TODO why are virtual addresses written into the registers anyway?
-        if addr > 0xa000_0000 {
-            addr - 0xa000_0000
-        } else if addr > 0x8000_0000 {
-            addr - 0x8000_0000
-        } else {
-            addr
-        }
     }
 }
 
