@@ -617,8 +617,13 @@ impl Interconnect {
         Ok(())
     }
 
-    pub fn signal_interrupt(&mut self, intr: u32) {
-        self.mi.reg_intr |= intr;
+    pub fn vi_cycle(&mut self) {
+        self.interface.send(IfOutput::Update(
+            self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
+        self.signal_interrupt(MI_INTR_VI);
+    }
+
+    fn check_interrupts(&mut self) {
         if self.mi.reg_intr & self.mi.reg_intr_mask != 0 {
             self.interrupts = 0x400; // TODO
         } else {
@@ -626,13 +631,14 @@ impl Interconnect {
         }
     }
 
+    pub fn signal_interrupt(&mut self, intr: u32) {
+        self.mi.reg_intr |= intr;
+        self.check_interrupts();
+    }
+
     pub fn clear_interrupt(&mut self, intr: u32) {
         self.mi.reg_intr &= !intr;
-        if self.mi.reg_intr & self.mi.reg_intr_mask != 0 {
-            self.interrupts = 0x400; // TODO
-        } else {
-            self.interrupts = 0;
-        }
+        self.check_interrupts();
     }
 }
 

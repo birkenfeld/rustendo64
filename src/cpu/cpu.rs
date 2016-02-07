@@ -23,7 +23,6 @@ pub struct Cpu {
     reg_fpr:    [[u8; 8]; NUM_GPR],
 
     reg_pc:     u64,
-    last_pc:    u64,
     last_instr: u32,
 
     reg_hi:     u64,
@@ -35,7 +34,7 @@ pub struct Cpu {
     exc_pending: VecDeque<Exception>,
 
     cp0: Cp0,
-    interconnect: interconnect::Interconnect
+    pub interconnect: interconnect::Interconnect
 }
 
 macro_rules! bug {
@@ -81,7 +80,6 @@ impl Cpu {
             reg_fpr:    [[0; 8]; NUM_GPR],
 
             reg_pc:     0,
-            last_pc:    0,
             last_instr: 0,
 
             reg_hi:     0,
@@ -115,7 +113,7 @@ impl Cpu {
         self.cp0.reg_count = self.cp0.reg_count.wrapping_add(1);
         if self.cp0.reg_compare == self.cp0.reg_count {
             if self.cp0.reg_status.interrupts_enabled &&
-                !self.cp0.reg_status.interrupt_mask.timer_interrupt &&
+                self.cp0.reg_status.interrupt_mask.timer_interrupt &&
                 !self.cp0.reg_status.exception_level
             {
                 self.flag_exception(ExcType::Interrupt(Intr::Timer));
@@ -123,14 +121,18 @@ impl Cpu {
         }
 
         // Transfer interrupts from interconnect
-        if self.interconnect.interrupts != 0 {
+        if self.interconnect.interrupts != 0 &&
+            self.cp0.reg_status.interrupts_enabled &&
+            self.cp0.reg_status.interrupt_mask.external_interrupt[0] &&
+            !self.cp0.reg_status.exception_level
+        {
             self.flag_exception(ExcType::Interrupt(Intr::Ext(0)));
         }
 
         // Do we need to process an exception?
         if let Some(exc) = self.exc_pending.pop_front() {
-            println!("processing exception: {:?}", exc);
-            self.cp0.reg_epc = self.last_pc;
+            dprintln!(self, "!!! processing exception: {:?}", exc);
+            self.cp0.reg_epc = self.reg_pc;
             if self.in_branch_delay {
                 self.cp0.reg_epc -= 4;
             }
@@ -142,8 +144,6 @@ impl Cpu {
             self.reg_pc = exc.vector_location(self.cp0.reg_status.is_bootstrap());
         }
 
-        self.instr_counter += 1;
-        self.last_pc = self.reg_pc;
         let pc = self.reg_pc;
         self.last_instr = self.read_word(pc, true);
         let instr = Instruction(self.last_instr);
@@ -151,6 +151,7 @@ impl Cpu {
         // Debug stuff. This might not really belong here?
         let (debug_for, dump_here, break_here) =
             self.interconnect.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
+        self.instr_counter += 1;
         if break_here {
             println!("{}", Colour::Red.paint(
                 format!("at: {:#10x}   {:?}", pc as u32, instr)));
@@ -336,7 +337,6 @@ impl Cpu {
                 }
                 MT => {
                     let data = self.read_gpr(instr.rt());
-                    // println!("{} cp0[{:2}] <- {:#066b}", INDENT, instr.rd(), data);
                     dprintln!(self, "{} cp0[{:2}] <- {:#18x}, {:#066b}",
                               INDENT, instr.rd(), data, data);
                     self.cp0.write_reg(instr.rd(), data);

@@ -25,10 +25,12 @@ impl N64 {
         self.cpu.power_on_reset();
     }
 
-    // TODO: Better interface
     pub fn run(&mut self) {
         loop {
-            self.cpu.run_instruction();
+            for _ in 0..100000 { /* TODO: tweak this */
+                self.cpu.run_instruction();
+            }
+            self.cpu.interconnect.vi_cycle();
         }
     }
 
