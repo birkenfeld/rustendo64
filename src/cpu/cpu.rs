@@ -499,12 +499,17 @@ impl Cpu {
     {
         let addr = self.aligned_addr(&instr, 1);
         let align = T::get_align();
-        let aligned_addr = addr & !(align - 1);
-        let offset = addr & (align - 1);
+        let amask = align - 1;
+        let aligned_addr = addr & !amask;
+        let offset = addr & amask;
         let data = func(T::load_from(self, aligned_addr));
-        let shift = if right { (3 - offset) << 3 } else { offset << 3 };
+        let shift = if right { (amask - offset) << amask } else { offset << amask };
         let sh_data = if right { data >> shift } else { data << shift };
-        let mask = if right { ((1 << (8 * align)) - 1) >> shift } else { !0 << shift };
+        let mask = if align == 8 { // XXX: can this be written easier?
+            if right { !0 >> shift } else { !0 << shift }
+        } else {
+            if right { ((1 << (8 * align)) - 1) >> shift } else { !0 << shift }
+        };
         let orig_reg = self.read_gpr(instr.rt());
         let reg = (orig_reg & !mask) | (sh_data & mask);
         dprintln!(self, "{}       {:#18x} :  mem @ {:#x}", INDENT, data, aligned_addr);
@@ -518,10 +523,11 @@ impl Cpu {
     {
         let addr = self.aligned_addr(&instr, 1);
         let align = T::get_align();
-        let aligned_addr = addr & !(align - 1);
-        let offset = addr & (align - 1);
+        let amask = align - 1;
+        let aligned_addr = addr & !amask;
+        let offset = addr & amask;
         let reg = self.read_gpr(instr.rt());
-        let shift = if right { (3 - offset) << 3 } else { offset << 3 };
+        let shift = if right { (amask - offset) << amask } else { offset << amask };
         let sh_reg = if right { reg << shift } else { reg >> shift };
         let mask = if right { !0 << shift } else { !0 >> shift };
         let orig_data = T::load_from(self, aligned_addr);

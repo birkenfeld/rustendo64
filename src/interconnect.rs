@@ -230,6 +230,10 @@ impl Si {
         // implement commands that read state, executing on dma_read() is fine.
         // transfer 64 bytes main memory -> PIF ram
         let ram_start = self.reg_dram_addr as usize / 4;
+        // println!("\nPIF write:");
+        // for i in 0..8 {
+        //     println!("  {:#10x} {:#10x}", ram[ram_start+2*i], ram[ram_start+2*i+1]);
+        // }
         for i in 0..16 {
             BigEndian::write_u32(&mut self.pif_ram[4*i..], ram[ram_start + i]);
         }
