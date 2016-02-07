@@ -494,6 +494,8 @@ impl Interconnect {
             PIF_RAM_START ... PIF_RAM_END => {
                 let rel_addr = (addr - PIF_RAM_START) as usize;
                 BigEndian::write_u32(&mut self.si.pif_ram[rel_addr..], word);
+                self.si.reg_status |= 0x1000;
+                self.signal_interrupt(MI_INTR_SI);
             },
             SP_DMEM_START ... SP_DMEM_END => {
                 self.spram.dmem[(addr - SP_DMEM_START) as usize / 4] = word;
@@ -663,13 +665,16 @@ impl Interconnect {
             },
             SI_REG_PIF_ADDR_RD64B  => {
                 self.si.dma_read(&mut self.ram);
+                self.si.reg_status |= 0x1000;
                 self.signal_interrupt(MI_INTR_SI);
             },
             SI_REG_PIF_ADDR_WR64B  => {
                 self.si.dma_write(&self.ram, self.interface.get_input_state());
+                self.si.reg_status |= 0x1000;
                 self.signal_interrupt(MI_INTR_SI);
             },
             SI_REG_STATUS          => {
+                self.si.reg_status &= !0x1000;
                 self.clear_interrupt(MI_INTR_SI);
             },
             _ => {
