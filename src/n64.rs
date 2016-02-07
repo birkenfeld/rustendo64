@@ -27,7 +27,9 @@ impl N64 {
 
     // TODO: Better interface
     pub fn run(&mut self) {
-        self.cpu.run();
+        loop {
+            self.cpu.run_instruction();
+        }
     }
 
     pub fn run_instruction(&mut self) {

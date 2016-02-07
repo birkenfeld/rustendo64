@@ -101,13 +101,6 @@ impl Cpu {
         self.reg_pc = RESET_VECTOR;
     }
 
-    // TODO: Different interface
-    pub fn run(&mut self) {
-        loop {
-            self.run_instruction();
-        }
-    }
-
     pub fn run_branch_delay_slot(&mut self) {
         if self.in_branch_delay {
             bug!(self, "Branching in branch delay slot -- check semantics!");
@@ -127,6 +120,11 @@ impl Cpu {
             {
                 self.flag_exception(ExcType::Interrupt(Intr::Timer));
             }
+        }
+
+        // Transfer interrupts from interconnect
+        if self.interconnect.interrupts != 0 {
+            self.flag_exception(ExcType::Interrupt(Intr::Ext(0)));
         }
 
         // Do we need to process an exception?

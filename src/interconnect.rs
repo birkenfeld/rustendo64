@@ -73,6 +73,13 @@ struct Mi {
     reg_intr_mask: u32,
 }
 
+pub const MI_INTR_SP: u32 = 0x01;
+pub const MI_INTR_SI: u32 = 0x02;
+pub const MI_INTR_AI: u32 = 0x04;
+pub const MI_INTR_VI: u32 = 0x08;
+pub const MI_INTR_PI: u32 = 0x10;
+pub const MI_INTR_DP: u32 = 0x20;
+
 #[derive(Default, Debug)]
 struct Vi {
     reg_status: u32,
@@ -101,9 +108,6 @@ impl Vi {
     fn update(&mut self) {
         self.video_width = self.reg_width as usize;
         self.video_height = (self.video_width * 3) / 4;
-        self.vram_start = self.reg_origin as usize / 4;
-        self.vram_end   = self.vram_start +
-            self.video_width * self.video_height * self.vram_pixelsize / 4;
         self.vram_pixelsize = match self.reg_status & 0b11 {
             0b00 => 0,
             0b01 => panic!("using reserved video mode"),
@@ -111,6 +115,11 @@ impl Vi {
             0b11 => 4,
             _    => unreachable!()
         };
+        self.vram_start = self.reg_origin as usize / 4;
+        self.vram_end   = self.vram_start +
+            self.video_width * self.video_height * self.vram_pixelsize / 4;
+        println!("Video: {}x{}, {} bit color",
+                 self.video_width, self.video_height, self.vram_pixelsize * 8);
     }
 }
 
@@ -255,6 +264,7 @@ pub struct Interconnect {
     si: Si,
     interface: InterfaceChannel,
     pub debug_specs: DebugSpecList,
+    pub interrupts: u32,
 }
 
 impl Interconnect {
@@ -262,6 +272,7 @@ impl Interconnect {
                interface: InterfaceChannel,
                debug: DebugSpecList) -> Interconnect {
         Interconnect {
+            interrupts: 0,
             pif_rom: pif_rom,
             pif_status: 0,
             cart_rom: cart_rom,
@@ -303,6 +314,10 @@ impl Interconnect {
         }
         let res = match addr {
             RDRAM_START ... RDRAM_END => {
+                if addr == 0x20fa10 {
+                    self.interface.send(IfOutput::Update(
+                        self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
+                }
                 self.ram[addr as usize / 4]
             },
             CART_START ... CART_END => {
@@ -472,8 +487,14 @@ impl Interconnect {
             SP_REG_RD_LEN          => self.sp.reg_rd_len = word,
             SP_REG_WR_LEN          => self.sp.reg_wr_len = word,
             SP_REG_STATUS          => {
-                if word & 0b1 == 1 {
+                if word & 0x1 != 0 {
                     println!("Would start RSP");
+                }
+                if word & 0x8 != 0 {
+                    self.clear_interrupt(MI_INTR_SP);
+                }
+                if word & 0x10 != 0 {
+                    self.signal_interrupt(MI_INTR_SP);
                 }
                 /* TODO */
             }
@@ -489,7 +510,12 @@ impl Interconnect {
             DPS_REG_BUFTEST_ADDR   => self.dp.reg_buftest_addr = word & 0x7f,
             DPS_REG_BUFTEST_DATA   => self.dp.reg_buftest_data = word,
             // MIPS interface
-            MI_REG_MODE            => { /* TODO */ },
+            MI_REG_MODE            => {
+                if word & 0x800 != 0 {
+                    self.clear_interrupt(MI_INTR_DP);
+                }
+                /* TODO */
+            },
             MI_REG_INTR_MASK       => { /* TODO */ },
             // Video interface
             VI_REG_STATUS          => {
@@ -512,7 +538,9 @@ impl Interconnect {
                     self.vi.video_width, self.vi.video_height));
             },
             VI_REG_V_INTR          => self.vi.reg_intr = word & 0x3ff,
-            VI_REG_CURRENT         => self.vi.reg_current = word & 0x3ff,
+            VI_REG_CURRENT         => {
+                self.clear_interrupt(MI_INTR_VI);
+            },
             VI_REG_BURST           => self.vi.reg_burst = word & 0x3fff_ffff,
             VI_REG_V_SYNC          => self.vi.reg_v_sync = word & 0x3ff,
             VI_REG_H_SYNC          => self.vi.reg_h_sync = word & 0x1f_ffff,
@@ -530,7 +558,9 @@ impl Interconnect {
             AI_REG_DRAM_ADDR       => self.ai.reg_dram_addr = word & 0xff_ffff,
             AI_REG_LEN             => self.ai.reg_len = word & 0x3_ffff,
             AI_REG_CONTROL         => self.ai.reg_control = word & 0x1,
-            AI_REG_STATUS          => self.ai.reg_status = word,
+            AI_REG_STATUS          => {
+                self.clear_interrupt(MI_INTR_AI);
+            },
             AI_REG_DACRATE         => self.ai.reg_dacrate = word & 0x3fff,
             AI_REG_BITRATE         => self.ai.reg_bitrate = word & 0xf,
             // Peripheral interface
@@ -549,8 +579,14 @@ impl Interconnect {
                     self.ram[ram_start + i] =
                         BigEndian::read_u32(&self.cart_rom[rom_start + 4*i..]);
                 }
+                self.signal_interrupt(MI_INTR_PI);
             },
-            PI_REG_STATUS          => { /* TODO */ },
+            PI_REG_STATUS          => {
+                if word & 0x2 != 0 {
+                    self.clear_interrupt(MI_INTR_PI);
+                }
+                /* TODO */
+            },
             PI_REG_BSD_DOM1_LAT    => self.pi.reg_bsd_dom1_lat = word & 0xff,
             PI_REG_BSD_DOM1_PWD    => self.pi.reg_bsd_dom1_pwd = word & 0xff,
             PI_REG_BSD_DOM1_PGS    => self.pi.reg_bsd_dom1_pgs = word & 0xf,
@@ -563,15 +599,40 @@ impl Interconnect {
             SI_REG_DRAM_ADDR       => {
                 self.si.reg_dram_addr = word & 0xff_ffff;
             },
-            SI_REG_PIF_ADDR_RD64B  => self.si.dma_read(&mut self.ram),
-            SI_REG_PIF_ADDR_WR64B  => self.si.dma_write(
-                &self.ram, self.interface.get_input_state()),
-            SI_REG_STATUS          => { /* TODO */ }
+            SI_REG_PIF_ADDR_RD64B  => {
+                self.si.dma_read(&mut self.ram);
+                self.signal_interrupt(MI_INTR_SI);
+            },
+            SI_REG_PIF_ADDR_WR64B  => {
+                self.si.dma_write(&self.ram, self.interface.get_input_state());
+                self.signal_interrupt(MI_INTR_SI);
+            },
+            SI_REG_STATUS          => {
+                self.clear_interrupt(MI_INTR_SI);
+            },
             _ => {
                 return Err("Unsupported memory write area");
             }
         }
         Ok(())
+    }
+
+    pub fn signal_interrupt(&mut self, intr: u32) {
+        self.mi.reg_intr |= intr;
+        if self.mi.reg_intr & self.mi.reg_intr_mask != 0 {
+            self.interrupts = 0x400; // TODO
+        } else {
+            self.interrupts = 0;
+        }
+    }
+
+    pub fn clear_interrupt(&mut self, intr: u32) {
+        self.mi.reg_intr &= !intr;
+        if self.mi.reg_intr & self.mi.reg_intr_mask != 0 {
+            self.interrupts = 0x400; // TODO
+        } else {
+            self.interrupts = 0;
+        }
     }
 }
 
