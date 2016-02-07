@@ -101,10 +101,10 @@ impl MinifbInterface {
                     Key::K          => 1 << 18,  // C-down
                     Key::J          => 1 << 17,  // C-left
                     Key::L          => 1 << 16,  // C-right
-                    Key::Up         => 0x7f00,
-                    Key::Down       => 0x8000,   // Analog pad
-                    Key::Left       => 0x0080,   // (full throttle)
-                    Key::Right      => 0x007f,
+                    Key::Up         => 0x007f,
+                    Key::Down       => 0x0080,   // Analog pad
+                    Key::Left       => 0x8000,   // (full throttle)
+                    Key::Right      => 0x7f00,
                     Key::Escape     => panic!("kbd quit"),
                     _ => 0
                 })
