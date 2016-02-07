@@ -8,7 +8,7 @@ use ui::{Interface, IfOutput, CONTROLLER};
 pub struct MinifbInterface {
     receiver: mpsc::Receiver<IfOutput>,
     size: (usize, usize),
-    mode: u32,
+    mode: usize,
     window: Option<Window>,
 }
 
@@ -34,14 +34,14 @@ impl Interface for MinifbInterface {
 }
 
 impl MinifbInterface {
-    fn set_mode(&mut self, w: usize, h: usize, mode: u32) {
-        if mode & 0b11 == 0 {
-            return;
-        }
+    fn set_mode(&mut self, w: usize, h: usize, mode: usize) {
         if (w, h) == self.size && mode == self.mode {
             return;
         }
         drop(self.window.take());
+        if mode == 0 || w == 0 || h == 0 {
+            return;
+        }
         match Window::new(
             "Rustendo64_gb", w, h, WindowOptions {
                 scale: if w < 640 { Scale::X2 } else { Scale::X1 },
@@ -60,8 +60,7 @@ impl MinifbInterface {
 
     fn update(&mut self, mut buffer: Vec<u32>) {
         if let Some(ref mut win) = self.window {
-            let pixelsize = self.mode & 0b11;
-            if pixelsize == 0b11 {
+            if self.mode == 4 {
                 if buffer.len() == self.size.0 * self.size.1 {
                     for w in &mut buffer {
                         *w >>= 8;
@@ -70,7 +69,7 @@ impl MinifbInterface {
                 } else {
                     println!("strange buffer size?")
                 }
-            } else if pixelsize == 0b10 {
+            } else if self.mode == 2 {
                 if buffer.len() == self.size.0 * self.size.1 / 2 {
                     let mut buf32 = vec![0; buffer.len() * 2];
                     for i in 0..buffer.len() {

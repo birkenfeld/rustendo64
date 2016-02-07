@@ -107,7 +107,7 @@ struct Vi {
 }
 
 impl Vi {
-    fn update(&mut self) {
+    fn update(&mut self, interface: &mut InterfaceChannel) {
         let hstart = (self.reg_h_start >> 16) & 0x3ff;
         let vstart = (self.reg_v_start >> 16) & 0x3ff;
         let hend   = self.reg_h_start & 0x3ff;
@@ -128,13 +128,21 @@ impl Vi {
             0b11 => 4,
             _    => unreachable!()
         };
+        self.update_vram();
+        // println!("Video: {}+{}x{}, {} bit color",
+        //          self.frame_hskip, self.frame_width, self.frame_height,
+        //          self.vram_pixelsize * 8);
+        // TODO: dont show skip
+        interface.send(IfOutput::SetMode(
+            self.frame_width + self.frame_hskip, self.frame_height,
+            self.vram_pixelsize));
+    }
+
+    fn update_vram(&mut self) {
         self.vram_start = self.reg_origin as usize / 4;
         self.vram_end   = self.vram_start +
             (self.reg_width as usize) * self.frame_height *
             self.vram_pixelsize / 4;
-        // println!("Video: {}+{}x{}, {} bit color",
-        //          self.frame_hskip, self.frame_width, self.frame_height,
-        //          self.vram_pixelsize * 8);
     }
 }
 
@@ -582,20 +590,16 @@ impl Interconnect {
             // Video interface
             VI_REG_STATUS          => {
                 self.vi.reg_status = word & 0xffff;
-                self.vi.update();
-                // TODO: dont show skip
-                self.interface.send(IfOutput::SetMode(
-                    self.vi.frame_width + self.vi.frame_hskip, self.vi.frame_height,
-                    word & 0xffff));
+                self.vi.update(&mut self.interface);
             },
             VI_REG_ORIGIN          => {
                 self.vi.reg_origin = word & 0xff_ffff;  // only 24 bits
                 // println!("VRAM at {:#x}", word);
-                self.vi.update();
+                self.vi.update_vram();
             },
             VI_REG_H_WIDTH         => {
                 self.vi.reg_width = word & 0xfff;
-                self.vi.update();
+                self.vi.update(&mut self.interface);
             },
             VI_REG_V_INTR          => self.vi.reg_intr = word & 0x3ff,
             VI_REG_CURRENT         => {
@@ -607,20 +611,20 @@ impl Interconnect {
             VI_REG_LEAP            => self.vi.reg_leap = word & 0xfff_ffff,
             VI_REG_H_START         => {
                 self.vi.reg_h_start = word & 0x3ff_ffff;
-                self.vi.update();
+                self.vi.update(&mut self.interface);
             },
             VI_REG_V_START         => {
                 self.vi.reg_v_start = word & 0x3ff_ffff;
-                self.vi.update();
+                self.vi.update(&mut self.interface);
             },
             VI_REG_V_BURST         => self.vi.reg_v_burst = word & 0x3ff_ffff,
             VI_REG_X_SCALE         => {
                 self.vi.reg_x_scale = word & 0xfff_ffff;
-                self.vi.update();
+                self.vi.update(&mut self.interface);
             },
             VI_REG_Y_SCALE         => {
                 self.vi.reg_y_scale = word & 0xfff_ffff;
-                self.vi.update();
+                self.vi.update(&mut self.interface);
             },
             // Audio interface
             AI_REG_DRAM_ADDR       => self.ai.reg_dram_addr = word & 0xff_ffff,
