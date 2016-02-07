@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::fmt;
 use std::mem::replace;
 
@@ -97,8 +98,9 @@ struct Vi {
     reg_x_scale: u32,
     reg_y_scale: u32,
 
-    video_width: usize,
-    video_height: usize,
+    frame_width: usize,
+    frame_height: usize,
+    frame_hskip: usize,
     vram_start: usize,
     vram_end: usize,
     vram_pixelsize: usize,
@@ -106,8 +108,19 @@ struct Vi {
 
 impl Vi {
     fn update(&mut self) {
-        self.video_width = self.reg_width as usize;
-        self.video_height = (self.video_width * 3) / 4;
+        let hstart = (self.reg_h_start >> 16) & 0x3ff;
+        let vstart = (self.reg_v_start >> 16) & 0x3ff;
+        let hend   = self.reg_h_start & 0x3ff;
+        let vend   = self.reg_v_start & 0x3ff;
+        let hcoeff = (self.reg_x_scale & 0xfff) as f64 / (1 << 10) as f64;
+        let vcoeff = (self.reg_y_scale & 0xfff) as f64 / (1 << 10) as f64;
+        let width  = (hend - hstart) as f64 * hcoeff;
+        let height = ((vend - vstart) >> 1) as f64 * vcoeff;
+        // println!("{} {} {} {} {} {} {} {}",
+        //          hstart, vstart, hend, vend, hcoeff, vcoeff, width, height);
+        self.frame_width  = width as usize;
+        self.frame_height = height as usize;
+        self.frame_hskip  = self.reg_width as usize - self.frame_width;
         self.vram_pixelsize = match self.reg_status & 0b11 {
             0b00 => 0,
             0b01 => panic!("using reserved video mode"),
@@ -117,9 +130,11 @@ impl Vi {
         };
         self.vram_start = self.reg_origin as usize / 4;
         self.vram_end   = self.vram_start +
-            self.video_width * self.video_height * self.vram_pixelsize / 4;
-        println!("Video: {}x{}, {} bit color",
-                 self.video_width, self.video_height, self.vram_pixelsize * 8);
+            (self.reg_width as usize) * self.frame_height *
+            self.vram_pixelsize / 4;
+        // println!("Video: {}+{}x{}, {} bit color",
+        //          self.frame_hskip, self.frame_width, self.frame_height,
+        //          self.vram_pixelsize * 8);
     }
 }
 
@@ -135,6 +150,7 @@ struct Ai {
 
 #[derive(Default, Debug)]
 struct Pi {
+    cart_rom: Vec<u8>,
     reg_dram_addr: u32,
     reg_cart_addr: u32,
     reg_rd_len: u32,
@@ -150,6 +166,24 @@ struct Pi {
     reg_bsd_dom2_rls: u32,
 }
 
+impl Pi {
+    fn dma_read(&mut self, ram: &mut [u32], word: u32) {
+        self.reg_wr_len = word & 0xff_ffff;
+        // DMA transfer ROM -> main memory
+        let ram_start = self.reg_dram_addr as usize / 4;
+        let rom_start = self.reg_cart_addr as usize - 0x1000_0000;
+        let length = (self.reg_wr_len + 1) as usize;
+        // Some ROMs read past the end of the file...
+        let length = min(length, self.cart_rom.len() - rom_start);
+        println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
+                 length, rom_start, ram_start);
+        for i in 0..length/4 {
+            ram[ram_start + i] =
+                BigEndian::read_u32(&self.cart_rom[rom_start + 4*i..]);
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 struct Ri {
     reg_mode: u32,
@@ -162,7 +196,9 @@ struct Ri {
 
 #[derive(Default, Debug)]
 struct Si {
+    pif_rom: Vec<u8>,
     pif_ram: Vec<u8>,
+    pif_status: u32,
     reg_dram_addr: u32,
     reg_status: u32,
 }
@@ -248,9 +284,6 @@ impl Si {
 }
 
 pub struct Interconnect {
-    pif_rom: Vec<u8>,
-    pif_status: u32,
-    cart_rom: Vec<u8>,
     ram: Vec<u32>,
     spram: SpRam,
     rd: Rd,
@@ -273,9 +306,6 @@ impl Interconnect {
                debug: DebugSpecList) -> Interconnect {
         Interconnect {
             interrupts: 0,
-            pif_rom: pif_rom,
-            pif_status: 0,
-            cart_rom: cart_rom,
             ram: vec![0; RAM_SIZE / 4],
             spram: SpRam { dmem: vec![0; 1024], imem: vec![0; 1024] },
             interface: interface,
@@ -286,14 +316,14 @@ impl Interconnect {
             mi: Mi::default(),
             vi: Vi::default(),
             ai: Ai::default(),
-            pi: Pi::default(),
+            pi: Pi { cart_rom: cart_rom, ..Pi::default() },
             ri: Ri::default(),
-            si: Si { pif_ram: vec![0; 64], ..Si::default() },
+            si: Si { pif_rom: pif_rom, pif_ram: vec![0; 64], ..Si::default() },
         }
     }
 
     pub fn power_on_reset(&mut self) {
-        if let Some(seed) = cic::get_cic_seed(&self.cart_rom) {
+        if let Some(seed) = cic::get_cic_seed(&self.pi.cart_rom) {
             BigEndian::write_u32(&mut self.si.pif_ram[0x07e4 - 0x7c0..], seed);
         } else {
             println!("Warning: no CIC seed found for this ROM");
@@ -314,28 +344,24 @@ impl Interconnect {
         }
         let res = match addr {
             RDRAM_START ... RDRAM_END => {
-                if addr == 0x20fa10 {
-                    self.interface.send(IfOutput::Update(
-                        self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
-                }
                 self.ram[addr as usize / 4]
             },
             CART_START ... CART_END => {
                 let rel_addr = (addr - CART_START) as usize;
-                BigEndian::read_u32(&self.cart_rom[rel_addr..])
+                BigEndian::read_u32(&self.pi.cart_rom[rel_addr..])
             },
             PIF_ROM_START ... PIF_ROM_END => {
                 let rel_addr = (addr - PIF_ROM_START) as usize;
-                BigEndian::read_u32(&self.pif_rom[rel_addr..])
+                BigEndian::read_u32(&self.si.pif_rom[rel_addr..])
             },
             PIF_RAM_START ... PIF_RAM_END => {
                 let rel_addr = (addr - PIF_RAM_START) as usize;
                 if rel_addr == 0x3c {
-                    self.pif_status
+                    self.si.pif_status
                 } else {
                     if rel_addr == 0x24 {
                         // hack to avoid looping at the end of the PIF rom
-                        self.pif_status = 0x80;
+                        self.si.pif_status = 0x80;
                     }
                     BigEndian::read_u32(&self.si.pif_ram[rel_addr..])
                 }
@@ -348,6 +374,10 @@ impl Interconnect {
             }
             DD_ROM_START ... DD_ROM_END => {
                 // DD IPL ROM, return zeros
+                0
+            }
+            DD_REG_START ... DD_REG_END => {
+                // DD interface registers
                 0
             }
             // RDRAM registers
@@ -516,26 +546,56 @@ impl Interconnect {
                 }
                 /* TODO */
             },
-            MI_REG_INTR_MASK       => { /* TODO */ },
+            MI_REG_INTR_MASK       => {
+                if word & 0x1 != 0 {
+                    self.mi.reg_intr_mask &= !MI_INTR_SP;
+                } else if word & 0x2 != 0 {
+                    self.mi.reg_intr_mask |= MI_INTR_SP;
+                }
+                if word & 0x4 != 0 {
+                    self.mi.reg_intr_mask &= !MI_INTR_SI;
+                } else if word & 0x8 != 0 {
+                    self.mi.reg_intr_mask |= MI_INTR_SI;
+                }
+                if word & 0x10 != 0 {
+                    self.mi.reg_intr_mask &= !MI_INTR_AI;
+                } else if word & 0x20 != 0 {
+                    self.mi.reg_intr_mask |= MI_INTR_AI;
+                }
+                if word & 0x40 != 0 {
+                    self.mi.reg_intr_mask &= !MI_INTR_VI;
+                } else if word & 0x80 != 0 {
+                    self.mi.reg_intr_mask |= MI_INTR_VI;
+                }
+                if word & 0x100 != 0 {
+                    self.mi.reg_intr_mask &= !MI_INTR_PI;
+                } else if word & 0x200 != 0 {
+                    self.mi.reg_intr_mask |= MI_INTR_PI;
+                }
+                if word & 0x400 != 0 {
+                    self.mi.reg_intr_mask &= !MI_INTR_DP;
+                } else if word & 0x800 != 0 {
+                    self.mi.reg_intr_mask |= MI_INTR_DP;
+                }
+                self.check_interrupts();
+            },
             // Video interface
             VI_REG_STATUS          => {
                 self.vi.reg_status = word & 0xffff;
-                println!("Video mode: {:#034b}", word);
                 self.vi.update();
-                self.interface.send(IfOutput::SetMode(word & 0xffff));
+                // TODO: dont show skip
+                self.interface.send(IfOutput::SetMode(
+                    self.vi.frame_width + self.vi.frame_hskip, self.vi.frame_height,
+                    word & 0xffff));
             },
             VI_REG_ORIGIN          => {
                 self.vi.reg_origin = word & 0xff_ffff;  // only 24 bits
                 // println!("VRAM at {:#x}", word);
                 self.vi.update();
-                self.interface.send(IfOutput::Update(
-                    self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
             },
             VI_REG_H_WIDTH         => {
                 self.vi.reg_width = word & 0xfff;
                 self.vi.update();
-                self.interface.send(IfOutput::SetSize(
-                    self.vi.video_width, self.vi.video_height));
             },
             VI_REG_V_INTR          => self.vi.reg_intr = word & 0x3ff,
             VI_REG_CURRENT         => {
@@ -545,14 +605,22 @@ impl Interconnect {
             VI_REG_V_SYNC          => self.vi.reg_v_sync = word & 0x3ff,
             VI_REG_H_SYNC          => self.vi.reg_h_sync = word & 0x1f_ffff,
             VI_REG_LEAP            => self.vi.reg_leap = word & 0xfff_ffff,
-            VI_REG_H_START         => self.vi.reg_h_start = word & 0x3ff_ffff,
-            VI_REG_V_START         => self.vi.reg_v_start = word & 0x3ff_ffff,
+            VI_REG_H_START         => {
+                self.vi.reg_h_start = word & 0x3ff_ffff;
+                self.vi.update();
+            },
+            VI_REG_V_START         => {
+                self.vi.reg_v_start = word & 0x3ff_ffff;
+                self.vi.update();
+            },
             VI_REG_V_BURST         => self.vi.reg_v_burst = word & 0x3ff_ffff,
-            VI_REG_X_SCALE         => self.vi.reg_x_scale = word & 0xfff_ffff,
+            VI_REG_X_SCALE         => {
+                self.vi.reg_x_scale = word & 0xfff_ffff;
+                self.vi.update();
+            },
             VI_REG_Y_SCALE         => {
                 self.vi.reg_y_scale = word & 0xfff_ffff;
-                self.interface.send(IfOutput::Update(
-                    self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
+                self.vi.update();
             },
             // Audio interface
             AI_REG_DRAM_ADDR       => self.ai.reg_dram_addr = word & 0xff_ffff,
@@ -568,17 +636,7 @@ impl Interconnect {
             PI_REG_CART_ADDR       => self.pi.reg_cart_addr = word,
             PI_REG_RD_LEN          => self.pi.reg_rd_len = word & 0xff_ffff,
             PI_REG_WR_LEN          => {
-                self.pi.reg_wr_len = word & 0xff_ffff;
-                // DMA transfer ROM -> main memory
-                let ram_start = self.pi.reg_dram_addr as usize / 4;
-                let rom_start = self.pi.reg_cart_addr as usize - 0x1000_0000;
-                let length = (self.pi.reg_wr_len + 1) as usize;
-                println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
-                         length, rom_start, ram_start);
-                for i in 0..length/4 {
-                    self.ram[ram_start + i] =
-                        BigEndian::read_u32(&self.cart_rom[rom_start + 4*i..]);
-                }
+                self.pi.dma_read(&mut self.ram, word);
                 self.signal_interrupt(MI_INTR_PI);
             },
             PI_REG_STATUS          => {
@@ -645,7 +703,6 @@ impl Interconnect {
 impl fmt::Debug for Interconnect {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Interconnect")
-         .field("pif_status", &self.pif_status)
          .field("rd", &self.rd)
          .field("sp", &self.sp)
          .field("dp", &self.dp)

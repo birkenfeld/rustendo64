@@ -5,9 +5,7 @@ use std::thread;
 pub mod minifb;
 
 pub enum IfOutput {
-    SetSize(usize, usize),  // width, height
-    SetMode(u32),
-    //SetPixel(usize, u32),   // offset, value
+    SetMode(usize, usize, u32),  // width, height, pixelmode
     Update(Vec<u32>),
 }
 

@@ -196,6 +196,8 @@ define_registers!(
 define_consts!(
     CART_START    = 0x1000_0000,
     CART_END      = 0x1fbf_ffff,
+    DD_REG_START  = 0x0500_0500,
+    DD_REG_END    = 0x0500_054b,
     DD_ROM_START  = 0x0600_0000,
     DD_ROM_END    = 0x063f_ffff
 );

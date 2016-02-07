@@ -25,8 +25,7 @@ impl Interface for MinifbInterface {
     fn run(&mut self) {
         while let Ok(msg) = self.receiver.recv() {
             match msg {
-                IfOutput::SetSize(w, h) => self.setsize(w, h),
-                IfOutput::SetMode(m) => self.setmode(m),
+                IfOutput::SetMode(w, h, m) => self.set_mode(w, h, m),
                 IfOutput::Update(v) => self.update(v),
             }
         }
@@ -35,13 +34,21 @@ impl Interface for MinifbInterface {
 }
 
 impl MinifbInterface {
-    fn setsize(&mut self, w: usize, h: usize) {
+    fn set_mode(&mut self, w: usize, h: usize, mode: u32) {
+        if mode & 0b11 == 0 {
+            return;
+        }
+        if (w, h) == self.size && mode == self.mode {
+            return;
+        }
+        drop(self.window.take());
         match Window::new(
             "Rustendo64_gb", w, h, WindowOptions {
                 scale: if w < 640 { Scale::X2 } else { Scale::X1 },
                 ..WindowOptions::default() }) {
             Ok(win) => {
                 self.size = (w, h);
+                self.mode = mode;
                 self.window = Some(win);
             }
             Err(err) => {
@@ -49,10 +56,6 @@ impl MinifbInterface {
                 return;
             }
         }
-    }
-
-    fn setmode(&mut self, mode: u32) {
-        self.mode = mode;
     }
 
     fn update(&mut self, mut buffer: Vec<u32>) {
