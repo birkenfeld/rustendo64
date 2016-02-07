@@ -87,24 +87,24 @@ impl MinifbInterface {
             } // else it's blank
             if let Some(cstate) = win.get_keys().map(|keys| {
                 keys.iter().fold(0, |a, &key| a | match key {
-                    Key::LeftShift  => 1 << 15,  // A
-                    Key::LeftCtrl   => 1 << 14,  // B
-                    Key::Z          => 1 << 13,  // Z
-                    Key::Enter      => 1 << 12,  // Start
-                    Key::W          => 1 << 11,
-                    Key::S          => 1 << 10,  // Joypad
-                    Key::A          => 1 << 9,
-                    Key::D          => 1 << 8,
-                    Key::X          => 1 << 5,   // Left trigger
-                    Key::C          => 1 << 4,   // Right trigger
-                    Key::I          => 1 << 3,   // C-up
-                    Key::K          => 1 << 2,   // C-down
-                    Key::J          => 1 << 1,   // C-left
-                    Key::L          => 1 << 0,   // C-right
-                    Key::Up         => 0x7f << 24,
-                    Key::Down       => 0x80 << 24,  // Analog pad
-                    Key::Left       => 0x80 << 16,  // (full throttle)
-                    Key::Right      => 0x7f << 16,
+                    Key::LeftShift  => 1 << 31,  // A
+                    Key::LeftCtrl   => 1 << 30,  // B
+                    Key::Z          => 1 << 29,  // Z
+                    Key::Enter      => 1 << 28,  // Start
+                    Key::W          => 1 << 27,
+                    Key::S          => 1 << 26,  // Joypad
+                    Key::A          => 1 << 25,
+                    Key::D          => 1 << 24,
+                    Key::X          => 1 << 21,  // Left trigger
+                    Key::C          => 1 << 20,  // Right trigger
+                    Key::I          => 1 << 19,  // C-up
+                    Key::K          => 1 << 18,  // C-down
+                    Key::J          => 1 << 17,  // C-left
+                    Key::L          => 1 << 16,  // C-right
+                    Key::Up         => 0x7f00,
+                    Key::Down       => 0x8000,   // Analog pad
+                    Key::Left       => 0x0080,   // (full throttle)
+                    Key::Right      => 0x007f,
                     Key::Escape     => panic!("kbd quit"),
                     _ => 0
                 })

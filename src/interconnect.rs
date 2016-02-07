@@ -212,8 +212,9 @@ struct Si {
 }
 
 impl Si {
-    fn dma_read(&mut self, ram: &mut [u32]) {
+    fn dma_read(&mut self, ram: &mut [u32], cstate: u32) {
         // transfer 64 bytes PIF ram -> main memory
+        self.execute(cstate);
         let ram_start = self.reg_dram_addr as usize / 4;
         for i in 0..16 {
             ram[ram_start + i] = BigEndian::read_u32(&self.pif_ram[4*i..]);
@@ -224,27 +225,30 @@ impl Si {
         // }
     }
 
-    fn dma_write(&mut self, ram: &[u32], cstate: u32) {
+    fn dma_write(&mut self, ram: &[u32]) {
+        // TODO: we should execute commands here too. But since we only
+        // implement commands that read state, executing on dma_read() is fine.
         // transfer 64 bytes main memory -> PIF ram
         let ram_start = self.reg_dram_addr as usize / 4;
         for i in 0..16 {
             BigEndian::write_u32(&mut self.pif_ram[4*i..], ram[ram_start + i]);
         }
-        self.execute(cstate);
     }
 
     fn execute(&mut self, cstate: u32) {
-        // nothing to do?
-        if self.pif_ram[63] & 1 == 0 { return; }
+        // nothing to do? XXX: probably only checked on dma_write().
+        // if self.pif_ram[63] & 1 == 0 { return; }
         let mut channel = 0;
         let mut start = 0;
         while start <= 60 {  // last possible byte for a command
             let ntrans = self.pif_ram[start] as usize;
-            if ntrans == 0xfe { break; }
-            if ntrans >= 0x80 { start += 1; continue; }
+            if ntrans == 0xfe { break; }  // signals end of commands
+            if ntrans >= 0x80 { start += 1; continue; }  // skip byte
             channel += 1;
-            if ntrans == 0 { start += 1; continue; }
+            if channel > 6 { break; }  // reached max channels
+            if ntrans == 0 { start += 1; continue; }  // skip channel
             let nrecv = self.pif_ram[start + 1] as usize;
+            if nrecv & 0xc0 != 0 { break; }  // remaining error
             let end = start + 2 + ntrans + nrecv;
             if end > 63 {
                 // not enough bytes left to read and write
@@ -664,12 +668,12 @@ impl Interconnect {
                 self.si.reg_dram_addr = word & 0xff_ffff;
             },
             SI_REG_PIF_ADDR_RD64B  => {
-                self.si.dma_read(&mut self.ram);
+                self.si.dma_read(&mut self.ram, self.interface.get_input_state());
                 self.si.reg_status |= 0x1000;
                 self.signal_interrupt(MI_INTR_SI);
             },
             SI_REG_PIF_ADDR_WR64B  => {
-                self.si.dma_write(&self.ram, self.interface.get_input_state());
+                self.si.dma_write(&self.ram);
                 self.si.reg_status |= 0x1000;
                 self.signal_interrupt(MI_INTR_SI);
             },
