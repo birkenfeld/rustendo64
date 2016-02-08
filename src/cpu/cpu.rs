@@ -8,7 +8,7 @@ use super::exception::*;
 use super::cp0::Cp0;
 use super::types::*;
 use mem_map::*;
-use interconnect;
+use bus::Bus;
 use debug::{Debugger, DebugSpecList};
 use util::{mult_64_64_unsigned, mult_64_64_signed};
 
@@ -33,8 +33,8 @@ pub struct Cpu {
     in_branch_delay: bool,
     exc_pending: VecDeque<Exception>,
 
-    cp0: Cp0,
-    pub interconnect: interconnect::Interconnect
+    pub cp0: Cp0,
+    pub bus: Bus,
 }
 
 macro_rules! bug {
@@ -67,8 +67,11 @@ impl fmt::Debug for Cpu {
 pub const INDENT: &'static str = "                                       ";
 
 impl Cpu {
-    pub fn new(interconnect: interconnect::Interconnect) -> Cpu {
+    pub fn new(bus: Bus) -> Cpu {
         Cpu {
+            cp0: Cp0::default(),
+            bus: bus,
+
             instr_counter:      0,
             debug_instrs_until: 0,
             debug_instrs:       false,
@@ -86,15 +89,12 @@ impl Cpu {
             reg_lo:     0,
             reg_llbit:  false,
             reg_fcr31:  0,
-
-            cp0: Cp0::default(),
-            interconnect: interconnect,
         }
     }
 
     pub fn power_on_reset(&mut self) {
         self.cp0.power_on_reset();
-        self.interconnect.power_on_reset();
+        self.bus.power_on_reset();
 
         self.reg_pc = RESET_VECTOR;
     }
@@ -121,7 +121,7 @@ impl Cpu {
         }
 
         // Transfer interrupts from interconnect
-        if self.interconnect.interrupts != 0 &&
+        if self.bus.interrupts != 0 &&
             self.cp0.reg_status.interrupts_enabled &&
             self.cp0.reg_status.interrupt_mask.external_interrupt[0] &&
             !self.cp0.reg_status.exception_level
@@ -150,7 +150,7 @@ impl Cpu {
 
         // Debug stuff. This might not really belong here?
         let (debug_for, dump_here, break_here) =
-            self.interconnect.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
+            self.bus.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
         self.instr_counter += 1;
         if break_here {
             println!("{}", Colour::Red.paint(
@@ -749,7 +749,7 @@ impl Cpu {
 
     pub fn read_word(&mut self, virt_addr: u64, load_instr: bool) -> u32 {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
-        match self.interconnect.read_word(phys_addr as u32) {
+        match self.bus.read_word(phys_addr as u32) {
             Ok(res) => {
                 if !load_instr && self.debug_specs().matches_mem(phys_addr as u64, false) {
                     println!("Bus read:  {:#10x} :  {:#10x}", phys_addr, res);
@@ -770,7 +770,7 @@ impl Cpu {
         if self.debug_specs().matches_mem(phys_addr as u64, true) {
             println!("Bus write: {:#10x} <- {:#10x}", phys_addr, word);
         }
-        if let Err(desc) = self.interconnect.write_word(phys_addr as u32, word) {
+        if let Err(desc) = self.bus.write_word(phys_addr as u32, word) {
             bug!(self, "{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr);
         }
     }
@@ -830,7 +830,7 @@ impl Cpu {
     }
 
     pub fn debug_specs(&mut self) -> &mut DebugSpecList {
-        &mut self.interconnect.debug_specs
+        &mut self.bus.debug_specs
     }
 
     pub fn cp0_dump(&self) {

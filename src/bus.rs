@@ -299,7 +299,7 @@ impl Si {
     }
 }
 
-pub struct Interconnect {
+pub struct Bus {
     ram: Vec<u32>,
     spram: SpRam,
     rd: Rd,
@@ -316,11 +316,11 @@ pub struct Interconnect {
     pub interrupts: u32,
 }
 
-impl Interconnect {
+impl Bus {
     pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
                interface: InterfaceChannel,
-               debug: DebugSpecList) -> Interconnect {
-        Interconnect {
+               debug: DebugSpecList) -> Bus {
+        Bus {
             interrupts: 0,
             ram: vec![0; RAM_SIZE / 4],
             spram: SpRam { dmem: vec![0; 1024], imem: vec![0; 1024] },
@@ -717,9 +717,9 @@ impl Interconnect {
     }
 }
 
-impl fmt::Debug for Interconnect {
+impl fmt::Debug for Bus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Interconnect")
+        f.debug_struct("Bus")
          .field("rd", &self.rd)
          .field("sp", &self.sp)
          .field("dp", &self.dp)

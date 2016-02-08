@@ -1,6 +1,6 @@
 use cpu;
 use ui;
-use interconnect;
+use bus;
 use debug::DebugSpecList;
 
 #[derive(Debug)]
@@ -12,8 +12,7 @@ impl N64 {
     pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
                debug: DebugSpecList) -> N64 {
         let interface = ui::init_ui::<ui::minifb::MinifbInterface>();
-        let interconnect = interconnect::Interconnect::new(pif_rom, cart_rom,
-                                                           interface, debug);
+        let interconnect = bus::Bus::new(pif_rom, cart_rom, interface, debug);
         let cpu = cpu::Cpu::new(interconnect);
 
         N64 {
@@ -30,7 +29,7 @@ impl N64 {
             for _ in 0..100000 { /* TODO: tweak this */
                 self.cpu.run_instruction();
             }
-            self.cpu.interconnect.vi_cycle();
+            self.cpu.bus.vi_cycle();
         }
     }
 

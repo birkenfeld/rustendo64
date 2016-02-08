@@ -13,7 +13,7 @@ extern crate chan_signal;
 mod n64;
 mod cpu;
 mod rsp;
-mod interconnect;
+mod bus;
 mod mem_map;
 mod cic;
 mod util;
