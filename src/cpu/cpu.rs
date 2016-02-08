@@ -3,39 +3,39 @@ use std::u32;
 use std::collections::VecDeque;
 use ansi_term::Colour;
 
+use bus::Bus;
+use bus::mem_map::*;
+use cpu::cp0::Cp0;
 use cpu::instruction::*;
 use cpu::exception::*;
-use cpu::cp0::Cp0;
 use cpu::types::*;
-use bus::
-mem_map::*;
-use bus::Bus;
-use debug::{Debugger, DebugSpecList};
+use debug::Debugger;
 use util::{mult_64_64_unsigned, mult_64_64_signed};
 
 const NUM_GPR: usize = 32;
 
 pub struct Cpu {
+    // Debugging info
     instr_counter:      u32,
-    debug_instrs_until: u32,
     debug_instrs:       bool,
+    debug_instrs_until: u32,
+    last_instr:         u32,
 
+    // Exception handling stuff
+    in_branch_delay:    bool,
+    exc_pending:        VecDeque<Exception>,
+
+    // Subcomponents
+    cp0:        Cp0,
+
+    // Registers
     reg_gpr:    [u64; NUM_GPR],
     reg_fpr:    [[u8; 8]; NUM_GPR],
-
     reg_pc:     u64,
-    last_instr: u32,
-
     reg_hi:     u64,
     reg_lo:     u64,
     reg_llbit:  bool,
     reg_fcr31:  u32,
-
-    in_branch_delay: bool,
-    exc_pending: VecDeque<Exception>,
-
-    pub cp0: Cp0,
-    pub bus: Bus,
 }
 
 macro_rules! bug {
@@ -68,10 +68,9 @@ impl fmt::Debug for Cpu {
 pub const INDENT: &'static str = "                                       ";
 
 impl Cpu {
-    pub fn new(bus: Bus) -> Cpu {
+    pub fn new() -> Cpu {
         Cpu {
             cp0: Cp0::default(),
-            bus: bus,
 
             instr_counter:      0,
             debug_instrs_until: 0,
@@ -95,21 +94,19 @@ impl Cpu {
 
     pub fn power_on_reset(&mut self) {
         self.cp0.power_on_reset();
-        self.bus.power_on_reset();
-
         self.reg_pc = RESET_VECTOR;
     }
 
-    pub fn run_branch_delay_slot(&mut self) {
+    pub fn run_branch_delay_slot(&mut self, bus: &mut Bus) {
         if self.in_branch_delay {
             bug!(self, "Branching in branch delay slot -- check semantics!");
         }
         self.in_branch_delay = true;
-        self.run_instruction();
+        self.run_instruction(bus);
         self.in_branch_delay = false;
     }
 
-    pub fn run_instruction(&mut self) {
+    pub fn run_instruction(&mut self, bus: &mut Bus) {
         // Timer interrupt?
         self.cp0.reg_count = self.cp0.reg_count.wrapping_add(1);
         if self.cp0.reg_compare == self.cp0.reg_count {
@@ -122,7 +119,7 @@ impl Cpu {
         }
 
         // Transfer interrupts from interconnect
-        if self.bus.interrupts != 0 &&
+        if bus.interrupts != 0 &&
             self.cp0.reg_status.interrupts_enabled &&
             self.cp0.reg_status.interrupt_mask.external_interrupt[0] &&
             !self.cp0.reg_status.exception_level
@@ -146,12 +143,12 @@ impl Cpu {
         }
 
         let pc = self.reg_pc;
-        self.last_instr = self.read_word(pc, true);
+        self.last_instr = self.read_word(bus, pc, true);
         let instr = Instruction(self.last_instr);
 
         // Debug stuff. This might not really belong here?
         let (debug_for, dump_here, break_here) =
-            self.bus.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
+            bus.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
         self.instr_counter += 1;
         if break_here {
             println!("{}", Colour::Red.paint(
@@ -159,8 +156,8 @@ impl Cpu {
             if dump_here {
                 println!("{:?}", self);
             }
-            let mut debugger = Debugger::new();
-            debugger.run_loop(self);
+            let mut debugger = Debugger::new(self, bus);
+            debugger.run_loop();
         } else if dump_here {
             println!("{}", Colour::Red.paint(
                 format!("at: {:#10x}   {:?}", pc as u32, instr)));
@@ -178,22 +175,22 @@ impl Cpu {
         }
         dprintln!(self, "op: {:#10x}   {:?}", pc as u32, instr);
 
-        self.dispatch_instr(&instr);
+        self.dispatch_instr(bus, &instr);
 
         self.reg_pc += 4;
     }
 
     #[inline(always)]
-    fn dispatch_instr(&mut self, instr: &Instruction) {
+    fn dispatch_instr(&mut self, bus: &mut Bus, instr: &Instruction) {
         match instr.opcode() {
             LUI   => {
                 let val = instr.imm_sign_extended() << 16;
                 dprintln!(self, "{} {} <- {:#x}", INDENT, REG_NAMES[instr.rt()], val);
                 self.write_gpr(instr.rt(), val);
             }
-            LW    => self.mem_load (instr, false, |word: u32| word as i32 as u64),
-            LWU   => self.mem_load (instr, false, |word: u32| word as u64),
-            SW    => self.mem_store(instr, false, |data| data as u32),
+            LW    => self.mem_load (bus, instr, false, |word: u32| word as i32 as u64),
+            LWU   => self.mem_load (bus, instr, false, |word: u32| word as u64),
+            SW    => self.mem_store(bus, instr, false, |data| data as u32),
             // TODO: overflow exception
             ADDI  => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
             ADDIU => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
@@ -204,61 +201,61 @@ impl Cpu {
             SLTIU => self.binary_imm(instr, |rs| (rs < instr.imm_sign_extended()) as u64),
             J     => {
                 let addr = ((self.reg_pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
-                self.jump(addr, 0);
+                self.jump(bus, addr, 0);
             }
             JAL   => {
                 let addr = ((self.reg_pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
-                self.jump(addr, 31);
+                self.jump(bus, addr, 31);
             }
-            BEQ   => self.branch(instr, false, false, |cpu|
+            BEQ   => self.branch(bus, instr, false, false, |cpu|
                                  cpu.read_gpr(instr.rs()) == cpu.read_gpr(instr.rt())),
-            BEQL  => self.branch(instr, true, false, |cpu|
+            BEQL  => self.branch(bus, instr, true, false, |cpu|
                                  cpu.read_gpr(instr.rs()) == cpu.read_gpr(instr.rt())),
-            BNE   => self.branch(instr, false, false, |cpu|
+            BNE   => self.branch(bus, instr, false, false, |cpu|
                                  cpu.read_gpr(instr.rs()) != cpu.read_gpr(instr.rt())),
-            BNEL  => self.branch(instr, true, false, |cpu|
+            BNEL  => self.branch(bus, instr, true, false, |cpu|
                                  cpu.read_gpr(instr.rs()) != cpu.read_gpr(instr.rt())),
-            BGTZ  => self.branch(instr, false, false, |cpu| {
+            BGTZ  => self.branch(bus, instr, false, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v != 0 && (v >> 63) == 0 }),
-            BGTZL => self.branch(instr, true, false, |cpu| {
+            BGTZL => self.branch(bus, instr, true, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v != 0 && (v >> 63) == 0 }),
-            BLEZ  => self.branch(instr, false, false, |cpu| {
+            BLEZ  => self.branch(bus, instr, false, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
-            BLEZL => self.branch(instr, true, false, |cpu| {
+            BLEZL => self.branch(bus, instr, true, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
             // TODO: overflow exception
             DADDI => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
             DADDIU => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
-            LB    => self.mem_load (instr, false, |byte: u8| byte as i8 as u64),
-            LBU   => self.mem_load (instr, false, |byte: u8| byte as u64),
-            LH    => self.mem_load (instr, false, |hword: u16| hword as i16 as u64),
-            LHU   => self.mem_load (instr, false, |hword: u16| hword as u64),
-            LD    => self.mem_load (instr, false, |dword: u64| dword),
-            SB    => self.mem_store(instr, false, |data| data as u8),
-            SH    => self.mem_store(instr, false, |data| data as u16),
-            SD    => self.mem_store(instr, false, |data| data),
-            LWL   => self.mem_load_unaligned (instr, false, |data: u32| data as i32 as u64),
-            LWR   => self.mem_load_unaligned (instr, true,  |data: u32| data as i32 as u64),
-            LDL   => self.mem_load_unaligned (instr, false, |data: u64| data),
-            LDR   => self.mem_load_unaligned (instr, true,  |data: u64| data),
-            SWL   => self.mem_store_unaligned(instr, false, |mask, data: u32, reg|
+            LB    => self.mem_load (bus, instr, false, |byte: u8| byte as i8 as u64),
+            LBU   => self.mem_load (bus, instr, false, |byte: u8| byte as u64),
+            LH    => self.mem_load (bus, instr, false, |hword: u16| hword as i16 as u64),
+            LHU   => self.mem_load (bus, instr, false, |hword: u16| hword as u64),
+            LD    => self.mem_load (bus, instr, false, |dword: u64| dword),
+            SB    => self.mem_store(bus, instr, false, |data| data as u8),
+            SH    => self.mem_store(bus, instr, false, |data| data as u16),
+            SD    => self.mem_store(bus, instr, false, |data| data),
+            LWL   => self.mem_load_unaligned (bus, instr, false, |data: u32| data as i32 as u64),
+            LWR   => self.mem_load_unaligned (bus, instr, true,  |data: u32| data as i32 as u64),
+            LDL   => self.mem_load_unaligned (bus, instr, false, |data: u64| data),
+            LDR   => self.mem_load_unaligned (bus, instr, true,  |data: u64| data),
+            SWL   => self.mem_store_unaligned(bus, instr, false, |mask, data: u32, reg|
                                               ((data as u64 & !mask) | (reg & mask)) as u32),
-            SWR   => self.mem_store_unaligned(instr, true,  |mask, data: u32, reg|
+            SWR   => self.mem_store_unaligned(bus, instr, true,  |mask, data: u32, reg|
                                               ((data as u64 & !mask) | (reg & mask)) as u32),
-            SDL   => self.mem_store_unaligned(instr, false, |mask, data: u64, reg|
+            SDL   => self.mem_store_unaligned(bus, instr, false, |mask, data: u64, reg|
                                               (data & !mask) | (reg & mask)),
-            SDR   => self.mem_store_unaligned(instr, true,  |mask, data: u64, reg|
+            SDR   => self.mem_store_unaligned(bus, instr, true,  |mask, data: u64, reg|
                                               (data & !mask) | (reg & mask)),
-            LL    => self.mem_load (instr, true, |data: u32| data as i32 as u64),
-            LLD   => self.mem_load (instr, true, |data: u64| data),
-            SC    => self.mem_store(instr, true, |data| data as u32),
-            SCD   => self.mem_store(instr, true, |data| data),
+            LL    => self.mem_load (bus, instr, true, |data: u32| data as i32 as u64),
+            LLD   => self.mem_load (bus, instr, true, |data: u64| data),
+            SC    => self.mem_store(bus, instr, true, |data| data as u32),
+            SCD   => self.mem_store(bus, instr, true, |data| data),
             CACHE => {
                 // TODO: Check if we need to implement this
             }
             SPECIAL => match instr.special_op() {
-                JR   => { let addr = self.read_gpr(instr.rs()); self.jump(addr, 0); }
-                JALR => { let addr = self.read_gpr(instr.rs()); self.jump(addr, instr.rd()); }
+                JR   => { let addr = self.read_gpr(instr.rs()); self.jump(bus, addr, 0); }
+                JALR => { let addr = self.read_gpr(instr.rs()); self.jump(bus, addr, instr.rd()); }
                 // TODO: Overflow exception
                 ADD  => self.binary(instr, |rs, rt| (rs as i32).wrapping_add(rt as i32) as i32 as u64),
                 ADDU => self.binary(instr, |rs, rt| (rs as u32).wrapping_add(rt as u32) as i32 as u64),
@@ -317,14 +314,22 @@ impl Cpu {
                 _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
             },
             REGIMM => match instr.regimm_op() {
-                BGEZ    => self.branch(instr, false, false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
-                BGEZL   => self.branch(instr, true,  false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
-                BGEZAL  => self.branch(instr, false, true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
-                BGEZALL => self.branch(instr, true,  true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
-                BLTZ    => self.branch(instr, false, false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
-                BLTZL   => self.branch(instr, true,  false, |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
-                BLTZAL  => self.branch(instr, false, true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
-                BLTZALL => self.branch(instr, true,  true,  |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BGEZ    => self.branch(bus, instr, false, false,
+                                       |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BGEZL   => self.branch(bus, instr, true,  false,
+                                       |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BGEZAL  => self.branch(bus, instr, false, true,
+                                       |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BGEZALL => self.branch(bus, instr, true,  true,
+                                       |cpu| (cpu.read_gpr(instr.rs()) >> 63) == 0),
+                BLTZ    => self.branch(bus, instr, false, false,
+                                       |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BLTZL   => self.branch(bus, instr, true,  false,
+                                       |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BLTZAL  => self.branch(bus, instr, false, true,
+                                       |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
+                BLTZALL => self.branch(bus, instr, true,  true,
+                                       |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
                 // TEQI, TGEI, TGEIU, TLTI, TLTIU, TNEI
                 _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
             },
@@ -394,10 +399,10 @@ impl Cpu {
                     }
                 }
                 BC  => match instr.regimm_op() {
-                    BCF  => self.branch(instr, false, false, |cpu| cpu.reg_fcr31 & 0x80_0000 == 0),
-                    BCFL => self.branch(instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 == 0),
-                    BCT  => self.branch(instr, false, false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
-                    BCTL => self.branch(instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
+                    BCF  => self.branch(bus, instr, false, false, |cpu| cpu.reg_fcr31 & 0x80_0000 == 0),
+                    BCFL => self.branch(bus, instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 == 0),
+                    BCT  => self.branch(bus, instr, false, false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
+                    BCTL => self.branch(bus, instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
                     _    => bug!(self, "#UD: {:#b} -- {:?}", instr.0, instr)
                 },
                 _   => match instr.fp_op() {
@@ -455,15 +460,15 @@ impl Cpu {
                     _       => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
                 }
             },
-            LDC1 => self.mem_load_fp::<u64>(instr),
-            LWC1 => self.mem_load_fp::<u32>(instr),
-            SDC1 => self.mem_store_fp::<u64>(instr),
-            SWC1 => self.mem_store_fp::<u32>(instr),
+            LDC1 => self.mem_load_fp::<u64> (bus, instr),
+            LWC1 => self.mem_load_fp::<u32> (bus, instr),
+            SDC1 => self.mem_store_fp::<u64>(bus, instr),
+            SWC1 => self.mem_store_fp::<u32>(bus, instr),
             _    => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
         }
     }
 
-    fn mem_load<T: MemFmt, F>(&mut self, instr: &Instruction, linked: bool, func: F)
+    fn mem_load<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction, linked: bool, func: F)
         where F: Fn(T) -> u64
     {
         let addr = self.aligned_addr(instr, T::get_align());
@@ -471,13 +476,13 @@ impl Cpu {
             self.cp0.reg_lladdr = (self.virt_addr_to_phys_addr(addr) as u32) & !0xF;
             self.reg_llbit = true;
         }
-        let data = func(T::load_from(self, addr));
+        let data = func(T::load_from(self, bus, addr));
         dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
                   INDENT, REG_NAMES[instr.rt()], data, addr);
         self.write_gpr(instr.rt(), data);
     }
 
-    fn mem_store<T: MemFmt, F>(&mut self, instr: &Instruction, linked: bool, func: F)
+    fn mem_store<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction, linked: bool, func: F)
         where F: Fn(u64) -> T
     {
         let addr = self.aligned_addr(instr, T::get_align());
@@ -487,15 +492,15 @@ impl Cpu {
         if linked {
             let llbit = self.reg_llbit;
             if llbit {
-                T::store_to(self, addr, data);
+                T::store_to(self, bus, addr, data);
             }
             self.write_gpr(instr.rt(), llbit as u64);
         } else {
-            T::store_to(self, addr, data);
+            T::store_to(self, bus, addr, data);
         }
     }
 
-    fn mem_load_unaligned<T: MemFmt, F>(&mut self, instr: &Instruction, right: bool, func: F)
+    fn mem_load_unaligned<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction, right: bool, func: F)
         where F: Fn(T) -> u64
     {
         let addr = self.aligned_addr(&instr, 1);
@@ -503,7 +508,7 @@ impl Cpu {
         let amask = align - 1;
         let aligned_addr = addr & !amask;
         let offset = addr & amask;
-        let data = func(T::load_from(self, aligned_addr));
+        let data = func(T::load_from(self, bus, aligned_addr));
         let shift = if right { (amask - offset) << amask } else { offset << amask };
         let sh_data = if right { data >> shift } else { data << shift };
         let mask = if align == 8 { // XXX: can this be written easier?
@@ -519,7 +524,7 @@ impl Cpu {
         self.write_gpr(instr.rt(), reg);
     }
 
-    fn mem_store_unaligned<T: MemFmt, F>(&mut self, instr: &Instruction, right: bool, func: F)
+    fn mem_store_unaligned<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction, right: bool, func: F)
         where F: Fn(u64, T, u64) -> T
     {
         let addr = self.aligned_addr(&instr, 1);
@@ -531,12 +536,12 @@ impl Cpu {
         let shift = if right { (amask - offset) << amask } else { offset << amask };
         let sh_reg = if right { reg << shift } else { reg >> shift };
         let mask = if right { !0 << shift } else { !0 >> shift };
-        let orig_data = T::load_from(self, aligned_addr);
+        let orig_data = T::load_from(self, bus, aligned_addr);
         let data = func(mask, orig_data, sh_reg);
         dprintln!(self, "{}       {:#18x} :  mem @ {:#x}",
                   INDENT, orig_data, aligned_addr);
         dprintln!(self, "{}       {:#18x} -> mem @ {:#x}", INDENT, data, addr);
-        T::store_to(self, aligned_addr, data);
+        T::store_to(self, bus, aligned_addr, data);
     }
 
     fn binary_imm<F>(&mut self, instr: &Instruction, func: F)
@@ -581,7 +586,7 @@ impl Cpu {
         self.write_gpr(instr.rd(), res);
     }
 
-    fn jump(&mut self, addr: u64, link_reg: usize) {
+    fn jump(&mut self, bus: &mut Bus, addr: u64, link_reg: usize) {
         if addr & 0b11 != 0 {
             bug!(self, "Unaligned address in jump: {:#x}", addr);
         }
@@ -591,11 +596,12 @@ impl Cpu {
             dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[link_reg], return_addr);
         }
         self.reg_pc += 4;
-        self.run_branch_delay_slot();
+        // TODO: do this differently (now we execute 2 instructions for one run_instr)
+        self.run_branch_delay_slot(bus);
         self.reg_pc = addr - 4;  // compensate for += 4 at the end of run_instruction
     }
 
-    fn branch<P>(&mut self, instr: &Instruction, likely: bool, link: bool, mut predicate: P)
+    fn branch<P>(&mut self, bus: &mut Bus, instr: &Instruction, likely: bool, link: bool, mut predicate: P)
         where P: FnMut(&mut Self) -> bool
     {
         // Offset is supposed to be relative to the delay slot, but reg_pc points to
@@ -611,7 +617,7 @@ impl Cpu {
         // Run the delay slot
         self.reg_pc += 4;
         if take || !likely {
-            self.run_branch_delay_slot();
+            self.run_branch_delay_slot(bus);
             if take {
                 self.reg_pc = addr;
             } else {
@@ -717,19 +723,19 @@ impl Cpu {
         }
     }
 
-    fn mem_load_fp<T: FpFmt + MemFmt>(&mut self, instr: &Instruction) {
+    fn mem_load_fp<T: FpFmt + MemFmt>(&mut self, bus: &mut Bus, instr: &Instruction) {
         let addr = self.aligned_addr(&instr, T::get_align());
-        let data = T::load_from(self, addr);
+        let data = T::load_from(self, bus, addr);
         dprintln!(self, "{} $f{} <- {:16.8} :  mem @ {:#x}",
                   INDENT, instr.ft(), data, addr);
         T::write_fpr(&mut self.reg_fpr[instr.ft()], data);
     }
 
-    fn mem_store_fp<T: FpFmt + MemFmt>(&mut self, instr: &Instruction) {
+    fn mem_store_fp<T: FpFmt + MemFmt>(&mut self, bus: &mut Bus, instr: &Instruction) {
         let addr = self.aligned_addr(&instr, T::get_align());
         let data = T::read_fpr(&self.reg_fpr[instr.ft()]);
         dprintln!(self, "{}         {:16.8} -> mem @ {:#x}", INDENT, data, addr);
-        T::store_to(self, addr, data);
+        T::store_to(self, bus, addr, data);
     }
 
     fn reg_load_fp<T: FpFmt, F>(&mut self, instr: &Instruction, func: F)
@@ -748,11 +754,11 @@ impl Cpu {
         self.write_gpr(instr.rt(), func(value));
     }
 
-    pub fn read_word(&mut self, virt_addr: u64, load_instr: bool) -> u32 {
+    pub fn read_word(&mut self, bus: &mut Bus, virt_addr: u64, load_instr: bool) -> u32 {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
-        match self.bus.read_word(phys_addr as u32) {
+        match bus.read_word(phys_addr as u32) {
             Ok(res) => {
-                if !load_instr && self.debug_specs().matches_mem(phys_addr as u64, false) {
+                if !load_instr && bus.debug_specs.matches_mem(phys_addr as u64, false) {
                     println!("Bus read:  {:#10x} :  {:#10x}", phys_addr, res);
                 }
                 res
@@ -763,27 +769,27 @@ impl Cpu {
         }
     }
 
-    pub fn write_word(&mut self, virt_addr: u64, word: u32) {
+    pub fn write_word(&mut self, bus: &mut Bus, virt_addr: u64, word: u32) {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         if (phys_addr as u32) & !0xF == self.cp0.reg_lladdr {
             self.reg_llbit = false;
         }
-        if self.debug_specs().matches_mem(phys_addr as u64, true) {
+        if bus.debug_specs.matches_mem(phys_addr as u64, true) {
             println!("Bus write: {:#10x} <- {:#10x}", phys_addr, word);
         }
-        if let Err(desc) = self.bus.write_word(phys_addr as u32, word) {
+        if let Err(desc) = bus.write_word(phys_addr as u32, word) {
             bug!(self, "{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr);
         }
     }
 
-    pub fn read_dword(&mut self, virt_addr: u64) -> u64 {
-        (self.read_word(virt_addr, false) as u64) << 32 |
-        self.read_word(virt_addr + 4, false) as u64
+    pub fn read_dword(&mut self, bus: &mut Bus, virt_addr: u64) -> u64 {
+        (self.read_word(bus, virt_addr, false) as u64) << 32 |
+        self.read_word(bus, virt_addr + 4, false) as u64
     }
 
-    pub fn write_dword(&mut self, virt_addr: u64, dword: u64) {
-        self.write_word(virt_addr, (dword >> 32) as u32);
-        self.write_word(virt_addr + 4, dword as u32);
+    pub fn write_dword(&mut self, bus: &mut Bus, virt_addr: u64, dword: u64) {
+        self.write_word(bus, virt_addr, (dword >> 32) as u32);
+        self.write_word(bus, virt_addr + 4, dword as u32);
     }
 
     fn virt_addr_to_phys_addr(&self, virt_addr: u64) -> u64 {
@@ -828,10 +834,6 @@ impl Cpu {
 
     pub fn read_pc(&self) -> u64 {
         self.reg_pc
-    }
-
-    pub fn debug_specs(&mut self) -> &mut DebugSpecList {
-        &mut self.bus.debug_specs
     }
 
     pub fn cp0_dump(&self) {

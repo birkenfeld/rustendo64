@@ -19,6 +19,7 @@ use std::sync::atomic::Ordering;
 use rustyline::Editor;
 use nom::IResult;
 
+use bus::Bus;
 use cpu::Cpu;
 use cpu::instruction::*;
 use CAUGHT_SIGINT;
@@ -275,10 +276,12 @@ pub enum DebuggerResult {
 pub struct Debugger<'c> {
     histfile: Option<PathBuf>,
     editor: Editor<'c>,
+    cpu: &'c mut Cpu,
+    bus: &'c mut Bus,
 }
 
 impl<'c> Debugger<'c> {
-    pub fn new<'a>() -> Debugger<'a> {
+    pub fn new<'a>(cpu: &'a mut Cpu, bus: &'a mut Bus) -> Debugger<'a> {
         let mut editor = Editor::new();
         let histfile = env::home_dir().map(|p| p.join(".rustendo64dbg"));
         if let Some(ref fp) = histfile {
@@ -287,10 +290,12 @@ impl<'c> Debugger<'c> {
         Debugger {
             editor: editor,
             histfile: histfile,
+            cpu: cpu,
+            bus: bus,
         }
     }
 
-    pub fn run_loop(&mut self, cpu: &mut Cpu) {
+    pub fn run_loop(&mut self) {
         loop {
             match self.editor.readline("- ") {
                 Err(_) => {
@@ -301,7 +306,7 @@ impl<'c> Debugger<'c> {
                     if input.len() > 0 {
                         self.editor.add_history_entry(&input);
                     }
-                    if self.dispatch(cpu, input) {
+                    if self.dispatch(input) {
                         if let Some(ref fp) = self.histfile {
                             let _ = self.editor.save_history(fp);
                         }
@@ -312,7 +317,7 @@ impl<'c> Debugger<'c> {
         }
     }
 
-    fn dispatch(&mut self, cpu: &mut Cpu, input: String) -> bool {
+    fn dispatch(&mut self, input: String) -> bool {
         let parts = input.split_whitespace().collect::<Vec<_>>();
         let int_arg = |n| parts.get(n).and_then(|v|
                 match parsers::integer(v.as_bytes()) {
@@ -320,31 +325,31 @@ impl<'c> Debugger<'c> {
                     _                   => None
                 });
         if parts.len() == 0 {
-            return self.repeat_last(cpu);
+            return self.repeat_last();
         }
         match parts[0] {
             "q"  => { println!("Quit."); process::exit(1); },
-            "c"  => self.cont(cpu, int_arg(1)),
-            "s"  => self.step(cpu, int_arg(1)),
-            "b"  => self.add_break(cpu, int_arg(1)),
-            "bm" => self.add_mem_break(cpu, parts.get(1), int_arg(2)),
-            "bd" => self.del_break(cpu, int_arg(1)),
-            "bl" => self.list_breaks(cpu),
-            "r"  => self.read_mem(cpu, int_arg(1), int_arg(2)),
-            "w"  => self.write_mem(cpu, int_arg(1), int_arg(2)),
-            "sa" => self.add_spec(cpu, parts.get(1)),
-            "sl" => self.list_specs(cpu),
-            "l"  => self.list(cpu, int_arg(1), int_arg(2)),
-            "d"  => self.dump(cpu, true, false, false),
-            "dm" => self.dump(cpu, false, true, false),
-            "df" => self.dump(cpu, false, false, true),
-            "da" => self.dump(cpu, true, true, true),
+            "c"  => self.cont(int_arg(1)),
+            "s"  => self.step(int_arg(1)),
+            "b"  => self.add_break(int_arg(1)),
+            "bm" => self.add_mem_break(parts.get(1), int_arg(2)),
+            "bd" => self.del_break(int_arg(1)),
+            "bl" => self.list_breaks(),
+            "r"  => self.read_mem(int_arg(1), int_arg(2)),
+            "w"  => self.write_mem(int_arg(1), int_arg(2)),
+            "sa" => self.add_spec(parts.get(1)),
+            "sl" => self.list_specs(),
+            "l"  => self.list(int_arg(1), int_arg(2)),
+            "d"  => self.dump(true, false, false),
+            "dm" => self.dump(false, true, false),
+            "df" => self.dump(false, false, true),
+            "da" => self.dump(true, true, true),
             "?" | "h" => self.help(),
             _    => { println!("unrecognized debugger command"); false },
         }
     }
 
-    fn repeat_last(&mut self, cpu: &mut Cpu) -> bool {
+    fn repeat_last(&mut self) -> bool {
         let last_line = {
             let hist = self.editor.get_history();
             if hist.len() == 0 {
@@ -352,26 +357,26 @@ impl<'c> Debugger<'c> {
             }
             hist.get(hist.len() - 1).unwrap().to_owned()
         };
-        self.dispatch(cpu, last_line)
+        self.dispatch(last_line)
     }
 
-    fn cont(&self, cpu: &mut Cpu, until: Option<u64>) -> bool {
+    fn cont(&mut self, until: Option<u64>) -> bool {
         if let Some(addr) = until {
-            cpu.debug_specs().add_spec(DebugSpec::BreakAt(addr, true));
+            self.bus.debug_specs.add_spec(DebugSpec::BreakAt(addr, true));
         }
         true
     }
 
-    fn step(&self, cpu: &mut Cpu, n: Option<u64>) -> bool {
-        cpu.debug_specs().add_spec(DebugSpec::BreakIn(n.unwrap_or(1)));
+    fn step(&mut self, n: Option<u64>) -> bool {
+        self.bus.debug_specs.add_spec(DebugSpec::BreakIn(n.unwrap_or(1)));
         true
     }
 
-    fn read_mem(&self, cpu: &mut Cpu, addr: Option<u64>, n: Option<u64>) -> bool {
+    fn read_mem(&mut self, addr: Option<u64>, n: Option<u64>) -> bool {
         if let Some(addr) = addr {
             for i in 0..n.unwrap_or(1) {
                 // TODO: use a non-panicking version
-                let word = cpu.read_word(addr + 4*i, false);
+                let word = self.cpu.read_word(self.bus, addr + 4*i, false);
                 println!("{:#10x}  {:#10x}", addr + 4*i, word);
             }
         } else {
@@ -380,11 +385,11 @@ impl<'c> Debugger<'c> {
         false
     }
 
-    fn write_mem(&self, cpu: &mut Cpu, addr: Option<u64>, word: Option<u64>) -> bool {
+    fn write_mem(&mut self, addr: Option<u64>, word: Option<u64>) -> bool {
         if let Some(addr) = addr {
             if let Some(word) = word {
                 // TODO: use a non-panicking version
-                cpu.write_word(addr, word as u32);
+                self.cpu.write_word(self.bus, addr, word as u32);
             } else {
                 println!("Need a word to write.");
             }
@@ -394,9 +399,9 @@ impl<'c> Debugger<'c> {
         false
     }
 
-    fn add_break(&self, cpu: &mut Cpu, addr: Option<u64>) -> bool {
+    fn add_break(&mut self, addr: Option<u64>) -> bool {
         if let Some(addr) = addr {
-            cpu.debug_specs().add_spec(DebugSpec::BreakAt(addr, false));
+            self.bus.debug_specs.add_spec(DebugSpec::BreakAt(addr, false));
             println!("Added breakpoint.");
         } else {
             println!("Need an address to break at.");
@@ -404,7 +409,7 @@ impl<'c> Debugger<'c> {
         false
     }
 
-    fn add_mem_break(&self, cpu: &mut Cpu, rw: Option<&&str>, addr: Option<u64>) -> bool {
+    fn add_mem_break(&mut self, rw: Option<&&str>, addr: Option<u64>) -> bool {
         if let Some(rw) = rw {
             let acc = if *rw == "r" {
                 MemAccess(true, false)
@@ -417,7 +422,7 @@ impl<'c> Debugger<'c> {
                 MemAccess(true, true)
             };
             if let Some(addr) = addr {
-                cpu.debug_specs().add_spec(DebugSpec::MemBreak(acc, addr));
+                self.bus.debug_specs.add_spec(DebugSpec::MemBreak(acc, addr));
                 println!("Added breakpoint.");
             } else {
                 println!("Need an address to break at.");
@@ -428,11 +433,11 @@ impl<'c> Debugger<'c> {
         false
     }
 
-    fn del_break(&self, cpu: &mut Cpu, n: Option<u64>) -> bool {
+    fn del_break(&mut self, n: Option<u64>) -> bool {
         if let Some(n) = n {
             let mut i = 0;
             let mut removed = false;
-            cpu.debug_specs().specs().retain(|c| match *c {
+            self.bus.debug_specs.specs().retain(|c| match *c {
                 DebugSpec::BreakAt(_, false) |
                 DebugSpec::MemBreak(..) => {
                     i += 1;
@@ -456,10 +461,10 @@ impl<'c> Debugger<'c> {
         false
     }
 
-    fn list_breaks(&self, cpu: &mut Cpu) -> bool {
+    fn list_breaks(&mut self) -> bool {
         println!("#   type address      instruction/access");
         println!("--- ---- ------------ -------------------------");
-        let specs = cpu.debug_specs().specs().iter().filter_map(|spec| {
+        let specs = self.bus.debug_specs.specs().iter().filter_map(|spec| {
             match *spec {
                 DebugSpec::BreakAt(_, false) => Some(spec.clone()),
                 DebugSpec::MemBreak(..) => Some(spec.clone()),
@@ -470,7 +475,7 @@ impl<'c> Debugger<'c> {
             match spec {
                 DebugSpec::BreakAt(addr, _) =>
                     println!("{:3} pc   {:#10x}   {:?}", i, addr as u32,
-                             Instruction(cpu.read_word(addr, true))),
+                             Instruction(self.cpu.read_word(self.bus, addr, true))),
                 DebugSpec::MemBreak(ref acc, addr) =>
                     println!("{:3} mem  {:#10x}   {:?}", i, addr as u32, acc),
                 _ => {}
@@ -479,10 +484,10 @@ impl<'c> Debugger<'c> {
         false
     }
 
-    fn add_spec(&self, cpu: &mut Cpu, spec: Option<&&str>) -> bool {
+    fn add_spec(&mut self, spec: Option<&&str>) -> bool {
         if let Some(spec) = spec {
             if let Ok(spec) = DebugSpec::from_str(spec) {
-                cpu.debug_specs().add_spec(spec);
+                self.bus.debug_specs.add_spec(spec);
             } else {
                 println!("Debug spec {} not understood.", spec);
             }
@@ -492,8 +497,8 @@ impl<'c> Debugger<'c> {
         false
     }
 
-    fn list_specs(&self, cpu: &mut Cpu) -> bool {
-        for spec in cpu.debug_specs().specs().iter() {
+    fn list_specs(&mut self) -> bool {
+        for spec in self.bus.debug_specs.specs().iter() {
             if spec.is_dump() {
                 println!("{:?}", spec);
             }
@@ -502,26 +507,26 @@ impl<'c> Debugger<'c> {
         false
     }
 
-    fn dump(&self, cpu: &Cpu, gpr: bool, cp0: bool, cp1: bool) -> bool {
+    fn dump(&self, gpr: bool, cp0: bool, cp1: bool) -> bool {
         if gpr {
-            println!("CPU dump:\n{:?}", cpu);
+            println!("CPU dump:\n{:?}", self.cpu);
         }
         if cp0 {
             println!("CP0 dump:");
-            cpu.cp0_dump();
+            self.cpu.cp0_dump();
         }
         if cp1 {
             println!("FPU dump:");
-            cpu.cp1_dump();
+            self.cpu.cp1_dump();
         }
         false
     }
 
-    fn list(&self, cpu: &mut Cpu, n: Option<u64>, addr: Option<u64>) -> bool {
-        let base_addr = addr.unwrap_or(cpu.read_pc());
+    fn list(&mut self, n: Option<u64>, addr: Option<u64>) -> bool {
+        let base_addr = addr.unwrap_or(self.cpu.read_pc());
         for i in 0..n.unwrap_or(10) {
             let addr = base_addr + 4 * i;
-            let instr = Instruction(cpu.read_word(addr, true));
+            let instr = Instruction(self.cpu.read_word(self.bus, addr, true));
             println!(" {} {:#10x}   {:?}",
                      if i == 0 { "->" } else { "  " }, addr as u32, instr);
         }
