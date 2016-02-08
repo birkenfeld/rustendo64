@@ -3,11 +3,12 @@ use std::u32;
 use std::collections::VecDeque;
 use ansi_term::Colour;
 
-use super::instruction::*;
-use super::exception::*;
-use super::cp0::Cp0;
-use super::types::*;
-use mem_map::*;
+use cpu::instruction::*;
+use cpu::exception::*;
+use cpu::cp0::Cp0;
+use cpu::types::*;
+use bus::
+mem_map::*;
 use bus::Bus;
 use debug::{Debugger, DebugSpecList};
 use util::{mult_64_64_unsigned, mult_64_64_signed};

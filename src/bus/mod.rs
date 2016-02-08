@@ -1,11 +1,13 @@
+mod cic;
+pub mod mem_map;
+
 use std::cmp::min;
 use std::fmt;
 use std::mem::replace;
 
 use byteorder::{BigEndian, ByteOrder};
 
-use cic;
-use mem_map::*;
+use self::mem_map::*;
 use debug::DebugSpecList;
 use ui::{IfOutput, InterfaceChannel};
 //use rsp::Rsp;

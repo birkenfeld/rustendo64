@@ -1,5 +1,5 @@
-use super::cp0::InterruptMask;
-use mem_map::*;
+use cpu::cp0::InterruptMask;
+use bus::mem_map::*;
 
 #[derive(Debug)]
 pub struct Exception {

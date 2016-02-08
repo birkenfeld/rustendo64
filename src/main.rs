@@ -14,8 +14,6 @@ mod n64;
 mod cpu;
 mod rsp;
 mod bus;
-mod mem_map;
-mod cic;
 mod util;
 mod ui;
 mod debug;
