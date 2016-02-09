@@ -3,7 +3,7 @@ use byteorder::{BigEndian, ByteOrder};
 
 #[derive(Default, Debug)]
 pub struct Pi {
-    pub cart_rom: Vec<u8>,
+    pub cart_rom: Box<[u8]>,
     pub reg_dram_addr: u32,
     pub reg_cart_addr: u32,
     pub reg_rd_len: u32,

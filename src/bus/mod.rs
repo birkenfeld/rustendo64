@@ -22,11 +22,12 @@ use self::ri::{Ri, RdRegs};
 use ui::{IfOutput, InterfaceChannel};
 use rsp::{Sp, Dp, SpRam};
 
-const PIF_ROM_SIZE: usize = 2048;
-const RAM_SIZE: usize = 8 * 1024 * 1024;
+const PIF_ROM_SIZE: usize = 0x800;
+const SP_RAM_SIZE: usize = 0x1000;
+const RAM_SIZE: usize = 8 * 0x100000;
 
 pub struct Bus {
-    ram: Vec<u32>,
+    ram: Box<[u32]>,
     spram: SpRam,
     rd: RdRegs,
     sp: Sp,
@@ -42,12 +43,13 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
+    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>,
                interface: InterfaceChannel) -> Bus {
         Bus {
             interrupts: 0,
-            ram: vec![0; RAM_SIZE / 4],
-            spram: SpRam { dmem: vec![0; 1024], imem: vec![0; 1024] },
+            ram: vec![0; RAM_SIZE / 4].into_boxed_slice(),
+            spram: SpRam { dmem: vec![0; SP_RAM_SIZE / 4].into_boxed_slice(),
+                           imem: vec![0; SP_RAM_SIZE / 4].into_boxed_slice() },
             interface: interface,
             rd: RdRegs::default(),
             sp: Sp::default(),
@@ -57,7 +59,8 @@ impl Bus {
             ai: Ai::default(),
             pi: Pi { cart_rom: cart_rom, ..Pi::default() },
             ri: Ri::default(),
-            si: Si { pif_rom: pif_rom, pif_ram: vec![0; 64], ..Si::default() },
+            si: Si { pif_rom: pif_rom, pif_ram: vec![0; 64].into_boxed_slice(),
+                     ..Si::default() },
         }
     }
 

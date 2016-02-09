@@ -10,7 +10,7 @@ pub struct N64 {
 }
 
 impl N64 {
-    pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
+    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>,
                debug: DebugSpecList) -> N64 {
         let interface = ui::init_ui::<ui::minifb::MinifbInterface>();
         let bus = bus::Bus::new(pif_rom, cart_rom, interface);

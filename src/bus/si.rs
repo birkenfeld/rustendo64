@@ -2,8 +2,8 @@ use byteorder::{BigEndian, ByteOrder};
 
 #[derive(Default, Debug)]
 pub struct Si {
-    pub pif_rom:       Vec<u8>,
-    pub pif_ram:       Vec<u8>,
+    pub pif_rom:       Box<[u8]>,
+    pub pif_ram:       Box<[u8]>,
     pub pif_status:    u32,
     pub reg_dram_addr: u32,
     pub reg_status:    u32,

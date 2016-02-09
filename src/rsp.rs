@@ -10,8 +10,8 @@ impl Rsp {
 
 #[derive(Default)]
 pub struct SpRam {
-    pub dmem: Vec<u32>,
-    pub imem: Vec<u32>,
+    pub dmem: Box<[u32]>,
+    pub imem: Box<[u32]>,
 }
 
 #[derive(Default, Debug)]
