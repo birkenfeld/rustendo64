@@ -4,6 +4,7 @@ use byteorder::{BigEndian, ByteOrder};
 use bus::cic;
 use bus::mi;
 use bus::mem_map::*;
+use util::bit_set;
 
 #[derive(Default, Debug)]
 pub struct Pi {
@@ -55,13 +56,15 @@ impl Pi {
             PI_REG_RD_LEN          => self.reg_rd_len = word & 0xff_ffff,
             PI_REG_WR_LEN          => {
                 self.dma_read(ram, word);
-                mi.set_interrupt(mi::INTR_PI);
+                mi.set_interrupt(mi::Intr::PI);
             },
             PI_REG_STATUS          => {
-                if word & 0x2 != 0 {
-                    mi.clear_interrupt(mi::INTR_PI);
+                if bit_set(word, 0) {
+                    /* TODO: reset controller */
                 }
-                /* TODO */
+                if bit_set(word, 1) {
+                    mi.clear_interrupt(mi::Intr::PI);
+                }
             },
             PI_REG_BSD_DOM1_LAT    => self.reg_bsd_dom1_lat = word & 0xff,
             PI_REG_BSD_DOM1_PWD    => self.reg_bsd_dom1_pwd = word & 0xff,

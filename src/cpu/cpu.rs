@@ -468,8 +468,8 @@ impl Cpu {
         }
     }
 
-    fn mem_load<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction, linked: bool, func: F)
-        where F: Fn(T) -> u64
+    fn mem_load<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction,
+                              linked: bool, func: F) where F: Fn(T) -> u64
     {
         let addr = self.aligned_addr(instr, T::get_align());
         if linked {
@@ -482,8 +482,8 @@ impl Cpu {
         self.write_gpr(instr.rt(), data);
     }
 
-    fn mem_store<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction, linked: bool, func: F)
-        where F: Fn(u64) -> T
+    fn mem_store<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction,
+                               linked: bool, func: F) where F: Fn(u64) -> T
     {
         let addr = self.aligned_addr(instr, T::get_align());
         let data = self.read_gpr(instr.rt());
@@ -500,8 +500,8 @@ impl Cpu {
         }
     }
 
-    fn mem_load_unaligned<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction, right: bool, func: F)
-        where F: Fn(T) -> u64
+    fn mem_load_unaligned<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction,
+                                        right: bool, func: F) where F: Fn(T) -> u64
     {
         let addr = self.aligned_addr(&instr, 1);
         let align = T::get_align();
@@ -524,8 +524,8 @@ impl Cpu {
         self.write_gpr(instr.rt(), reg);
     }
 
-    fn mem_store_unaligned<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction, right: bool, func: F)
-        where F: Fn(u64, T, u64) -> T
+    fn mem_store_unaligned<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction,
+                                         right: bool, func: F) where F: Fn(u64, T, u64) -> T
     {
         let addr = self.aligned_addr(&instr, 1);
         let align = T::get_align();
@@ -548,7 +548,8 @@ impl Cpu {
         where F: Fn(u64) -> u64
     {
         let res = func(self.read_gpr(instr.rs()));
-        dprintln!(self, "{} {} :  {:#18x}", INDENT, REG_NAMES[instr.rs()], self.read_gpr(instr.rs()));
+        dprintln!(self, "{} {} :  {:#18x}", INDENT, REG_NAMES[instr.rs()],
+                  self.read_gpr(instr.rs()));
         dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[instr.rt()], res);
         self.write_gpr(instr.rt(), res);
     }

@@ -1,3 +1,5 @@
+use util::bit_set;
+
 #[derive(Debug, Default)]
 pub struct RegStatus {
     // CU
@@ -44,27 +46,27 @@ impl From<u32> for RegStatus {
     fn from(value: u32) -> Self {
         RegStatus {
             coprocessor_usability: [
-                (value & (1 << 28)) != 0,
-                (value & (1 << 29)) != 0,
-                (value & (1 << 30)) != 0,
-                (value & (1 << 31)) != 0],
+                bit_set(value, 28),
+                bit_set(value, 29),
+                bit_set(value, 30),
+                bit_set(value, 31)],
 
-            low_power:                        (value & (1 << 27)) != 0,
-            additional_fp_regs:               (value & (1 << 26)) != 0,
-            reverse_endian:                   (value & (1 << 25)) != 0,
+            low_power:                        bit_set(value, 27),
+            additional_fp_regs:               bit_set(value, 26),
+            reverse_endian:                   bit_set(value, 25),
 
             diagnostic_status: value.into(),
             interrupt_mask: value.into(),
 
-            kernel_mode_64bit_addressing:     (value & (1 <<  7)) != 0,
-            supervisor_mode_64bit_addressing: (value & (1 <<  6)) != 0,
-            user_mode_64bit_addressing:       (value & (1 <<  5)) != 0,
+            kernel_mode_64bit_addressing:     bit_set(value,  7),
+            supervisor_mode_64bit_addressing: bit_set(value,  6),
+            user_mode_64bit_addressing:       bit_set(value,  5),
 
             mode: value.into(),
 
-            error_level:                      (value & (1 <<  2)) != 0,
-            exception_level:                  (value & (1 <<  1)) != 0,
-            interrupts_enabled:               (value & (1 <<  0)) != 0
+            error_level:                      bit_set(value,  2),
+            exception_level:                  bit_set(value,  1),
+            interrupts_enabled:               bit_set(value,  0)
         }
     }
 }
@@ -125,13 +127,13 @@ struct DiagnosticStatus {
 impl From<u32> for DiagnosticStatus {
     fn from(value: u32) -> Self {
         DiagnosticStatus {
-            instruction_trace_support:  (value & (1 << 24)) != 0,
+            instruction_trace_support:  bit_set(value, 24),
 
             exception_vector_location:  value.into(),
 
-            tlb_shutdown:               (value & (1 << 21)) != 0,
-            soft_reset_or_nmi_occurred: (value & (1 << 20)) != 0,
-            condition_bit:              (value & (1 << 18)) != 0
+            tlb_shutdown:               bit_set(value, 21),
+            soft_reset_or_nmi_occurred: bit_set(value, 20),
+            condition_bit:              bit_set(value, 18)
         }
     }
 }
@@ -173,18 +175,18 @@ pub struct InterruptMask {
 impl From<u32> for InterruptMask {
     fn from(value: u32) -> Self {
         InterruptMask {
-            timer_interrupt: (value & (1 << 15)) != 0,
+            timer_interrupt: bit_set(value, 15),
 
             external_interrupt: [
-                (value & (1 << 10)) != 0,
-                (value & (1 << 11)) != 0,
-                (value & (1 << 12)) != 0,
-                (value & (1 << 13)) != 0,
-                (value & (1 << 14)) != 0],
+                bit_set(value, 10),
+                bit_set(value, 11),
+                bit_set(value, 12),
+                bit_set(value, 13),
+                bit_set(value, 14)],
 
             software_interrupt: [
-                (value & (1 <<  8)) != 0,
-                (value & (1 <<  9)) != 0]
+                bit_set(value,  8),
+                bit_set(value,  9)]
         }
     }
 }

@@ -70,7 +70,7 @@ impl Vi {
             },
             VI_REG_V_INTR   => self.reg_intr = word & 0x3ff,
             VI_REG_CURRENT  => {
-                mi.clear_interrupt(mi::INTR_VI);
+                mi.clear_interrupt(mi::Intr::VI);
             },
             VI_REG_BURST    => self.reg_burst = word & 0x3fff_ffff,
             VI_REG_V_SYNC   => self.reg_v_sync = word & 0x3ff,

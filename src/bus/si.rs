@@ -38,16 +38,16 @@ impl Si {
             SI_REG_PIF_ADDR_RD64B  => {
                 self.dma_read(ram, interface.get_input_state());
                 self.reg_status |= 0x1000;
-                mi.set_interrupt(mi::INTR_SI);
+                mi.set_interrupt(mi::Intr::SI);
             },
             SI_REG_PIF_ADDR_WR64B  => {
                 self.dma_write(ram);
                 self.reg_status |= 0x1000;
-                mi.set_interrupt(mi::INTR_SI);
+                mi.set_interrupt(mi::Intr::SI);
             },
             SI_REG_STATUS          => {
                 self.reg_status &= !0x1000;
-                mi.clear_interrupt(mi::INTR_SI);
+                mi.clear_interrupt(mi::Intr::SI);
             },
             _ => return Err("Unsupported SI register")
         })
@@ -77,7 +77,7 @@ impl Si {
         let rel_addr = (addr - PIF_RAM_START) as usize;
         BigEndian::write_u32(&mut self.pif_ram[rel_addr..], word);
         self.reg_status |= 0x1000;
-        mi.set_interrupt(mi::INTR_SI);
+        mi.set_interrupt(mi::Intr::SI);
         Ok(())
     }
 

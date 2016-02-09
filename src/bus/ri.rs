@@ -85,7 +85,7 @@ impl Ri {
             RI_REG_SELECT        => self.reg_select = word & 0x3f,
             RI_REG_REFRESH       => self.reg_refresh = word & 0x7_ffff,
             RI_REG_LATENCY       => self.reg_latency = word & 0xf,
-            RI_REG_WERROR        => { /* TODO */ },
+            RI_REG_WERROR        => self.reg_rerror = 0,
             _ => return Err("Unsupported RI register"),
         })
     }

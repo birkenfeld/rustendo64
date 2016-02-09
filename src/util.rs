@@ -46,3 +46,28 @@ pub fn mult_64_64_signed(a: u64, b: u64) -> (u64, u64) {
     let lo = (ll & 0xFFFF_FFFF).wrapping_add(mm << 32);
     (lo as u64, hi as u64)
 }
+
+#[inline]
+pub fn bit_set(value: u32, bit: u32) -> bool {
+    value & (1 << bit) != 0
+}
+
+#[inline]
+pub fn set_bit(target: &mut u32, bit: u32) {
+    *target |= 1 << bit;
+}
+
+#[inline]
+pub fn clear_bit(target: &mut u32, bit: u32) {
+    *target &= !(1 << bit);
+}
+
+#[inline]
+pub fn clear_or_set_bit(target: &mut u32, bit: u32,
+                        value: u32, clear_bit: u32, set_bit: u32) {
+    if value & (1 << clear_bit) != 0 {
+        *target &= !(1 << bit);
+    } else if value & (1 << set_bit) != 0 {
+        *target |= 1 << bit;
+    }
+}

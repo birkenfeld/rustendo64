@@ -133,7 +133,7 @@ impl Bus {
     pub fn vi_cycle(&mut self) {
         self.interface.send(IfOutput::Update(
             self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
-        self.mi.set_interrupt(mi::INTR_VI);
+        self.mi.set_interrupt(mi::Intr::VI);
     }
 
     pub fn has_interrupt(&self) -> bool {

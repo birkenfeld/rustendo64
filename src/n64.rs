@@ -1,6 +1,6 @@
-use cpu;
 use ui;
 use bus;
+use cpu;
 use debug::DebugSpecList;
 
 #[derive(Debug)]

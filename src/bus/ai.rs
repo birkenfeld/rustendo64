@@ -27,7 +27,7 @@ impl Ai {
             AI_REG_LEN        => self.reg_len = word & 0x3_ffff,
             AI_REG_CONTROL    => self.reg_control = word & 0x1,
             AI_REG_STATUS     => {
-                mi.clear_interrupt(mi::INTR_AI);
+                mi.clear_interrupt(mi::Intr::AI);
             },
             AI_REG_DACRATE    => self.reg_dacrate = word & 0x3fff,
             AI_REG_BITRATE    => self.reg_bitrate = word & 0xf,

@@ -1,12 +1,13 @@
-#[derive(Default)]
-pub struct Rsp;
-
 use std::mem;
 
 use bus::mem_map::*;
 use bus::mi;
+use util::{bit_set, clear_or_set_bit, clear_bit};
 
 const SP_RAM_SIZE: usize = 0x1000;
+
+#[derive(Default)]
+pub struct Rsp;
 
 impl Rsp {
     // TODO: Read general regs
@@ -78,16 +79,29 @@ impl Sp {
             SP_REG_RD_LEN     => self.reg_rd_len = word,
             SP_REG_WR_LEN     => self.reg_wr_len = word,
             SP_REG_STATUS     => {
-                if word & 0x1 != 0 {
+                if bit_set(word, 0) {
                     println!("Would start RSP");
                 }
-                if word & 0x8 != 0 {
-                    mi.clear_interrupt(mi::INTR_SP);
+                // halt
+                clear_or_set_bit(&mut self.reg_status, 0, word, 0, 1);
+                if bit_set(word, 2) {
+                    clear_bit(&mut self.reg_status, 1);
                 }
-                if word & 0x10 != 0 {
-                    mi.set_interrupt(mi::INTR_SP);
+                if bit_set(word, 3) {
+                    mi.clear_interrupt(mi::Intr::SP);
                 }
-                /* TODO */
+                if bit_set(word, 4) {
+                    mi.set_interrupt(mi::Intr::SP);
+                }
+                // single step
+                clear_or_set_bit(&mut self.reg_status, 5, word, 5, 6);
+                // interrupt on break
+                clear_or_set_bit(&mut self.reg_status, 6, word, 7, 8);
+                // signals
+                for i in 7..15 {
+                    clear_or_set_bit(&mut self.reg_status, i, word,
+                                     2*i - 5, 2*i - 4);
+                }
             }
             SP_REG_SEMAPHORE  => self.reg_semaphore = 0,
             SP_REG_PC         => self.reg_pc = word & 0xfff,
@@ -157,7 +171,23 @@ impl Dp {
         Ok(match addr {
             DPC_REG_DMA_START      => self.reg_start = word & 0xff_ffff,
             DPC_REG_DMA_END        => self.reg_end = word & 0xff_ffff,
-            DPC_REG_STATUS         => { /* TODO */ },
+            DPC_REG_STATUS         => {
+                clear_or_set_bit(&mut self.reg_status, 0, word, 0, 1);
+                clear_or_set_bit(&mut self.reg_status, 1, word, 2, 3);
+                clear_or_set_bit(&mut self.reg_status, 2, word, 4, 5);
+                if bit_set(word, 6) {
+                    self.reg_tmem = 0;
+                }
+                if bit_set(word, 7) {
+                    self.reg_pipebusy = 0;
+                }
+                if bit_set(word, 8) {
+                    /* TODO */
+                }
+                if bit_set(word, 9) {
+                    self.reg_clock = 0;
+                }
+            },
             DPS_REG_TBIST          => self.reg_tbist = word & 0x7,
             DPS_REG_TEST_MODE      => self.reg_test_mode = word & 0x1,
             DPS_REG_BUFTEST_ADDR   => self.reg_buftest_addr = word & 0x7f,

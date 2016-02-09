@@ -1,4 +1,5 @@
 use super::reg_status::InterruptMask;
+use util::bit_set;
 
 #[derive(Debug, Default)]
 pub struct RegCause {
@@ -18,7 +19,7 @@ pub struct RegCause {
 impl From<u32> for RegCause {
     fn from(value: u32) -> Self {
         RegCause {
-            exc_in_delay_slot:   value & (1 << 31) != 0,
+            exc_in_delay_slot:   bit_set(value, 31),
             coprocessor:         (value >> 28) as u8 & 0b11,
             interrupts_pending:  value.into(),
             exception_code:      (value >> 2) as u8 & 0b11111,

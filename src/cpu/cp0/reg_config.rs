@@ -1,3 +1,5 @@
+use util::bit_set;
+
 #[derive(Debug, Default)]
 pub struct RegConfig {
     // EP
@@ -24,7 +26,7 @@ impl From<u32> for RegConfig {
 
             endianness: value.into(),
 
-            cu: (value & (1 << 3)) != 0,
+            cu: bit_set(value, 3),
             kseg0_cache_enabled: value & 0b111 != 0b010
         }
     }
