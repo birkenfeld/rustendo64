@@ -119,7 +119,7 @@ impl Cpu {
         }
 
         // Transfer interrupts from interconnect
-        if bus.interrupts != 0 &&
+        if bus.has_interrupt() &&
             self.cp0.reg_status.interrupts_enabled &&
             self.cp0.reg_status.interrupt_mask.external_interrupt[0] &&
             !self.cp0.reg_status.exception_level

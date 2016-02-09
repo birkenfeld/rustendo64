@@ -1,22 +1,23 @@
-use ui::InterfaceChannel;
-use ui::IfOutput;
+use bus::mi;
+use bus::mem_map::*;
+use ui::{InterfaceChannel, IfOutput};
 
 #[derive(Default, Debug)]
 pub struct Vi {
-    pub reg_status:  u32,
-    pub reg_origin:  u32,
-    pub reg_width:   u32,
-    pub reg_intr:    u32,
-    pub reg_current: u32,
-    pub reg_burst:   u32,
-    pub reg_v_sync:  u32,
-    pub reg_h_sync:  u32,
-    pub reg_leap:    u32,
-    pub reg_h_start: u32,
-    pub reg_v_start: u32,
-    pub reg_v_burst: u32,
-    pub reg_x_scale: u32,
-    pub reg_y_scale: u32,
+    reg_status:      u32,
+    reg_origin:      u32,
+    reg_width:       u32,
+    reg_intr:        u32,
+    reg_current:     u32,
+    reg_burst:       u32,
+    reg_v_sync:      u32,
+    reg_h_sync:      u32,
+    reg_leap:        u32,
+    reg_h_start:     u32,
+    reg_v_start:     u32,
+    reg_v_burst:     u32,
+    reg_x_scale:     u32,
+    reg_y_scale:     u32,
 
     frame_width:     usize,
     frame_height:    usize,
@@ -26,8 +27,76 @@ pub struct Vi {
     pub vram_end:    usize,
 }
 
-
 impl Vi {
+    pub fn read_reg(&mut self, addr: u32) -> Result<u32, &'static str> {
+        Ok(match addr {
+            VI_REG_STATUS   => 0, // self.vi.reg_status,
+            VI_REG_ORIGIN   => self.reg_origin,
+            VI_REG_H_WIDTH  => self.reg_width,
+            VI_REG_V_INTR   => self.reg_intr,
+            VI_REG_CURRENT  => {
+                // TODO
+                self.reg_current = (self.reg_current + 1) % 525;
+                self.reg_current
+            },
+            VI_REG_BURST    => self.reg_burst,
+            VI_REG_V_SYNC   => self.reg_v_sync,
+            VI_REG_H_SYNC   => self.reg_h_sync,
+            VI_REG_LEAP     => self.reg_leap,
+            VI_REG_H_START  => self.reg_h_start,
+            VI_REG_V_START  => self.reg_v_start,
+            VI_REG_V_BURST  => self.reg_v_burst,
+            VI_REG_X_SCALE  => self.reg_x_scale,
+            VI_REG_Y_SCALE  => self.reg_y_scale,
+            _ => return Err("Unsupported VI register")
+        })
+    }
+
+    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi,
+                     interface: &mut InterfaceChannel) -> Result<(), &'static str> {
+        Ok(match addr {
+            VI_REG_STATUS   => {
+                self.reg_status = word & 0xffff;
+                self.update(interface);
+            },
+            VI_REG_ORIGIN   => {
+                self.reg_origin = word & 0xff_ffff;  // only 24 bits
+                // println!("VRAM at {:#x}", word);
+                self.update_vram();
+            },
+            VI_REG_H_WIDTH  => {
+                self.reg_width = word & 0xfff;
+                self.update(interface);
+            },
+            VI_REG_V_INTR   => self.reg_intr = word & 0x3ff,
+            VI_REG_CURRENT  => {
+                mi.clear_interrupt(mi::INTR_VI);
+            },
+            VI_REG_BURST    => self.reg_burst = word & 0x3fff_ffff,
+            VI_REG_V_SYNC   => self.reg_v_sync = word & 0x3ff,
+            VI_REG_H_SYNC   => self.reg_h_sync = word & 0x1f_ffff,
+            VI_REG_LEAP     => self.reg_leap = word & 0xfff_ffff,
+            VI_REG_H_START  => {
+                self.reg_h_start = word & 0x3ff_ffff;
+                self.update(interface);
+            },
+            VI_REG_V_START  => {
+                self.reg_v_start = word & 0x3ff_ffff;
+                self.update(interface);
+            },
+            VI_REG_V_BURST  => self.reg_v_burst = word & 0x3ff_ffff,
+            VI_REG_X_SCALE  => {
+                self.reg_x_scale = word & 0xfff_ffff;
+                self.update(interface);
+            },
+            VI_REG_Y_SCALE  => {
+                self.reg_y_scale = word & 0xfff_ffff;
+                self.update(interface);
+            },
+            _ => return Err("Unsupported VI register")
+        })
+    }
+
     pub fn update(&mut self, interface: &mut InterfaceChannel) {
         let hstart = (self.reg_h_start >> 16) & 0x3ff;
         let vstart = (self.reg_v_start >> 16) & 0x3ff;

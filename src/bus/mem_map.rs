@@ -9,11 +9,21 @@ macro_rules! define_consts {
 }
 
 macro_rules! define_registers {
-    ($base:expr, $name:ident, $($nm:tt),+) => {
-        pub const $name: u32 = $base;
-        define_registers!($base + 4, $($nm),+);
+    (first: $basename:ident = $base:expr, last: $lastname:ident, $($names:tt),+) => {
+        pub const $basename: u32 = $base;
+        define_registers!(INNER $lastname, $base, $($names),+);
     };
-    ($base:expr, $name:ident) => { pub const $name: u32 = $base; };
+    (INNER $lastname:ident, $addr:expr, (skip to $newaddr:expr), $($more:tt),+) => {
+        define_registers!(INNER $lastname, $newaddr, $($more),+);
+    };
+    (INNER $lastname:ident, $addr:expr, $name:ident, $($more:tt),+) => {
+        pub const $name: u32 = $addr;
+        define_registers!(INNER $lastname, $addr + 4, $($more),+);
+    };
+    (INNER $lastname:ident, $addr:expr, $name:ident) => {
+        pub const $name: u32 = $addr;
+        pub const $lastname: u32 = $addr + 3;
+    };
 }
 
 // Basic processor constants ---------------------------------------------------
@@ -32,7 +42,8 @@ define_consts!(
 );
 
 define_registers!(
-    0x03f0_0000,
+    first: RDRAM_REG_START = 0x03f0_0000,
+    last:  RDRAM_REG_END,
     RDRAM_REG_CONFIG,
     RDRAM_REG_DEVICE_ID,
     RDRAM_REG_DELAY,
@@ -46,7 +57,8 @@ define_registers!(
 );
 
 define_registers!(
-    0x0470_0000,
+    first: RI_REG_START = 0x0470_0000,
+    last:  RI_REG_END,
     RI_REG_MODE,
     RI_REG_CONFIG,
     RI_REG_CURRENT_LOAD,  // write only
@@ -67,7 +79,8 @@ define_consts!(
 );
 
 define_registers!(
-    0x0404_0000,
+    first: SP_REG_START = 0x0404_0000,
+    last:  SP_REG_END,
     SP_REG_MEM_ADDR,
     SP_REG_DRAM_ADDR,
     SP_REG_RD_LEN,
@@ -75,11 +88,8 @@ define_registers!(
     SP_REG_STATUS,
     SP_REG_DMA_FULL,  // read only
     SP_REG_DMA_BUSY,  // read only
-    SP_REG_SEMAPHORE
-);
-
-define_registers!(
-    0x0408_0000,
+    SP_REG_SEMAPHORE,
+    (skip to 0x0408_0000),
     SP_REG_PC,
     SP_REG_IBIST
 );
@@ -87,19 +97,17 @@ define_registers!(
 // RDP interface ---------------------------------------------------------------
 
 define_registers!(
-    0x0410_0000,
-    DPC_REG_START,
-    DPC_REG_END,
+    first: DP_REG_START = 0x0410_0000,
+    last:  DP_REG_END,
+    DPC_REG_DMA_START,
+    DPC_REG_DMA_END,
     DPC_REG_CURRENT,  // read only
     DPC_REG_STATUS,
     DPC_REG_CLOCK,    // read only
     DPC_REG_BUFBUSY,  // read only
     DPC_REG_PIPEBUSY, // read only
-    DPC_REG_TMEM      // read only
-);
-
-define_registers!(
-    0x0420_0000,
+    DPC_REG_TMEM,     // read only
+    (skip to 0x0420_0000),
     DPS_REG_TBIST,
     DPS_REG_TEST_MODE,
     DPS_REG_BUFTEST_ADDR,
@@ -109,7 +117,8 @@ define_registers!(
 // MIPS interface --------------------------------------------------------------
 
 define_registers!(
-    0x0430_0000,
+    first: MI_REG_START = 0x0430_0000,
+    last:  MI_REG_END,
     MI_REG_MODE,
     MI_REG_VERSION,   // read only
     MI_REG_INTR,      // read only
@@ -119,7 +128,8 @@ define_registers!(
 // Video interface -------------------------------------------------------------
 
 define_registers!(
-    0x0440_0000,
+    first: VI_REG_START = 0x0440_0000,
+    last:  VI_REG_END,
     VI_REG_STATUS,
     VI_REG_ORIGIN,
     VI_REG_H_WIDTH,
@@ -143,7 +153,8 @@ define_consts!(  // aliases
 // Audio interface -------------------------------------------------------------
 
 define_registers!(
-    0x0450_0000,
+    first: AI_REG_START = 0x0450_0000,
+    last:  AI_REG_END,
     AI_REG_DRAM_ADDR,
     AI_REG_LEN,
     AI_REG_CONTROL,   // write only
@@ -162,7 +173,8 @@ define_consts!(
 );
 
 define_registers!(
-    0x0460_0000,
+    first: PI_REG_START = 0x0460_0000,
+    last:  PI_REG_END,
     PI_REG_DRAM_ADDR,
     PI_REG_CART_ADDR,
     PI_REG_RD_LEN,
@@ -181,23 +193,23 @@ define_registers!(
 // Serial interface ------------------------------------------------------------
 
 define_registers!(
-    0x0480_0000,
+    first: SI_REG_START = 0x0480_0000,
+    last:  SI_REG_END,
     SI_REG_DRAM_ADDR,
     SI_REG_PIF_ADDR_RD64B,  // write only
-    _SI_REG_RESERVED1,
-    _SI_REG_RESERVED2,
+    (skip to 0x0480_0010),
     SI_REG_PIF_ADDR_WR64B,  // write only
-    _SI_REG_RESERVED3,
+    (skip to 0x0480_0018),
     SI_REG_STATUS
 );
 
 // Cartridge and disk drive ----------------------------------------------------
 
 define_consts!(
-    CART_START    = 0x1000_0000,
-    CART_END      = 0x1fbf_ffff,
-    DD_REG_START  = 0x0500_0500,
-    DD_REG_END    = 0x0500_054b,
-    DD_ROM_START  = 0x0600_0000,
-    DD_ROM_END    = 0x063f_ffff
+    CART_ROM_START = 0x1000_0000,
+    CART_ROM_END   = 0x1fbf_ffff,
+    DD_REG_START   = 0x0500_0500,
+    DD_REG_END     = 0x0500_054b,
+    DD_ROM_START   = 0x0600_0000,
+    DD_ROM_END     = 0x063f_ffff
 );

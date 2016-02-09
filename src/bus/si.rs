@@ -1,15 +1,86 @@
 use byteorder::{BigEndian, ByteOrder};
 
+use bus::mi;
+use bus::mem_map::*;
+use ui::InterfaceChannel;
+
 #[derive(Default, Debug)]
 pub struct Si {
-    pub pif_rom:       Box<[u8]>,
-    pub pif_ram:       Box<[u8]>,
-    pub pif_status:    u32,
-    pub reg_dram_addr: u32,
-    pub reg_status:    u32,
+    pif_rom:       Box<[u8]>,
+    pif_ram:       Box<[u8]>,
+    pif_status:    u32,
+    reg_dram_addr: u32,
+    reg_status:    u32,
 }
 
 impl Si {
+    pub fn new(pif_rom: Box<[u8]>) -> Si {
+        Si { pif_rom: pif_rom,
+             pif_ram: vec![0; 64].into_boxed_slice(),
+             ..Si::default() }
+    }
+
+    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
+        Ok(match addr {
+            SI_REG_DRAM_ADDR  => self.reg_dram_addr,
+            SI_REG_STATUS     => self.reg_status,
+            _ => return Err("Unsupported SI register")
+        })
+    }
+
+    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi,
+                     ram: &mut [u32], interface: &mut InterfaceChannel)
+                     -> Result<(), &'static str> {
+        Ok(match addr {
+            SI_REG_DRAM_ADDR       => {
+                self.reg_dram_addr = word & 0xff_ffff;
+            },
+            SI_REG_PIF_ADDR_RD64B  => {
+                self.dma_read(ram, interface.get_input_state());
+                self.reg_status |= 0x1000;
+                mi.set_interrupt(mi::INTR_SI);
+            },
+            SI_REG_PIF_ADDR_WR64B  => {
+                self.dma_write(ram);
+                self.reg_status |= 0x1000;
+                mi.set_interrupt(mi::INTR_SI);
+            },
+            SI_REG_STATUS          => {
+                self.reg_status &= !0x1000;
+                mi.clear_interrupt(mi::INTR_SI);
+            },
+            _ => return Err("Unsupported SI register")
+        })
+    }
+
+
+    pub fn read_pif_rom(&self, addr: u32) -> Result<u32, &'static str> {
+        let rel_addr = (addr - PIF_ROM_START) as usize;
+        Ok(BigEndian::read_u32(&self.pif_rom[rel_addr..]))
+    }
+
+    pub fn read_pif_ram(&mut self, addr: u32) -> Result<u32, &'static str> {
+        let rel_addr = (addr - PIF_RAM_START) as usize;
+        if rel_addr == 0x3c {
+            Ok(self.pif_status)
+        } else {
+            if rel_addr == 0x24 {
+                // hack to avoid looping at the end of the PIF rom
+                self.pif_status = 0x80;
+            }
+            Ok(BigEndian::read_u32(&self.pif_ram[rel_addr..]))
+        }
+    }
+
+    pub fn write_pif_ram(&mut self, addr: u32, word: u32, mi: &mut mi::Mi)
+                         -> Result<(), &'static str> {
+        let rel_addr = (addr - PIF_RAM_START) as usize;
+        BigEndian::write_u32(&mut self.pif_ram[rel_addr..], word);
+        self.reg_status |= 0x1000;
+        mi.set_interrupt(mi::INTR_SI);
+        Ok(())
+    }
+
     pub fn dma_read(&mut self, ram: &mut [u32], cstate: u32) {
         // transfer 64 bytes PIF ram -> main memory
         self.execute(cstate);
@@ -94,5 +165,9 @@ impl Si {
             }
         }
         None
+    }
+
+    pub fn set_cic_seed(&mut self, seed: u32) {
+        BigEndian::write_u32(&mut self.pif_ram[0x24..], seed);
     }
 }
