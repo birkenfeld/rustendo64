@@ -1,310 +1,34 @@
 mod cic;
+mod vi;
+mod si;
+mod pi;
+mod mi;
+mod ai;
+mod ri;
 pub mod mem_map;
 
-use std::cmp::min;
 use std::fmt;
 use std::mem::replace;
 
 use byteorder::{BigEndian, ByteOrder};
 
 use self::mem_map::*;
-use debug::DebugSpecList;
+use self::vi::Vi;
+use self::si::Si;
+use self::pi::Pi;
+use self::mi::Mi;
+use self::ai::Ai;
+use self::ri::{Ri, RdRegs};
 use ui::{IfOutput, InterfaceChannel};
-//use rsp::Rsp;
+use rsp::{Sp, Dp, SpRam};
 
 const PIF_ROM_SIZE: usize = 2048;
 const RAM_SIZE: usize = 8 * 1024 * 1024;
 
-#[derive(Default, Debug)]
-struct Rd {
-    reg_config: u32,
-    reg_device_id: u32,
-    reg_delay: u32,
-    reg_mode: u32,
-    reg_ref_interval: u32,
-    reg_ref_row: u32,
-    reg_ras_interval: u32,
-    reg_min_interval: u32,
-    reg_addr_select: u32,
-    reg_device_manuf: u32,
-}
-
-#[derive(Default)]
-struct SpRam {
-    dmem: Vec<u32>,
-    imem: Vec<u32>,
-}
-
-#[derive(Default, Debug)]
-struct Sp {
-    reg_mem_addr: u32,
-    reg_dram_addr: u32,
-    reg_rd_len: u32,
-    reg_wr_len: u32,
-    reg_status: u32,
-    reg_dma_full: u32,
-    reg_dma_busy: u32,
-    reg_semaphore: u32,
-    reg_pc: u32,
-    reg_ibist: u32,
-}
-
-#[derive(Default, Debug)]
-struct Dp {
-    // command regs
-    reg_start: u32,
-    reg_end: u32,
-    reg_current: u32,
-    reg_status: u32,
-    reg_clock: u32,
-    reg_bufbusy: u32,
-    reg_pipebusy: u32,
-    reg_tmem: u32,
-
-    // span regs
-    reg_tbist: u32,
-    reg_test_mode: u32,
-    reg_buftest_addr: u32,
-    reg_buftest_data: u32,
-}
-
-#[derive(Default, Debug)]
-struct Mi {
-    reg_mode: u32,
-    reg_version: u32,
-    reg_intr: u32,
-    reg_intr_mask: u32,
-}
-
-pub const MI_INTR_SP: u32 = 0x01;
-pub const MI_INTR_SI: u32 = 0x02;
-pub const MI_INTR_AI: u32 = 0x04;
-pub const MI_INTR_VI: u32 = 0x08;
-pub const MI_INTR_PI: u32 = 0x10;
-pub const MI_INTR_DP: u32 = 0x20;
-
-#[derive(Default, Debug)]
-struct Vi {
-    reg_status: u32,
-    reg_origin: u32,
-    reg_width: u32,
-    reg_intr: u32,
-    reg_current: u32,
-    reg_burst: u32,
-    reg_v_sync: u32,
-    reg_h_sync: u32,
-    reg_leap: u32,
-    reg_h_start: u32,
-    reg_v_start: u32,
-    reg_v_burst: u32,
-    reg_x_scale: u32,
-    reg_y_scale: u32,
-
-    frame_width: usize,
-    frame_height: usize,
-    frame_hskip: usize,
-    vram_start: usize,
-    vram_end: usize,
-    vram_pixelsize: usize,
-}
-
-impl Vi {
-    fn update(&mut self, interface: &mut InterfaceChannel) {
-        let hstart = (self.reg_h_start >> 16) & 0x3ff;
-        let vstart = (self.reg_v_start >> 16) & 0x3ff;
-        let hend   = self.reg_h_start & 0x3ff;
-        let vend   = self.reg_v_start & 0x3ff;
-        let hcoeff = (self.reg_x_scale & 0xfff) as f64 / (1 << 10) as f64;
-        let vcoeff = (self.reg_y_scale & 0xfff) as f64 / (1 << 10) as f64;
-        let width  = (hend - hstart) as f64 * hcoeff;
-        let height = ((vend - vstart) >> 1) as f64 * vcoeff;
-        // println!("{} {} {} {} {} {} {} {}",
-        //          hstart, vstart, hend, vend, hcoeff, vcoeff, width, height);
-        self.frame_width  = width as usize;
-        self.frame_height = height as usize;
-        self.frame_hskip  = self.reg_width as usize - self.frame_width;
-        self.vram_pixelsize = match self.reg_status & 0b11 {
-            0b00 => 0,
-            0b01 => panic!("using reserved video mode"),
-            0b10 => 2,
-            0b11 => 4,
-            _    => unreachable!()
-        };
-        self.update_vram();
-        // println!("Video: {}+{}x{}, {} bit color",
-        //          self.frame_hskip, self.frame_width, self.frame_height,
-        //          self.vram_pixelsize * 8);
-        // TODO: dont show skip
-        interface.send(IfOutput::SetMode(
-            self.frame_width + self.frame_hskip, self.frame_height,
-            self.vram_pixelsize));
-    }
-
-    fn update_vram(&mut self) {
-        self.vram_start = self.reg_origin as usize / 4;
-        self.vram_end   = self.vram_start +
-            (self.reg_width as usize) * self.frame_height *
-            self.vram_pixelsize / 4;
-    }
-}
-
-#[derive(Default, Debug)]
-struct Ai {
-    reg_dram_addr: u32,
-    reg_len: u32,
-    reg_control: u32,
-    reg_status: u32,
-    reg_dacrate: u32,
-    reg_bitrate: u32,
-}
-
-#[derive(Default, Debug)]
-struct Pi {
-    cart_rom: Vec<u8>,
-    reg_dram_addr: u32,
-    reg_cart_addr: u32,
-    reg_rd_len: u32,
-    reg_wr_len: u32,
-    reg_status: u32,
-    reg_bsd_dom1_lat: u32,
-    reg_bsd_dom1_pwd: u32,
-    reg_bsd_dom1_pgs: u32,
-    reg_bsd_dom1_rls: u32,
-    reg_bsd_dom2_lat: u32,
-    reg_bsd_dom2_pwd: u32,
-    reg_bsd_dom2_pgs: u32,
-    reg_bsd_dom2_rls: u32,
-}
-
-impl Pi {
-    fn dma_read(&mut self, ram: &mut [u32], word: u32) {
-        self.reg_wr_len = word & 0xff_ffff;
-        // DMA transfer ROM -> main memory
-        let ram_start = self.reg_dram_addr as usize / 4;
-        let rom_start = self.reg_cart_addr as usize - 0x1000_0000;
-        let length = (self.reg_wr_len + 1) as usize;
-        // Some ROMs read past the end of the file...
-        let length = min(length, self.cart_rom.len() - rom_start);
-        println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
-                 length, rom_start, ram_start);
-        for i in 0..length/4 {
-            ram[ram_start + i] =
-                BigEndian::read_u32(&self.cart_rom[rom_start + 4*i..]);
-        }
-    }
-}
-
-#[derive(Default, Debug)]
-struct Ri {
-    reg_mode: u32,
-    reg_config: u32,
-    reg_select: u32,
-    reg_refresh: u32,
-    reg_latency: u32,
-    reg_rerror: u32,
-}
-
-#[derive(Default, Debug)]
-struct Si {
-    pif_rom: Vec<u8>,
-    pif_ram: Vec<u8>,
-    pif_status: u32,
-    reg_dram_addr: u32,
-    reg_status: u32,
-}
-
-impl Si {
-    fn dma_read(&mut self, ram: &mut [u32], cstate: u32) {
-        // transfer 64 bytes PIF ram -> main memory
-        self.execute(cstate);
-        let ram_start = self.reg_dram_addr as usize / 4;
-        for i in 0..16 {
-            ram[ram_start + i] = BigEndian::read_u32(&self.pif_ram[4*i..]);
-        }
-        // println!("\nPIF read:");
-        // for i in 0..8 {
-        //     println!("  {:#10x} {:#10x}", ram[ram_start+2*i], ram[ram_start+2*i+1]);
-        // }
-    }
-
-    fn dma_write(&mut self, ram: &[u32]) {
-        // TODO: we should execute commands here too. But since we only
-        // implement commands that read state, executing on dma_read() is fine.
-        // transfer 64 bytes main memory -> PIF ram
-        let ram_start = self.reg_dram_addr as usize / 4;
-        // println!("\nPIF write:");
-        // for i in 0..8 {
-        //     println!("  {:#10x} {:#10x}", ram[ram_start+2*i], ram[ram_start+2*i+1]);
-        // }
-        for i in 0..16 {
-            BigEndian::write_u32(&mut self.pif_ram[4*i..], ram[ram_start + i]);
-        }
-    }
-
-    fn execute(&mut self, cstate: u32) {
-        // nothing to do? XXX: probably only checked on dma_write().
-        // if self.pif_ram[63] & 1 == 0 { return; }
-        let mut channel = 0;
-        let mut start = 0;
-        while start <= 60 {  // last possible byte for a command
-            let ntrans = self.pif_ram[start] as usize;
-            if ntrans == 0xfe { break; }  // signals end of commands
-            if ntrans >= 0x80 { start += 1; continue; }  // skip byte
-            channel += 1;
-            if channel > 6 { break; }  // reached max channels
-            if ntrans == 0 { start += 1; continue; }  // skip channel
-            let nrecv = self.pif_ram[start + 1] as usize;
-            if nrecv & 0xc0 != 0 { break; }  // remaining error
-            let end = start + 2 + ntrans + nrecv;
-            if end > 63 {
-                // not enough bytes left to read and write
-                break;
-            }
-            let cmdresult = {
-                let (input, output) = self.pif_ram[start + 2..end].split_at_mut(ntrans);
-                Si::do_command(channel, ntrans, nrecv, input, output, cstate)
-            };
-            if let Some(err) = cmdresult {
-                self.pif_ram[start + 1] |= err;
-            }
-            start = end;
-        }
-        self.pif_ram[63] = 0;  // commands executed
-    }
-
-    fn do_command(channel: u8, ntrans: usize, nrecv: usize, input: &[u8],
-                  output: &mut [u8], cstate: u32) -> Option<u8> {
-        if channel != 1 {
-            return Some(0x80);  // nothing connected
-        }
-        match input[0] {  // command
-            0 => {  // read status
-                if !(ntrans == 1 && nrecv == 3) {
-                    return Some(0x40);
-                }
-                // type: controller, nothing plugged in
-                output[0] = 0x05;
-                output[1] = 0x0;
-                output[2] = 0x02;
-            }
-            1 => {  // read controller
-                if !(ntrans == 1 && nrecv == 4) {
-                    return Some(0x40);
-                }
-                BigEndian::write_u32(output, cstate);
-            },
-            _ => {
-                return Some(0x80);
-            }
-        }
-        None
-    }
-}
-
 pub struct Bus {
     ram: Vec<u32>,
     spram: SpRam,
-    rd: Rd,
+    rd: RdRegs,
     sp: Sp,
     dp: Dp,
     mi: Mi,
@@ -314,21 +38,18 @@ pub struct Bus {
     ri: Ri,
     si: Si,
     interface: InterfaceChannel,
-    pub debug_specs: DebugSpecList,
     pub interrupts: u32,
 }
 
 impl Bus {
     pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
-               interface: InterfaceChannel,
-               debug: DebugSpecList) -> Bus {
+               interface: InterfaceChannel) -> Bus {
         Bus {
             interrupts: 0,
             ram: vec![0; RAM_SIZE / 4],
             spram: SpRam { dmem: vec![0; 1024], imem: vec![0; 1024] },
             interface: interface,
-            debug_specs: debug,
-            rd: Rd::default(),
+            rd: RdRegs::default(),
             sp: Sp::default(),
             dp: Dp::default(),
             mi: Mi::default(),
@@ -341,8 +62,9 @@ impl Bus {
     }
 
     pub fn power_on_reset(&mut self) {
+        // determine checksum seed and write to PIF ram
         if let Some(seed) = cic::get_cic_seed(&self.pi.cart_rom) {
-            BigEndian::write_u32(&mut self.si.pif_ram[0x07e4 - 0x7c0..], seed);
+            BigEndian::write_u32(&mut self.si.pif_ram[0x24..], seed);
         } else {
             println!("Warning: no CIC seed found for this ROM");
         }
@@ -350,6 +72,7 @@ impl Bus {
         self.sp.reg_status |= 0x1;
         // memory size
         self.write_word(0x3f0, 0x800000).unwrap();
+        // RDRAM interface configs
         self.ri.reg_mode = 0xE;
         self.ri.reg_config = 0x40;
         self.ri.reg_select = 0x14;
@@ -505,7 +228,7 @@ impl Bus {
                 let rel_addr = (addr - PIF_RAM_START) as usize;
                 BigEndian::write_u32(&mut self.si.pif_ram[rel_addr..], word);
                 self.si.reg_status |= 0x1000;
-                self.signal_interrupt(MI_INTR_SI);
+                self.signal_interrupt(mi::INTR_SI);
             },
             SP_DMEM_START ... SP_DMEM_END => {
                 self.spram.dmem[(addr - SP_DMEM_START) as usize / 4] = word;
@@ -541,10 +264,10 @@ impl Bus {
                     println!("Would start RSP");
                 }
                 if word & 0x8 != 0 {
-                    self.clear_interrupt(MI_INTR_SP);
+                    self.clear_interrupt(mi::INTR_SP);
                 }
                 if word & 0x10 != 0 {
-                    self.signal_interrupt(MI_INTR_SP);
+                    self.signal_interrupt(mi::INTR_SP);
                 }
                 /* TODO */
             }
@@ -562,40 +285,40 @@ impl Bus {
             // MIPS interface
             MI_REG_MODE            => {
                 if word & 0x800 != 0 {
-                    self.clear_interrupt(MI_INTR_DP);
+                    self.clear_interrupt(mi::INTR_DP);
                 }
                 /* TODO */
             },
             MI_REG_INTR_MASK       => {
                 if word & 0x1 != 0 {
-                    self.mi.reg_intr_mask &= !MI_INTR_SP;
+                    self.mi.reg_intr_mask &= !mi::INTR_SP;
                 } else if word & 0x2 != 0 {
-                    self.mi.reg_intr_mask |= MI_INTR_SP;
+                    self.mi.reg_intr_mask |= mi::INTR_SP;
                 }
                 if word & 0x4 != 0 {
-                    self.mi.reg_intr_mask &= !MI_INTR_SI;
+                    self.mi.reg_intr_mask &= !mi::INTR_SI;
                 } else if word & 0x8 != 0 {
-                    self.mi.reg_intr_mask |= MI_INTR_SI;
+                    self.mi.reg_intr_mask |= mi::INTR_SI;
                 }
                 if word & 0x10 != 0 {
-                    self.mi.reg_intr_mask &= !MI_INTR_AI;
+                    self.mi.reg_intr_mask &= !mi::INTR_AI;
                 } else if word & 0x20 != 0 {
-                    self.mi.reg_intr_mask |= MI_INTR_AI;
+                    self.mi.reg_intr_mask |= mi::INTR_AI;
                 }
                 if word & 0x40 != 0 {
-                    self.mi.reg_intr_mask &= !MI_INTR_VI;
+                    self.mi.reg_intr_mask &= !mi::INTR_VI;
                 } else if word & 0x80 != 0 {
-                    self.mi.reg_intr_mask |= MI_INTR_VI;
+                    self.mi.reg_intr_mask |= mi::INTR_VI;
                 }
                 if word & 0x100 != 0 {
-                    self.mi.reg_intr_mask &= !MI_INTR_PI;
+                    self.mi.reg_intr_mask &= !mi::INTR_PI;
                 } else if word & 0x200 != 0 {
-                    self.mi.reg_intr_mask |= MI_INTR_PI;
+                    self.mi.reg_intr_mask |= mi::INTR_PI;
                 }
                 if word & 0x400 != 0 {
-                    self.mi.reg_intr_mask &= !MI_INTR_DP;
+                    self.mi.reg_intr_mask &= !mi::INTR_DP;
                 } else if word & 0x800 != 0 {
-                    self.mi.reg_intr_mask |= MI_INTR_DP;
+                    self.mi.reg_intr_mask |= mi::INTR_DP;
                 }
                 self.check_interrupts();
             },
@@ -615,7 +338,7 @@ impl Bus {
             },
             VI_REG_V_INTR          => self.vi.reg_intr = word & 0x3ff,
             VI_REG_CURRENT         => {
-                self.clear_interrupt(MI_INTR_VI);
+                self.clear_interrupt(mi::INTR_VI);
             },
             VI_REG_BURST           => self.vi.reg_burst = word & 0x3fff_ffff,
             VI_REG_V_SYNC          => self.vi.reg_v_sync = word & 0x3ff,
@@ -643,7 +366,7 @@ impl Bus {
             AI_REG_LEN             => self.ai.reg_len = word & 0x3_ffff,
             AI_REG_CONTROL         => self.ai.reg_control = word & 0x1,
             AI_REG_STATUS          => {
-                self.clear_interrupt(MI_INTR_AI);
+                self.clear_interrupt(mi::INTR_AI);
             },
             AI_REG_DACRATE         => self.ai.reg_dacrate = word & 0x3fff,
             AI_REG_BITRATE         => self.ai.reg_bitrate = word & 0xf,
@@ -653,11 +376,11 @@ impl Bus {
             PI_REG_RD_LEN          => self.pi.reg_rd_len = word & 0xff_ffff,
             PI_REG_WR_LEN          => {
                 self.pi.dma_read(&mut self.ram, word);
-                self.signal_interrupt(MI_INTR_PI);
+                self.signal_interrupt(mi::INTR_PI);
             },
             PI_REG_STATUS          => {
                 if word & 0x2 != 0 {
-                    self.clear_interrupt(MI_INTR_PI);
+                    self.clear_interrupt(mi::INTR_PI);
                 }
                 /* TODO */
             },
@@ -676,16 +399,16 @@ impl Bus {
             SI_REG_PIF_ADDR_RD64B  => {
                 self.si.dma_read(&mut self.ram, self.interface.get_input_state());
                 self.si.reg_status |= 0x1000;
-                self.signal_interrupt(MI_INTR_SI);
+                self.signal_interrupt(mi::INTR_SI);
             },
             SI_REG_PIF_ADDR_WR64B  => {
                 self.si.dma_write(&self.ram);
                 self.si.reg_status |= 0x1000;
-                self.signal_interrupt(MI_INTR_SI);
+                self.signal_interrupt(mi::INTR_SI);
             },
             SI_REG_STATUS          => {
                 self.si.reg_status &= !0x1000;
-                self.clear_interrupt(MI_INTR_SI);
+                self.clear_interrupt(mi::INTR_SI);
             },
             _ => {
                 return Err("Unsupported memory write area");
@@ -697,7 +420,7 @@ impl Bus {
     pub fn vi_cycle(&mut self) {
         self.interface.send(IfOutput::Update(
             self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
-        self.signal_interrupt(MI_INTR_VI);
+        self.signal_interrupt(mi::INTR_VI);
     }
 
     fn check_interrupts(&mut self) {

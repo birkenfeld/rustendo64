@@ -13,8 +13,8 @@ impl N64 {
     pub fn new(pif_rom: Vec<u8>, cart_rom: Vec<u8>,
                debug: DebugSpecList) -> N64 {
         let interface = ui::init_ui::<ui::minifb::MinifbInterface>();
-        let bus = bus::Bus::new(pif_rom, cart_rom, interface, debug);
-        let cpu = cpu::Cpu::new();
+        let bus = bus::Bus::new(pif_rom, cart_rom, interface);
+        let cpu = cpu::Cpu::new(debug);
 
         N64 {
             cpu: cpu,

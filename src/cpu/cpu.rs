@@ -9,13 +9,14 @@ use cpu::cp0::Cp0;
 use cpu::instruction::*;
 use cpu::exception::*;
 use cpu::types::*;
-use debug::Debugger;
+use debug::{Debugger, DebugSpecList};
 use util::{mult_64_64_unsigned, mult_64_64_signed};
 
 const NUM_GPR: usize = 32;
 
 pub struct Cpu {
     // Debugging info
+    pub debug_specs:    DebugSpecList,
     instr_counter:      u32,
     debug_instrs:       bool,
     debug_instrs_until: u32,
@@ -68,23 +69,22 @@ impl fmt::Debug for Cpu {
 pub const INDENT: &'static str = "                                       ";
 
 impl Cpu {
-    pub fn new() -> Cpu {
+    pub fn new(debug: DebugSpecList) -> Cpu {
         Cpu {
             cp0: Cp0::default(),
 
+            debug_specs:        debug,
             instr_counter:      0,
             debug_instrs_until: 0,
             debug_instrs:       false,
+            last_instr:         0,
 
             in_branch_delay: false,
             exc_pending:     VecDeque::new(),
 
             reg_gpr:    [0; NUM_GPR],
             reg_fpr:    [[0; 8]; NUM_GPR],
-
             reg_pc:     0,
-            last_instr: 0,
-
             reg_hi:     0,
             reg_lo:     0,
             reg_llbit:  false,
@@ -148,7 +148,7 @@ impl Cpu {
 
         // Debug stuff. This might not really belong here?
         let (debug_for, dump_here, break_here) =
-            bus.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
+            self.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
         self.instr_counter += 1;
         if break_here {
             println!("{}", Colour::Red.paint(
@@ -758,7 +758,7 @@ impl Cpu {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         match bus.read_word(phys_addr as u32) {
             Ok(res) => {
-                if !load_instr && bus.debug_specs.matches_mem(phys_addr as u64, false) {
+                if !load_instr && self.debug_specs.matches_mem(phys_addr as u64, false) {
                     println!("Bus read:  {:#10x} :  {:#10x}", phys_addr, res);
                 }
                 res
@@ -774,7 +774,7 @@ impl Cpu {
         if (phys_addr as u32) & !0xF == self.cp0.reg_lladdr {
             self.reg_llbit = false;
         }
-        if bus.debug_specs.matches_mem(phys_addr as u64, true) {
+        if self.debug_specs.matches_mem(phys_addr as u64, true) {
             println!("Bus write: {:#10x} <- {:#10x}", phys_addr, word);
         }
         if let Err(desc) = bus.write_word(phys_addr as u32, word) {
