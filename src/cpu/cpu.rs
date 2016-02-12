@@ -1,6 +1,5 @@
 use std::fmt;
 use std::u32;
-use std::collections::VecDeque;
 use ansi_term::Colour;
 
 use bus::Bus;
@@ -24,19 +23,21 @@ pub struct Cpu {
 
     // Exception handling stuff
     in_branch_delay:    bool,
-    exc_pending:        VecDeque<Exception>,
 
     // Subcomponents
-    cp0:        Cp0,
+    cp0:                Cp0,
 
     // Registers
-    reg_gpr:    [u64; NUM_GPR],
-    reg_fpr:    [[u8; 8]; NUM_GPR],
-    reg_pc:     u64,
-    reg_hi:     u64,
-    reg_lo:     u64,
-    reg_llbit:  bool,
-    reg_fcr31:  u32,
+    reg_gpr:            [u64; NUM_GPR],
+    reg_fpr:            [[u8; 8]; NUM_GPR],
+    reg_pc:             u64,
+    reg_hi:             u64,
+    reg_lo:             u64,
+    reg_llbit:          bool,
+    reg_fcr31:          u32,
+
+    // Helpers
+    next_pc:            Option<u64>,
 }
 
 macro_rules! bug {
@@ -79,16 +80,16 @@ impl Cpu {
             debug_instrs:       false,
             last_instr:         0,
 
-            in_branch_delay: false,
-            exc_pending:     VecDeque::new(),
+            in_branch_delay:    false,
+            next_pc:            None,
 
-            reg_gpr:    [0; NUM_GPR],
-            reg_fpr:    [[0; 8]; NUM_GPR],
-            reg_pc:     0,
-            reg_hi:     0,
-            reg_lo:     0,
-            reg_llbit:  false,
-            reg_fcr31:  0,
+            reg_gpr:            [0; NUM_GPR],
+            reg_fpr:            [[0; 8]; NUM_GPR],
+            reg_pc:             0,
+            reg_hi:             0,
+            reg_lo:             0,
+            reg_llbit:          false,
+            reg_fcr31:          0,
         }
     }
 
@@ -97,49 +98,16 @@ impl Cpu {
         self.reg_pc = RESET_VECTOR;
     }
 
-    pub fn run_branch_delay_slot(&mut self, bus: &mut Bus) {
-        if self.in_branch_delay {
-            bug!(self, "Branching in branch delay slot -- check semantics!");
-        }
-        self.in_branch_delay = true;
-        self.run_instruction(bus);
-        self.in_branch_delay = false;
-    }
-
     pub fn run_instruction(&mut self, bus: &mut Bus) {
         // Timer interrupt?
         self.cp0.reg_count = self.cp0.reg_count.wrapping_add(1);
         if self.cp0.reg_compare == self.cp0.reg_count {
-            if self.cp0.reg_status.interrupts_enabled &&
-                self.cp0.reg_status.interrupt_mask.timer_interrupt &&
-                !self.cp0.reg_status.exception_level
-            {
-                self.flag_exception(ExcType::Interrupt(Intr::Timer));
-            }
+            self.flag_exception(Exception::Interrupt(Intr::Timer));
         }
 
-        // Transfer interrupts from interconnect
-        if bus.has_interrupt() &&
-            self.cp0.reg_status.interrupts_enabled &&
-            self.cp0.reg_status.interrupt_mask.external_interrupt[0] &&
-            !self.cp0.reg_status.exception_level
-        {
-            self.flag_exception(ExcType::Interrupt(Intr::Ext(0)));
-        }
-
-        // Do we need to process an exception?
-        if let Some(exc) = self.exc_pending.pop_front() {
-            dprintln!(self, "!!! processing exception: {:?}", exc);
-            self.cp0.reg_epc = self.reg_pc;
-            if self.in_branch_delay {
-                self.cp0.reg_epc -= 4;
-            }
-            self.cp0.reg_cause.exc_in_delay_slot = self.in_branch_delay;
-            self.cp0.reg_cause.coprocessor = exc.coprocessor();
-            self.cp0.reg_cause.exception_code = exc.code();
-            self.cp0.reg_cause.interrupts_pending = exc.interrupt_mask();
-            self.cp0.reg_status.exception_level = true;
-            self.reg_pc = exc.vector_location(self.cp0.reg_status.is_bootstrap());
+        // Process interrupts from interconnect
+        if bus.has_interrupt() {
+            self.flag_exception(Exception::Interrupt(Intr::Ext(0)));
         }
 
         let pc = self.reg_pc;
@@ -177,7 +145,21 @@ impl Cpu {
 
         self.dispatch_instr(bus, &instr);
 
+        // Go to next instruction if current instruction didn't jump
+        // (or set an exception vector, etc.)
+        self.reg_pc = self.next_pc.take().unwrap_or(self.reg_pc + 4);
+    }
+
+    pub fn run_branch_delay_slot(&mut self, bus: &mut Bus, addr: u64) {
+        if self.in_branch_delay {
+            bug!(self, "Branching in branch delay slot -- check semantics!");
+        }
+        self.in_branch_delay = true;
         self.reg_pc += 4;
+        self.next_pc = Some(addr); // prepare jump
+        self.run_instruction(bus);
+        self.next_pc = Some(self.reg_pc); // no adjustment to pc
+        self.in_branch_delay = false;
     }
 
     #[inline(always)]
@@ -354,12 +336,12 @@ impl Cpu {
                         if self.cp0.reg_status.error_level {
                             dprintln!(self, "{} return from errorlevel to {:#x}",
                                       INDENT, self.cp0.reg_error_epc);
-                            self.reg_pc = self.cp0.reg_error_epc - 4;
+                            self.next_pc = Some(self.cp0.reg_error_epc);
                             self.cp0.reg_status.error_level = false;
                         } else if self.cp0.reg_status.exception_level {
                             dprintln!(self, "{} return from exception to {:#x}",
                                       INDENT, self.cp0.reg_epc);
-                            self.reg_pc = self.cp0.reg_epc - 4;
+                            self.next_pc = Some(self.cp0.reg_epc);
                             self.cp0.reg_status.exception_level = false;
                         } else {
                             bug!(self, "ERET without error/exception bit set");
@@ -598,34 +580,30 @@ impl Cpu {
             dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[link_reg],
                       return_addr);
         }
-        self.reg_pc += 4;
         // TODO: do this differently (now we execute 2 instructions for one run_instr)
-        self.run_branch_delay_slot(bus);
-        self.reg_pc = addr - 4;  // compensate for += 4 at the end of run_instruction
+        self.run_branch_delay_slot(bus, addr);
     }
 
     fn branch<P>(&mut self, bus: &mut Bus, instr: &Instruction, likely: bool,
                  link: bool, mut predicate: P) where P: FnMut(&mut Self) -> bool
     {
-        // Offset is supposed to be relative to the delay slot, but reg_pc points to
-        // the branch instruction.  This is correct since we add 4 to reg_pc at the
-        // end of the run_instruction() function.
-        let addr = (instr.imm_sign_ext() << 2).wrapping_add(self.reg_pc);
+        // Offset is relative to the delay slot.
+        let addr = (instr.imm_sign_ext() << 2).wrapping_add(self.reg_pc + 4);
         let take = predicate(self);
+        let next_instr = self.reg_pc + 8;
         if link {
-            let return_addr = self.reg_pc + 8;
-            self.write_gpr(31, return_addr);
+            self.write_gpr(31, next_instr);
+            dprintln!(self, "{} ra <- {:#18x}", INDENT, next_instr);
         }
-        dprintln!(self, "{} branch: {}", INDENT, if take { "taken" } else { "not taken" });
-        // Run the delay slot
-        self.reg_pc += 4;
-        if take || !likely {
-            self.run_branch_delay_slot(bus);
-            if take {
-                self.reg_pc = addr;
-            } else {
-                self.reg_pc -= 4;
-            }
+        dprintln!(self, "{} branch: {}", INDENT,
+                  if take { "taken" } else { "not taken" });
+        // Run the delay slot (or not, for not-taken likely branches)
+        if take {
+            self.run_branch_delay_slot(bus, addr);
+        } else if !likely {
+            self.run_branch_delay_slot(bus, next_instr);
+        } else {
+            self.next_pc = Some(next_instr);
         }
     }
 
@@ -706,7 +684,7 @@ impl Cpu {
         let b = T::read_fpr(&self.reg_fpr[instr.ft()]);
         if signal && (a.is_nan() || b.is_nan()) {
             // TODO: set FCR31 cause bit "invalid operation"
-            self.flag_exception(ExcType::FloatingPointException);
+            self.flag_exception(Exception::FloatingPointException);
             return;
         }
         let cond = f(FpOrd::from(a, b));
@@ -822,8 +800,21 @@ impl Cpu {
         }
     }
 
-    fn flag_exception(&mut self, exc_type: ExcType) {
-        self.exc_pending.push_back(Exception { exc_type: exc_type });
+    fn flag_exception(&mut self, exc: Exception) {
+        if !self.cp0.reg_status.exception_level && exc.is_enabled(&self.cp0) {
+            dprintln!(self, "Starting exception processing: {:?}", exc);
+            self.cp0.reg_epc = self.reg_pc;
+            if self.in_branch_delay {
+                self.cp0.reg_epc -= 4;
+            }
+            self.cp0.reg_cause.exc_in_delay_slot = self.in_branch_delay;
+            self.cp0.reg_cause.coprocessor = exc.coprocessor();
+            self.cp0.reg_cause.exception_code = exc.code();
+            self.cp0.reg_cause.interrupts_pending = exc.interrupt_mask();
+            self.cp0.reg_status.exception_level = true;
+            self.reg_pc = exc.vector_location(self.cp0.reg_status.is_bootstrap());
+            self.next_pc = Some(self.reg_pc);
+        }
     }
 
     #[cold]
