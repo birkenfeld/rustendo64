@@ -331,7 +331,7 @@ impl Instruction {
 
     /// Unsigned, sign-extended immediate.
     #[inline(always)]
-    pub fn imm_sign_extended(self) -> u64 {
+    pub fn imm_sign_ext(self) -> u64 {
         (self.0 & 0xffff) as i16 as u64
     }
 
@@ -628,7 +628,7 @@ fn test_instr_decoding() {
     assert_eq!(word.opcode(), LW);
     assert_eq!(word.base(), 6); // a2
     assert_eq!(word.imm(), 0xfffc);
-    assert_eq!(word.imm_sign_extended(), 0xffff_ffff_ffff_fffc);
+    assert_eq!(word.imm_sign_ext(), 0xffff_ffff_ffff_fffc);
     assert_eq!(word.imm_signed(), -0x4);
     let word = Instruction(0x00032a03);  // sra    a1, v1, 8
     assert_eq!(word.opcode(), SPECIAL);

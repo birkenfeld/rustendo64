@@ -232,7 +232,7 @@ impl DebugSpecList {
                     // TODO: currently these are virtual addrs!
                     if hit {
                         let op_addr = gprs[instr.base()]
-                            .wrapping_add(instr.imm_sign_extended()) & !0b11;
+                            .wrapping_add(instr.imm_sign_ext()) & !0b11;
                         if op_addr == addr {
                             debug_for = max(debug_for, 1);
                             dump = true;
@@ -525,7 +525,7 @@ impl<'c> Debugger<'c> {
     fn list(&mut self, n: Option<u64>, addr: Option<u64>) -> bool {
         let base_addr = addr.unwrap_or(self.cpu.read_pc());
         for i in 0..n.unwrap_or(10) {
-            let addr = base_addr + 4 * i;
+            let addr = base_addr + 4*i;
             let instr = Instruction(self.cpu.read_word(self.bus, addr, true));
             println!(" {} {:#10x}   {:?}",
                      if i == 0 { "->" } else { "  " }, addr as u32, instr);

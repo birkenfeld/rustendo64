@@ -184,7 +184,7 @@ impl Cpu {
     fn dispatch_instr(&mut self, bus: &mut Bus, instr: &Instruction) {
         match instr.opcode() {
             LUI   => {
-                let val = instr.imm_sign_extended() << 16;
+                let val = instr.imm_sign_ext() << 16;
                 dprintln!(self, "{} {} <- {:#x}", INDENT, REG_NAMES[instr.rt()], val);
                 self.write_gpr(instr.rt(), val);
             }
@@ -192,13 +192,13 @@ impl Cpu {
             LWU   => self.mem_load (bus, instr, false, |word: u32| word as u64),
             SW    => self.mem_store(bus, instr, false, |data| data as u32),
             // TODO: overflow exception
-            ADDI  => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
-            ADDIU => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended()) as i32 as u64),
+            ADDI  => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_ext()) as i32 as u64),
+            ADDIU => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_ext()) as i32 as u64),
             ANDI  => self.binary_imm(instr, |rs| rs & instr.imm()),
             ORI   => self.binary_imm(instr, |rs| rs | instr.imm()),
             XORI  => self.binary_imm(instr, |rs| rs ^ instr.imm()),
-            SLTI  => self.binary_imm(instr, |rs| ((rs as i64) < instr.imm_sign_extended() as i64) as u64),
-            SLTIU => self.binary_imm(instr, |rs| (rs < instr.imm_sign_extended()) as u64),
+            SLTI  => self.binary_imm(instr, |rs| ((rs as i64) < instr.imm_sign_ext() as i64) as u64),
+            SLTIU => self.binary_imm(instr, |rs| (rs < instr.imm_sign_ext()) as u64),
             J     => {
                 let addr = ((self.reg_pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
                 self.jump(bus, addr, 0);
@@ -224,8 +224,8 @@ impl Cpu {
             BLEZL => self.branch(bus, instr, true, false, |cpu| {
                                  let v = cpu.read_gpr(instr.rs()); v == 0 || (v >> 63) != 0 }),
             // TODO: overflow exception
-            DADDI => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
-            DADDIU => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_extended())),
+            DADDI => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_ext())),
+            DADDIU => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_ext())),
             LB    => self.mem_load (bus, instr, false, |byte: u8| byte as i8 as u64),
             LBU   => self.mem_load (bus, instr, false, |byte: u8| byte as u64),
             LH    => self.mem_load (bus, instr, false, |hword: u16| hword as i16 as u64),
@@ -582,7 +582,8 @@ impl Cpu {
         where F: Fn(u64) -> u64
     {
         let res = func(self.read_gpr(instr.rt()));
-        dprintln!(self, "{} {} :  {:#18x}", INDENT, REG_NAMES[instr.rt()], self.read_gpr(instr.rt()));
+        dprintln!(self, "{} {} :  {:#18x}", INDENT, REG_NAMES[instr.rt()],
+                  self.read_gpr(instr.rt()));
         dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[instr.rd()], res);
         self.write_gpr(instr.rd(), res);
     }
@@ -594,7 +595,8 @@ impl Cpu {
         if link_reg > 0 {
             let return_addr = self.reg_pc + 8;
             self.write_gpr(link_reg, return_addr);
-            dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[link_reg], return_addr);
+            dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[link_reg],
+                      return_addr);
         }
         self.reg_pc += 4;
         // TODO: do this differently (now we execute 2 instructions for one run_instr)
@@ -602,13 +604,13 @@ impl Cpu {
         self.reg_pc = addr - 4;  // compensate for += 4 at the end of run_instruction
     }
 
-    fn branch<P>(&mut self, bus: &mut Bus, instr: &Instruction, likely: bool, link: bool, mut predicate: P)
-        where P: FnMut(&mut Self) -> bool
+    fn branch<P>(&mut self, bus: &mut Bus, instr: &Instruction, likely: bool,
+                 link: bool, mut predicate: P) where P: FnMut(&mut Self) -> bool
     {
         // Offset is supposed to be relative to the delay slot, but reg_pc points to
         // the branch instruction.  This is correct since we add 4 to reg_pc at the
         // end of the run_instruction() function.
-        let addr = (instr.imm_sign_extended() << 2).wrapping_add(self.reg_pc);
+        let addr = (instr.imm_sign_ext() << 2).wrapping_add(self.reg_pc);
         let take = predicate(self);
         if link {
             let return_addr = self.reg_pc + 8;
@@ -628,7 +630,7 @@ impl Cpu {
     }
 
     fn aligned_addr(&self, instr: &Instruction, align: u64) -> u64 {
-        let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_extended());
+        let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_ext());
         if addr & (align - 1) != 0 {
             bug!(self, "Address not aligned to {} bytes: {:#x}", align, addr);
         }
