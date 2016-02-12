@@ -755,7 +755,7 @@ impl Cpu {
         self.write_gpr(instr.rt(), func(value));
     }
 
-    pub fn read_word(&mut self, bus: &mut Bus, virt_addr: u64, load_instr: bool) -> u32 {
+    pub fn read_word(&self, bus: &mut Bus, virt_addr: u64, load_instr: bool) -> u32 {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         match bus.read_word(phys_addr as u32) {
             Ok(res) => {
@@ -783,7 +783,7 @@ impl Cpu {
         }
     }
 
-    pub fn read_dword(&mut self, bus: &mut Bus, virt_addr: u64) -> u64 {
+    pub fn read_dword(&self, bus: &mut Bus, virt_addr: u64) -> u64 {
         (self.read_word(bus, virt_addr, false) as u64) << 32 |
         self.read_word(bus, virt_addr + 4, false) as u64
     }

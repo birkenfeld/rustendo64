@@ -68,7 +68,7 @@ impl Bus {
         self.ri.power_on_reset();
     }
 
-    pub fn read_word(&mut self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_word(&self, addr: u32) -> Result<u32, &'static str> {
         if addr & 0x3 != 0 {
             return Err("unaligned access");
         }

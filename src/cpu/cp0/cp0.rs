@@ -54,7 +54,7 @@ impl Cp0 {
 
     pub fn read_reg(&self, index: usize) -> u64 {
         match index {
-            9  => self.reg_count as u64,  // TODO: increment this with every instr
+            9  => self.reg_count as u64,
             11 => self.reg_compare as u64,
             12 => self.reg_status.to_u32() as u64,
             13 => self.reg_cause.to_u32() as u64,

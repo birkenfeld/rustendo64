@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use bus::mi;
 use bus::mem_map::*;
 use ui::{InterfaceChannel, IfOutput};
@@ -8,7 +10,7 @@ pub struct Vi {
     reg_origin:      u32,
     reg_width:       u32,
     reg_intr:        u32,
-    reg_current:     u32,
+    reg_current:     AtomicUsize,
     reg_burst:       u32,
     reg_v_sync:      u32,
     reg_h_sync:      u32,
@@ -28,17 +30,15 @@ pub struct Vi {
 }
 
 impl Vi {
-    pub fn read_reg(&mut self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
         Ok(match addr {
             VI_REG_STATUS   => 0, // self.vi.reg_status,
             VI_REG_ORIGIN   => self.reg_origin,
             VI_REG_H_WIDTH  => self.reg_width,
             VI_REG_V_INTR   => self.reg_intr,
-            VI_REG_CURRENT  => {
-                // TODO
-                self.reg_current = (self.reg_current + 1) % 525;
-                self.reg_current
-            },
+            /* TODO */
+            VI_REG_CURRENT  =>
+                self.reg_current.fetch_add(1, Ordering::Relaxed) as u32 % 525,
             VI_REG_BURST    => self.reg_burst,
             VI_REG_V_SYNC   => self.reg_v_sync,
             VI_REG_H_SYNC   => self.reg_h_sync,

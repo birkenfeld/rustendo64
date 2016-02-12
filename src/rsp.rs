@@ -1,4 +1,4 @@
-use std::mem;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use bus::mem_map::*;
 use bus::mi;
@@ -27,7 +27,7 @@ pub struct Sp {
     reg_status:    u32,
     reg_dma_full:  u32,
     reg_dma_busy:  u32,
-    reg_semaphore: u32,
+    reg_semaphore: AtomicBool,
     reg_pc:        u32,
     reg_ibist:     u32,
 }
@@ -44,7 +44,7 @@ impl Default for Sp {
             reg_status:    0,
             reg_dma_full:  0,
             reg_dma_busy:  0,
-            reg_semaphore: 0,
+            reg_semaphore: AtomicBool::default(),
             reg_pc:        0,
             reg_ibist:     0,
         }
@@ -56,7 +56,7 @@ impl Sp {
         self.reg_status |= 0x1;
     }
 
-    pub fn read_reg(&mut self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
         Ok(match addr {
             SP_REG_MEM_ADDR   => self.reg_mem_addr,
             SP_REG_DRAM_ADDR  => self.reg_dram_addr,
@@ -65,7 +65,7 @@ impl Sp {
             SP_REG_STATUS     => self.reg_status,
             SP_REG_DMA_FULL   => self.reg_dma_full,
             SP_REG_DMA_BUSY   => self.reg_dma_busy,
-            SP_REG_SEMAPHORE  => mem::replace(&mut self.reg_semaphore, 1),
+            SP_REG_SEMAPHORE  => self.reg_semaphore.swap(true, Ordering::SeqCst) as u32,
             SP_REG_PC         => self.reg_pc,
             SP_REG_IBIST      => self.reg_ibist,
             _ => return Err("Unsupported RSP register")
@@ -103,7 +103,7 @@ impl Sp {
                                      2*i - 5, 2*i - 4);
                 }
             }
-            SP_REG_SEMAPHORE  => self.reg_semaphore = 0,
+            SP_REG_SEMAPHORE  => self.reg_semaphore.store(false, Ordering::SeqCst),
             SP_REG_PC         => self.reg_pc = word & 0xfff,
             SP_REG_IBIST      => self.reg_ibist = word & 0x7,
             _ => return Err("Unsupported RSP register")
@@ -149,7 +149,7 @@ pub struct Dp {
 }
 
 impl Dp {
-    pub fn read_reg(&mut self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
         Ok(match addr {
             DPC_REG_DMA_START      => self.reg_start,
             DPC_REG_DMA_END        => self.reg_end,

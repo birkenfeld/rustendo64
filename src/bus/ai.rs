@@ -12,7 +12,7 @@ pub struct Ai {
 }
 
 impl Ai {
-    pub fn read_reg(&mut self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
         Ok(match addr {
             AI_REG_DRAM_ADDR  => self.reg_dram_addr,
             AI_REG_LEN        => self.reg_len,

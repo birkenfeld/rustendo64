@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicUsize, Ordering};
 use byteorder::{BigEndian, ByteOrder};
 
 use bus::mi;
@@ -8,7 +9,7 @@ use ui::InterfaceChannel;
 pub struct Si {
     pif_rom:       Box<[u8]>,
     pif_ram:       Box<[u8]>,
-    pif_status:    u32,
+    pif_status:    AtomicUsize,
     reg_dram_addr: u32,
     reg_status:    u32,
 }
@@ -59,14 +60,14 @@ impl Si {
         Ok(BigEndian::read_u32(&self.pif_rom[rel_addr..]))
     }
 
-    pub fn read_pif_ram(&mut self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_pif_ram(&self, addr: u32) -> Result<u32, &'static str> {
         let rel_addr = (addr - PIF_RAM_START) as usize;
         if rel_addr == 0x3c {
-            Ok(self.pif_status)
+            Ok(self.pif_status.load(Ordering::SeqCst) as u32)
         } else {
             if rel_addr == 0x24 {
                 // hack to avoid looping at the end of the PIF rom
-                self.pif_status = 0x80;
+                self.pif_status.store(0x80, Ordering::SeqCst);
             }
             Ok(BigEndian::read_u32(&self.pif_ram[rel_addr..]))
         }
