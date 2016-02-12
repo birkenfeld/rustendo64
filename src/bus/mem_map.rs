@@ -36,9 +36,11 @@ pub const KSEG1_START:    u64 = 0xffff_ffff_a000_0000;
 
 // RDRAM -----------------------------------------------------------------------
 
+pub const RDRAM_SIZE:     usize = 0x80_0000;  // 8 MB
+
 define_consts!(
     RDRAM_START     = 0x0000_0000,
-    RDRAM_END       = 0x007f_ffff   // 8MB assumed
+    RDRAM_END       = 0x007f_ffff
 );
 
 define_registers!(

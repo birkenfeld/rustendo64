@@ -20,7 +20,6 @@ use ui::{IfOutput, InterfaceChannel};
 use rsp::{Sp, Dp};
 
 const PIF_ROM_SIZE: usize = 0x800;
-const RAM_SIZE: usize = 8 * 0x100000;
 
 pub struct Bus {
     interface: InterfaceChannel,
@@ -41,7 +40,7 @@ impl Bus {
                interface: InterfaceChannel) -> Bus {
         Bus {
             interface: interface,
-            ram: vec![0; RAM_SIZE / 4].into_boxed_slice(),
+            ram: vec![0; RDRAM_SIZE / 4].into_boxed_slice(),
             rd: RdRegs::default(),
             sp: Sp::default(),
             dp: Dp::default(),
@@ -62,7 +61,7 @@ impl Bus {
             println!("Warning: no CIC seed found for this ROM");
         }
         // memory size
-        self.write_word(0x3f0, 0x800000).unwrap();
+        self.write_word(0x3f0, RDRAM_SIZE as u32).unwrap();
         // power-on reset configs from cen64
         self.sp.power_on_reset();
         self.ri.power_on_reset();

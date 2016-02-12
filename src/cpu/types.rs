@@ -7,13 +7,13 @@ use bus::Bus;
 
 pub trait MemFmt: Copy + fmt::LowerHex {
     fn get_align() -> u64;
-    fn load_from(&mut Cpu, &mut Bus, u64) -> Self;
+    fn load_from(&mut Cpu, &Bus, u64) -> Self;
     fn store_to(&mut Cpu, &mut Bus, u64, Self);
 }
 
 impl MemFmt for u8 {
     fn get_align() -> u64 { 1 }
-    fn load_from(cpu: &mut Cpu, bus: &mut Bus, addr: u64) -> u8 {
+    fn load_from(cpu: &mut Cpu, bus: &Bus, addr: u64) -> u8 {
         let word = cpu.read_word(bus, addr & !3, false);
         let shift = 8 * (3 - (addr % 4));  // byte 0: shift 24
         (word >> shift) as u8
@@ -29,7 +29,7 @@ impl MemFmt for u8 {
 
 impl MemFmt for u16 {
     fn get_align() -> u64 { 2 }
-    fn load_from(cpu: &mut Cpu, bus: &mut Bus, addr: u64) -> u16 {
+    fn load_from(cpu: &mut Cpu, bus: &Bus, addr: u64) -> u16 {
         let word = cpu.read_word(bus, addr & !3, false);
         let shift = 8 * (2 - (addr % 4));  // halfword 0: shift 16
         (word >> shift) as u16
@@ -45,7 +45,7 @@ impl MemFmt for u16 {
 
 impl MemFmt for u32 {
     fn get_align() -> u64 { 4 }
-    fn load_from(cpu: &mut Cpu, bus: &mut Bus, addr: u64) -> u32 {
+    fn load_from(cpu: &mut Cpu, bus: &Bus, addr: u64) -> u32 {
         cpu.read_word(bus, addr, false)
     }
     fn store_to(cpu: &mut Cpu, bus: &mut Bus, addr: u64, val: u32) {
@@ -55,7 +55,7 @@ impl MemFmt for u32 {
 
 impl MemFmt for u64 {
     fn get_align() -> u64 { 8 }
-    fn load_from(cpu: &mut Cpu, bus: &mut Bus, addr: u64) -> u64 {
+    fn load_from(cpu: &mut Cpu, bus: &Bus, addr: u64) -> u64 {
         cpu.read_dword(bus, addr)
     }
     fn store_to(cpu: &mut Cpu, bus: &mut Bus, addr: u64, val: u64) {

@@ -17,12 +17,13 @@ pub struct Cpu {
     // Debugging info
     pub debug_specs:    DebugSpecList,
     instr_counter:      u32,
-    debug_instrs:       bool,
-    debug_instrs_until: u32,
-    last_instr:         u32,
+    debug_print:        bool,
+    debug_print_until:  u32,
+    last_instr:         Instruction,
 
-    // Exception handling stuff
+    // Helpers
     in_branch_delay:    bool,
+    next_pc:            Option<u64>,
 
     // Subcomponents
     cp0:                Cp0,
@@ -35,9 +36,6 @@ pub struct Cpu {
     reg_lo:             u64,
     reg_llbit:          bool,
     reg_fcr31:          u32,
-
-    // Helpers
-    next_pc:            Option<u64>,
 }
 
 macro_rules! bug {
@@ -45,7 +43,7 @@ macro_rules! bug {
 }
 
 macro_rules! dprintln {
-    ($cpu:expr, $($args:expr),+) => { if $cpu.debug_instrs {
+    ($cpu:expr, $($args:expr),+) => { if $cpu.debug_print {
         println!("{}", Colour::Blue.paint(format!($($args),+)));
     } }
     //($cpu:expr, $($args:expr),+) => { }
@@ -72,16 +70,16 @@ pub const INDENT: &'static str = "                                       ";
 impl Cpu {
     pub fn new(debug: DebugSpecList) -> Cpu {
         Cpu {
-            cp0: Cp0::default(),
-
             debug_specs:        debug,
             instr_counter:      0,
-            debug_instrs_until: 0,
-            debug_instrs:       false,
-            last_instr:         0,
+            debug_print_until:  0,
+            debug_print:        false,
+            last_instr:         Instruction(0),
 
             in_branch_delay:    false,
             next_pc:            None,
+
+            cp0:                Cp0::default(),
 
             reg_gpr:            [0; NUM_GPR],
             reg_fpr:            [[0; 8]; NUM_GPR],
@@ -111,8 +109,8 @@ impl Cpu {
         }
 
         let pc = self.reg_pc;
-        self.last_instr = self.read_word(bus, pc, true);
-        let instr = Instruction(self.last_instr);
+        self.last_instr = Instruction(self.read_word(bus, pc, true));
+        let instr = self.last_instr;
 
         // Debug stuff. This might not really belong here?
         let (debug_for, dump_here, break_here) =
@@ -132,14 +130,14 @@ impl Cpu {
             println!("{:?}", self);
         }
         if debug_for > 0 {
-            self.debug_instrs = true;
+            self.debug_print = true;
             if debug_for == u32::MAX {
-                self.debug_instrs_until = u32::MAX;
+                self.debug_print_until = u32::MAX;
             } else if debug_for > 1 {
-                self.debug_instrs_until = self.instr_counter + debug_for;
+                self.debug_print_until = self.instr_counter + debug_for;
             }
-        } else if self.debug_instrs && self.instr_counter > self.debug_instrs_until {
-            self.debug_instrs = false;
+        } else if self.debug_print && self.instr_counter > self.debug_print_until {
+            self.debug_print = false;
         }
         dprintln!(self, "op: {:#10x}   {:?}", pc as u32, instr);
 
@@ -233,7 +231,7 @@ impl Cpu {
             SC    => self.mem_store(bus, instr, true, |data| data as u32),
             SCD   => self.mem_store(bus, instr, true, |data| data),
             CACHE => {
-                // TODO: Check if we need to implement this
+                /* TODO: do we need to implement this? */
             }
             SPECIAL => match instr.special_op() {
                 JR   => { let addr = self.read_gpr(instr.rs()); self.jump(bus, addr, 0); }
@@ -735,7 +733,7 @@ impl Cpu {
         self.write_gpr(instr.rt(), func(value));
     }
 
-    pub fn read_word(&self, bus: &mut Bus, virt_addr: u64, load_instr: bool) -> u32 {
+    pub fn read_word(&self, bus: &Bus, virt_addr: u64, load_instr: bool) -> u32 {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         match bus.read_word(phys_addr as u32) {
             Ok(res) => {
@@ -763,7 +761,7 @@ impl Cpu {
         }
     }
 
-    pub fn read_dword(&self, bus: &mut Bus, virt_addr: u64) -> u64 {
+    pub fn read_dword(&self, bus: &Bus, virt_addr: u64) -> u64 {
         (self.read_word(bus, virt_addr, false) as u64) << 32 |
         self.read_word(bus, virt_addr + 4, false) as u64
     }
@@ -821,7 +819,7 @@ impl Cpu {
     fn bug(&self, msg: String) -> ! {
         //println!("{:#?}", $cpu.interconnect);
         println!("\nCPU dump:\n{:?}", self);
-        println!("last instr was:    {:?}", Instruction(self.last_instr));
+        println!("last instr was:    {:?}", self.last_instr);
         println!("#instrs executed:  {}", self.instr_counter);
         panic!(msg);
     }
