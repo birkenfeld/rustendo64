@@ -1,10 +1,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use bus::IoResult;
 use bus::mem_map::*;
 use bus::mi;
 use util::{bit_set, clear_or_set_bit, clear_bit};
-
-const SP_RAM_SIZE: usize = 0x1000;
 
 #[derive(Default)]
 pub struct Rsp;
@@ -56,7 +55,7 @@ impl Sp {
         self.reg_status |= 0x1;
     }
 
-    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> IoResult<u32> {
         Ok(match addr {
             SP_REG_MEM_ADDR   => self.reg_mem_addr,
             SP_REG_DRAM_ADDR  => self.reg_dram_addr,
@@ -72,7 +71,7 @@ impl Sp {
         })
     }
 
-    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi) -> Result<(), &'static str> {
+    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi) -> IoResult<()> {
         Ok(match addr {
             SP_REG_MEM_ADDR   => self.reg_mem_addr = word & 0x1fff,
             SP_REG_DRAM_ADDR  => self.reg_dram_addr = word & 0xff_ffff,
@@ -110,20 +109,20 @@ impl Sp {
         })
     }
 
-    pub fn read_dmem(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_dmem(&self, addr: u32) -> IoResult<u32> {
         Ok(self.dmem[(addr - SP_DMEM_START) as usize / 4])
     }
 
-    pub fn read_imem(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_imem(&self, addr: u32) -> IoResult<u32> {
         Ok(self.imem[(addr - SP_IMEM_START) as usize / 4])
     }
 
-    pub fn write_dmem(&mut self, addr: u32, word: u32) -> Result<(), &'static str> {
+    pub fn write_dmem(&mut self, addr: u32, word: u32) -> IoResult<()> {
         self.dmem[(addr - SP_DMEM_START) as usize / 4] = word;
         Ok(())
     }
 
-    pub fn write_imem(&mut self, addr: u32, word: u32) -> Result<(), &'static str> {
+    pub fn write_imem(&mut self, addr: u32, word: u32) -> IoResult<()> {
         self.imem[(addr - SP_IMEM_START) as usize / 4] = word;
         Ok(())
     }
@@ -149,7 +148,7 @@ pub struct Dp {
 }
 
 impl Dp {
-    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> IoResult<u32> {
         Ok(match addr {
             DPC_REG_DMA_START      => self.reg_start,
             DPC_REG_DMA_END        => self.reg_end,
@@ -167,7 +166,7 @@ impl Dp {
         })
     }
 
-    pub fn write_reg(&mut self, addr: u32, word: u32) -> Result<(), &'static str> {
+    pub fn write_reg(&mut self, addr: u32, word: u32) -> IoResult<()> {
         Ok(match addr {
             DPC_REG_DMA_START      => self.reg_start = word & 0xff_ffff,
             DPC_REG_DMA_END        => self.reg_end = word & 0xff_ffff,

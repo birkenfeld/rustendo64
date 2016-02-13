@@ -1,6 +1,7 @@
 use std::cmp::min;
 use byteorder::{BigEndian, ByteOrder};
 
+use bus::IoResult;
 use bus::cic;
 use bus::mi;
 use bus::mem_map::*;
@@ -29,7 +30,7 @@ impl Pi {
         Pi { cart_rom: cart_rom, ..Pi::default() }
     }
 
-    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> IoResult<u32> {
         Ok(match addr {
             PI_REG_DRAM_ADDR       => self.reg_dram_addr,
             PI_REG_CART_ADDR       => self.reg_cart_addr,
@@ -49,7 +50,8 @@ impl Pi {
     }
 
     pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi,
-                     ram: &mut [u32]) -> Result<(), &'static str> {
+                     ram: &mut [u32]) -> IoResult<()>
+    {
         Ok(match addr {
             PI_REG_DRAM_ADDR       => self.reg_dram_addr = word & 0xff_ffff,
             PI_REG_CART_ADDR       => self.reg_cart_addr = word,
@@ -78,7 +80,7 @@ impl Pi {
         })
     }
 
-    pub fn read_rom(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_rom(&self, addr: u32) -> IoResult<u32> {
         let rel_addr = (addr - CART_ROM_START) as usize;
         Ok(BigEndian::read_u32(&self.cart_rom[rel_addr..]))
     }

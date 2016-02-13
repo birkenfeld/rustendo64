@@ -1,3 +1,4 @@
+use bus::IoResult;
 use bus::mi;
 use bus::mem_map::*;
 
@@ -12,7 +13,7 @@ pub struct Ai {
 }
 
 impl Ai {
-    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> IoResult<u32> {
         Ok(match addr {
             AI_REG_DRAM_ADDR  => self.reg_dram_addr,
             AI_REG_LEN        => self.reg_len,
@@ -21,7 +22,7 @@ impl Ai {
         })
     }
 
-    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi) -> Result<(), &'static str> {
+    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi) -> IoResult<()> {
         Ok(match addr {
             AI_REG_DRAM_ADDR  => self.reg_dram_addr = word & 0xff_ffff,
             AI_REG_LEN        => self.reg_len = word & 0x3_ffff,

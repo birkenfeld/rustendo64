@@ -1,3 +1,4 @@
+use bus::IoResult;
 use bus::mem_map::*;
 use util::{bit_set, set_bit, clear_bit, clear_or_set_bit};
 
@@ -22,7 +23,7 @@ pub struct Mi {
 }
 
 impl Mi {
-    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> IoResult<u32> {
         Ok(match addr {
             MI_REG_MODE       => self.reg_mode,
             MI_REG_VERSION    => self.reg_version,
@@ -32,7 +33,7 @@ impl Mi {
         })
     }
 
-    pub fn write_reg(&mut self, addr: u32, word: u32) -> Result<(), &'static str> {
+    pub fn write_reg(&mut self, addr: u32, word: u32) -> IoResult<()> {
         Ok(match addr {
             MI_REG_MODE       => {
                 self.reg_mode = (self.reg_mode & !0x7f) | (word & 0x7f);

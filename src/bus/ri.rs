@@ -1,3 +1,4 @@
+use bus::IoResult;
 use bus::mem_map::*;
 
 #[derive(Default, Debug)]
@@ -15,7 +16,7 @@ pub struct RdRegs {
 }
 
 impl RdRegs {
-    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> IoResult<u32> {
         Ok(match addr {
             RDRAM_REG_CONFIG       => self.reg_config,
             RDRAM_REG_DEVICE_ID    => self.reg_device_id,
@@ -31,7 +32,7 @@ impl RdRegs {
         })
     }
 
-    pub fn write_reg(&mut self, addr: u32, word: u32) -> Result<(), &'static str> {
+    pub fn write_reg(&mut self, addr: u32, word: u32) -> IoResult<()> {
         Ok(match addr {
             RDRAM_REG_CONFIG       => self.reg_config = word,
             RDRAM_REG_DEVICE_ID    => self.reg_device_id = word,
@@ -65,7 +66,7 @@ impl Ri {
         self.reg_refresh = 0x63634;
     }
 
-    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> IoResult<u32> {
         Ok(match addr {
             RI_REG_MODE          => self.reg_mode,
             RI_REG_CONFIG        => self.reg_config,
@@ -77,7 +78,7 @@ impl Ri {
         })
     }
 
-    pub fn write_reg(&mut self, addr: u32, word: u32) -> Result<(), &'static str> {
+    pub fn write_reg(&mut self, addr: u32, word: u32) -> IoResult<()> {
         Ok(match addr {
             RI_REG_MODE          => self.reg_mode = word & 0xf,
             RI_REG_CONFIG        => self.reg_config = word & 0x7f,

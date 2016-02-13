@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use byteorder::{BigEndian, ByteOrder};
 
+use bus::IoResult;
 use bus::mi;
 use bus::mem_map::*;
 use ui::UiChannel;
@@ -21,7 +22,7 @@ impl Si {
              ..Si::default() }
     }
 
-    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> IoResult<u32> {
         Ok(match addr {
             SI_REG_DRAM_ADDR  => self.reg_dram_addr,
             SI_REG_STATUS     => self.reg_status,
@@ -30,8 +31,8 @@ impl Si {
     }
 
     pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi,
-                     ram: &mut [u32], ui: &UiChannel)
-                     -> Result<(), &'static str> {
+                     ram: &mut [u32], ui: &UiChannel) -> IoResult<()>
+    {
         Ok(match addr {
             SI_REG_DRAM_ADDR       => {
                 self.reg_dram_addr = word & 0xff_ffff;
@@ -55,12 +56,12 @@ impl Si {
     }
 
 
-    pub fn read_pif_rom(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_pif_rom(&self, addr: u32) -> IoResult<u32> {
         let rel_addr = (addr - PIF_ROM_START) as usize;
         Ok(BigEndian::read_u32(&self.pif_rom[rel_addr..]))
     }
 
-    pub fn read_pif_ram(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_pif_ram(&self, addr: u32) -> IoResult<u32> {
         let rel_addr = (addr - PIF_RAM_START) as usize;
         if rel_addr == 0x3c {
             Ok(self.pif_status.load(Ordering::SeqCst) as u32)
@@ -74,7 +75,7 @@ impl Si {
     }
 
     pub fn write_pif_ram(&mut self, addr: u32, word: u32, mi: &mut mi::Mi)
-                         -> Result<(), &'static str> {
+                         -> IoResult<()> {
         let rel_addr = (addr - PIF_RAM_START) as usize;
         BigEndian::write_u32(&mut self.pif_ram[rel_addr..], word);
         self.reg_status |= 0x1000;

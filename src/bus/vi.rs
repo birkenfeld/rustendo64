@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use bus::IoResult;
 use bus::mi;
 use bus::mem_map::*;
 use ui::{UiChannel, UiOutput};
@@ -30,7 +31,7 @@ pub struct Vi {
 }
 
 impl Vi {
-    pub fn read_reg(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_reg(&self, addr: u32) -> IoResult<u32> {
         Ok(match addr {
             VI_REG_STATUS   => 0, // self.vi.reg_status,
             VI_REG_ORIGIN   => self.reg_origin,
@@ -53,7 +54,7 @@ impl Vi {
     }
 
     pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi,
-                     ui: &UiChannel) -> Result<(), &'static str> {
+                     ui: &UiChannel) -> IoResult<()> {
         Ok(match addr {
             VI_REG_STATUS   => {
                 self.reg_status = word & 0xffff;

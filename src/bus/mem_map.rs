@@ -73,6 +73,8 @@ define_registers!(
 
 // RSP interface ---------------------------------------------------------------
 
+pub const SP_RAM_SIZE: usize = 0x2000;
+
 define_consts!(
     SP_DMEM_START = 0x0400_0000,
     SP_DMEM_END   = 0x0400_0fff,

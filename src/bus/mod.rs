@@ -21,6 +21,8 @@ use rsp::{Sp, Dp};
 
 const PIF_ROM_SIZE: usize = 0x800;
 
+pub type IoResult<T> = Result<T, &'static str>;
+
 pub struct Bus {
     ui: UiChannel,
     ram: Box<[u32]>,
@@ -66,7 +68,7 @@ impl Bus {
         self.ri.power_on_reset();
     }
 
-    pub fn read_word(&self, addr: u32) -> Result<u32, &'static str> {
+    pub fn read_word(&self, addr: u32) -> IoResult<u32> {
         if addr & 0x3 != 0 {
             return Err("unaligned access");
         }
@@ -92,7 +94,7 @@ impl Bus {
         }
     }
 
-    pub fn write_word(&mut self, addr: u32, word: u32) -> Result<(), &'static str> {
+    pub fn write_word(&mut self, addr: u32, word: u32) -> IoResult<()> {
         if addr & 0x3 != 0 {
             return Err("unaligned access");
         }
