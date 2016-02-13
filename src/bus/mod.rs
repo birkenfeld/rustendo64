@@ -15,7 +15,7 @@ use self::si::Si;
 use self::pi::Pi;
 use self::mi::Mi;
 use self::ai::Ai;
-use self::ri::{Ri, RdRegs};
+use self::ri::Ri;
 use ui::{UiOutput, UiChannel};
 use rsp::{Sp, Dp};
 
@@ -26,7 +26,6 @@ pub type IoResult<T> = Result<T, &'static str>;
 pub struct Bus {
     ui: UiChannel,
     ram: Box<[u32]>,
-    rd: RdRegs,
     sp: Sp,
     dp: Dp,
     mi: Mi,
@@ -42,7 +41,6 @@ impl Bus {
         Bus {
             ui: ui,
             ram: vec![0; RDRAM_SIZE / 4].into_boxed_slice(),
-            rd: RdRegs::default(),
             sp: Sp::default(),
             dp: Dp::default(),
             mi: Mi::default(),
@@ -86,8 +84,8 @@ impl Bus {
             VI_REG_START    ... VI_REG_END    => self.vi.read_reg(addr),
             AI_REG_START    ... AI_REG_END    => self.ai.read_reg(addr),
             PI_REG_START    ... PI_REG_END    => self.pi.read_reg(addr),
-            RI_REG_START    ... RI_REG_END    => self.ri.read_reg(addr),
-            RDRAM_REG_START ... RDRAM_REG_END => self.rd.read_reg(addr),
+            RI_REG_START    ... RI_REG_END    |
+            RDRAM_REG_START ... RDRAM_REG_END => self.ri.read_reg(addr),
             DD_ROM_START    ... DD_ROM_END    => Ok(0),
             DD_REG_START    ... DD_REG_END    => Ok(0),
             _ => Err("Unsupported read memory area")
@@ -121,10 +119,9 @@ impl Bus {
                 self.ai.write_reg(addr, word, &mut self.mi),
             PI_REG_START    ... PI_REG_END    =>
                 self.pi.write_reg(addr, word, &mut self.mi, &mut self.ram),
-            RI_REG_START    ... RI_REG_END    =>
-                self.ri.write_reg(addr, word),
+            RI_REG_START    ... RI_REG_END    |
             RDRAM_REG_START ... RDRAM_REG_END =>
-                self.rd.write_reg(addr, word),
+                self.ri.write_reg(addr, word),
             _ => Err("Unsupported memory write area")
         }
     }
@@ -143,7 +140,6 @@ impl Bus {
 impl fmt::Debug for Bus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Bus")
-         .field("rd", &self.rd)
          .field("sp", &self.sp)
          .field("dp", &self.dp)
          .field("mi", &self.mi)
