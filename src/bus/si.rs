@@ -3,7 +3,7 @@ use byteorder::{BigEndian, ByteOrder};
 
 use bus::mi;
 use bus::mem_map::*;
-use ui::InterfaceChannel;
+use ui::UiChannel;
 
 #[derive(Default, Debug)]
 pub struct Si {
@@ -30,14 +30,14 @@ impl Si {
     }
 
     pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi,
-                     ram: &mut [u32], interface: &mut InterfaceChannel)
+                     ram: &mut [u32], ui: &UiChannel)
                      -> Result<(), &'static str> {
         Ok(match addr {
             SI_REG_DRAM_ADDR       => {
                 self.reg_dram_addr = word & 0xff_ffff;
             },
             SI_REG_PIF_ADDR_RD64B  => {
-                self.dma_read(ram, interface.get_input_state());
+                self.dma_read(ram, ui.get_input_state());
                 self.reg_status |= 0x1000;
                 mi.set_interrupt(mi::Intr::SI);
             },

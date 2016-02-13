@@ -16,13 +16,13 @@ use self::pi::Pi;
 use self::mi::Mi;
 use self::ai::Ai;
 use self::ri::{Ri, RdRegs};
-use ui::{IfOutput, InterfaceChannel};
+use ui::{UiOutput, UiChannel};
 use rsp::{Sp, Dp};
 
 const PIF_ROM_SIZE: usize = 0x800;
 
 pub struct Bus {
-    interface: InterfaceChannel,
+    ui: UiChannel,
     ram: Box<[u32]>,
     rd: RdRegs,
     sp: Sp,
@@ -36,10 +36,9 @@ pub struct Bus {
 }
 
 impl Bus {
-    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>,
-               interface: InterfaceChannel) -> Bus {
+    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>, ui: UiChannel) -> Bus {
         Bus {
-            interface: interface,
+            ui: ui,
             ram: vec![0; RDRAM_SIZE / 4].into_boxed_slice(),
             rd: RdRegs::default(),
             sp: Sp::default(),
@@ -111,12 +110,11 @@ impl Bus {
             DP_REG_START    ... DP_REG_END    =>
                 self.dp.write_reg(addr, word),
             SI_REG_START    ... SI_REG_END    =>
-                self.si.write_reg(addr, word, &mut self.mi, &mut self.ram,
-                                  &mut self.interface),
+                self.si.write_reg(addr, word, &mut self.mi, &mut self.ram, &self.ui),
             MI_REG_START    ... MI_REG_END    =>
                 self.mi.write_reg(addr, word),
             VI_REG_START    ... VI_REG_END    =>
-                self.vi.write_reg(addr, word, &mut self.mi, &mut self.interface),
+                self.vi.write_reg(addr, word, &mut self.mi, &self.ui),
             AI_REG_START    ... AI_REG_END    =>
                 self.ai.write_reg(addr, word, &mut self.mi),
             PI_REG_START    ... PI_REG_END    =>
@@ -130,7 +128,7 @@ impl Bus {
     }
 
     pub fn vi_cycle(&mut self) {
-        self.interface.send(IfOutput::Update(
+        self.ui.send(UiOutput::Update(
             self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
         self.mi.set_interrupt(mi::Intr::VI);
     }

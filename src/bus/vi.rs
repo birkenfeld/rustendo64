@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bus::mi;
 use bus::mem_map::*;
-use ui::{InterfaceChannel, IfOutput};
+use ui::{UiChannel, UiOutput};
 
 #[derive(Default, Debug)]
 pub struct Vi {
@@ -53,11 +53,11 @@ impl Vi {
     }
 
     pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi,
-                     interface: &mut InterfaceChannel) -> Result<(), &'static str> {
+                     ui: &UiChannel) -> Result<(), &'static str> {
         Ok(match addr {
             VI_REG_STATUS   => {
                 self.reg_status = word & 0xffff;
-                self.update(interface);
+                self.update(ui);
             },
             VI_REG_ORIGIN   => {
                 self.reg_origin = word & 0xff_ffff;  // only 24 bits
@@ -66,7 +66,7 @@ impl Vi {
             },
             VI_REG_H_WIDTH  => {
                 self.reg_width = word & 0xfff;
-                self.update(interface);
+                self.update(ui);
             },
             VI_REG_V_INTR   => self.reg_intr = word & 0x3ff,
             VI_REG_CURRENT  => {
@@ -78,26 +78,26 @@ impl Vi {
             VI_REG_LEAP     => self.reg_leap = word & 0xfff_ffff,
             VI_REG_H_START  => {
                 self.reg_h_start = word & 0x3ff_ffff;
-                self.update(interface);
+                self.update(ui);
             },
             VI_REG_V_START  => {
                 self.reg_v_start = word & 0x3ff_ffff;
-                self.update(interface);
+                self.update(ui);
             },
             VI_REG_V_BURST  => self.reg_v_burst = word & 0x3ff_ffff,
             VI_REG_X_SCALE  => {
                 self.reg_x_scale = word & 0xfff_ffff;
-                self.update(interface);
+                self.update(ui);
             },
             VI_REG_Y_SCALE  => {
                 self.reg_y_scale = word & 0xfff_ffff;
-                self.update(interface);
+                self.update(ui);
             },
             _ => return Err("Unsupported VI register")
         })
     }
 
-    pub fn update(&mut self, interface: &mut InterfaceChannel) {
+    pub fn update(&mut self, ui: &UiChannel) {
         let hstart = (self.reg_h_start >> 16) & 0x3ff;
         let vstart = (self.reg_v_start >> 16) & 0x3ff;
         let hend   = self.reg_h_start & 0x3ff;
@@ -123,7 +123,7 @@ impl Vi {
         //          self.frame_hskip, self.frame_width, self.frame_height,
         //          self.vram_pixelsize * 8);
         // TODO: dont show skip
-        interface.send(IfOutput::SetMode(
+        ui.send(UiOutput::SetMode(
             self.frame_width + self.frame_hskip, self.frame_height,
             self.vram_pixelsize));
     }

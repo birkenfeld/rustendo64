@@ -3,17 +3,17 @@ use std::sync::mpsc;
 
 use minifb::{Window, WindowOptions, Scale, Key};
 
-use ui::{Interface, IfOutput, CONTROLLER};
+use ui::{Interface, UiOutput, CONTROLLER};
 
 pub struct MinifbInterface {
-    receiver: mpsc::Receiver<IfOutput>,
+    receiver: mpsc::Receiver<UiOutput>,
     size: (usize, usize),
     mode: usize,
     window: Option<Window>,
 }
 
 impl Interface for MinifbInterface {
-    fn new(outrecv: mpsc::Receiver<IfOutput>) -> Self {
+    fn new(outrecv: mpsc::Receiver<UiOutput>) -> Self {
         MinifbInterface {
             receiver: outrecv,
             window: None,
@@ -25,10 +25,11 @@ impl Interface for MinifbInterface {
     fn run(&mut self) {
         while let Ok(msg) = self.receiver.recv() {
             match msg {
-                IfOutput::SetMode(w, h, m) => self.set_mode(w, h, m),
-                IfOutput::Update(v) => self.update(v),
+                UiOutput::SetMode(w, h, m) => self.set_mode(w, h, m),
+                UiOutput::Update(v) => if self.update(v) { break; },
             }
         }
+        println!("Interface closed.");
     }
 
 }
@@ -58,7 +59,8 @@ impl MinifbInterface {
         }
     }
 
-    fn update(&mut self, mut buffer: Vec<u32>) {
+    fn update(&mut self, mut buffer: Vec<u32>) -> bool {
+        let mut quit = false;
         if let Some(ref mut win) = self.window {
             if self.mode == 4 {
                 if buffer.len() == self.size.0 * self.size.1 {
@@ -105,12 +107,13 @@ impl MinifbInterface {
                     Key::Down       => 0x0080,   // Analog pad
                     Key::Left       => 0x8000,   // (full throttle)
                     Key::Right      => 0x7f00,
-                    Key::Escape     => panic!("kbd quit"),
+                    Key::Escape     => { quit = true; 0 },
                     _ => 0
                 })
             }) {
                 CONTROLLER.store(cstate, Ordering::Relaxed);
             }
         }
+        quit
     }
 }

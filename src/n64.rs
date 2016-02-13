@@ -12,8 +12,8 @@ pub struct N64 {
 impl N64 {
     pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>,
                debug: DebugSpecList) -> N64 {
-        let interface = ui::init_ui::<ui::minifb::MinifbInterface>();
-        let bus = bus::Bus::new(pif_rom, cart_rom, interface);
+        let ui = ui::init_ui::<ui::minifb::MinifbInterface>();
+        let bus = bus::Bus::new(pif_rom, cart_rom, ui);
         let cpu = cpu::Cpu::new(debug);
 
         N64 {
