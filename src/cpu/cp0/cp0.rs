@@ -20,6 +20,7 @@ pub struct Cp0 {
     pub reg_cause:     reg_cause::RegCause,
     pub reg_epc:       u64,
     pub reg_error_epc: u64,
+    pub reg_bad_vaddr: u64,
 
     reg_tag_lo:  u32,
 }
@@ -32,6 +33,7 @@ impl Cp0 {
 
     pub fn write_reg(&mut self, index: usize, data: u64) {
         match index {
+            8  => { self.reg_bad_vaddr = data; }
             9  => { self.reg_count   = data as u32; }
             11 => { self.reg_compare = data as u32; }
             12 => { self.reg_status  = (data as u32).into(); }
@@ -54,6 +56,7 @@ impl Cp0 {
 
     pub fn read_reg(&self, index: usize) -> u64 {
         match index {
+            8  => self.reg_bad_vaddr,
             9  => self.reg_count as u64,
             11 => self.reg_compare as u64,
             12 => self.reg_status.to_u32() as u64,
