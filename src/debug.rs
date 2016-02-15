@@ -19,8 +19,7 @@ use std::sync::atomic::Ordering;
 use rustyline::Editor;
 use nom::IResult;
 
-use bus::Bus;
-use cpu::Cpu;
+use cpu::{Cpu, CpuBus};
 use cpu::instruction::*;
 use CAUGHT_SIGINT;
 
@@ -295,15 +294,15 @@ pub enum DebuggerResult {
     Quit,
 }
 
-pub struct Debugger<'c> {
+pub struct Debugger<'c, 'i: 'c> {
     histfile: Option<PathBuf>,
     editor: Editor<'c>,
     cpu: &'c mut Cpu,
-    bus: &'c mut Bus,
+    bus: &'c mut CpuBus<'i>,
 }
 
-impl<'c> Debugger<'c> {
-    pub fn new<'a>(cpu: &'a mut Cpu, bus: &'a mut Bus) -> Debugger<'a> {
+impl<'c, 'i> Debugger<'c, 'i> {
+    pub fn new<'a>(cpu: &'a mut Cpu, bus: &'a mut CpuBus<'i>) -> Debugger<'a, 'i> {
         let mut editor = Editor::new();
         let histfile = env::home_dir().map(|p| p.join(".rustendo64dbg"));
         if let Some(ref fp) = histfile {

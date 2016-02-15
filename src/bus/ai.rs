@@ -1,5 +1,5 @@
-use bus::IoResult;
 use bus::mi;
+use bus::IoResult;
 use bus::mem_map::*;
 
 #[derive(Default, Debug)]
@@ -22,7 +22,7 @@ impl Ai {
         })
     }
 
-    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi) -> IoResult<()> {
+    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mi::Mi) -> IoResult<()> {
         Ok(match addr {
             AI_REG_DRAM_ADDR  => self.reg_dram_addr = word & 0xff_ffff,
             AI_REG_LEN        => self.reg_len = word & 0x3_ffff,

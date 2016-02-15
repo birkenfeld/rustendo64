@@ -1,8 +1,8 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use byteorder::{BigEndian, ByteOrder};
 
-use bus::IoResult;
 use bus::mi;
+use bus::{IoResult, RamAccess};
 use bus::mem_map::*;
 use ui::UiChannel;
 
@@ -30,8 +30,9 @@ impl Si {
         })
     }
 
-    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi,
-                     ram: &mut [u32], ui: &UiChannel) -> IoResult<()>
+    pub fn write_reg<R>(&mut self, addr: u32, word: u32, mi: &mi::Mi,
+                        ram: &mut R, ui: &UiChannel) -> IoResult<()>
+        where R: RamAccess
     {
         Ok(match addr {
             SI_REG_DRAM_ADDR       => {
@@ -74,7 +75,7 @@ impl Si {
         }
     }
 
-    pub fn write_pif_ram(&mut self, addr: u32, word: u32, mi: &mut mi::Mi)
+    pub fn write_pif_ram(&mut self, addr: u32, word: u32, mi: &mi::Mi)
                          -> IoResult<()> {
         let rel_addr = (addr - PIF_RAM_START) as usize;
         BigEndian::write_u32(&mut self.pif_ram[rel_addr..], word);
@@ -83,30 +84,26 @@ impl Si {
         Ok(())
     }
 
-    pub fn dma_read(&mut self, ram: &mut [u32], cstate: u32) {
-        // transfer 64 bytes PIF ram -> main memory
+    pub fn dma_read<R: RamAccess>(&mut self, ram: &mut R, cstate: u32) {
+        // execute commands in PIF ram
         self.execute(cstate);
-        let ram_start = self.reg_dram_addr as usize / 4;
-        for i in 0..16 {
-            ram[ram_start + i] = BigEndian::read_u32(&self.pif_ram[4*i..]);
-        }
+        // transfer 64 bytes PIF ram -> main memory
+        let data: Vec<_> = (0..16).map(
+            |i| BigEndian::read_u32(&self.pif_ram[4*i..])).collect();
+        ram.write_range(self.reg_dram_addr as usize / 4, &data);
         // println!("\nPIF read:");
-        // for i in 0..8 {
-        //     println!("  {:#10x} {:#10x}", ram[ram_start+2*i], ram[ram_start+2*i+1]);
-        // }
+        // for i in 0..8 { println!("  {:#10x} {:#10x}", data[2*i], data[2*i+1]); }
     }
 
-    pub fn dma_write(&mut self, ram: &[u32]) {
+    pub fn dma_write<R: RamAccess>(&mut self, ram: &mut R) {
         // TODO: we should execute commands here too. But since we only
         // implement commands that read state, executing on dma_read() is fine.
         // transfer 64 bytes main memory -> PIF ram
-        let ram_start = self.reg_dram_addr as usize / 4;
+        let data = ram.read_range(self.reg_dram_addr as usize / 4, 16);
         // println!("\nPIF write:");
-        // for i in 0..8 {
-        //     println!("  {:#10x} {:#10x}", ram[ram_start+2*i], ram[ram_start+2*i+1]);
-        // }
-        for i in 0..16 {
-            BigEndian::write_u32(&mut self.pif_ram[4*i..], ram[ram_start + i]);
+        // for i in 0..8 { println!("  {:#10x} {:#10x}", data[2*i], data[2*i+1]); }
+        for (i, word) in data.into_iter().enumerate() {
+            BigEndian::write_u32(&mut self.pif_ram[4*i..], word);
         }
     }
 

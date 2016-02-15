@@ -9,6 +9,7 @@ extern crate byteorder;
 extern crate rustyline;
 extern crate ansi_term;
 extern crate chan_signal;
+extern crate crossbeam;
 
 mod n64;
 mod cpu;

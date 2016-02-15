@@ -1,7 +1,7 @@
 [package]
 name = "rustendo64"
 version = "0.1.0"
-authors = ["ferris <jake@fusetools.com>"]
+authors = ["ferris <jake@fusetools.com>", "Georg Brandl <georg@python.org>"]
 license = "MIT/Apache-2.0"
 
 [profile.dev]
@@ -17,6 +17,7 @@ num = "0.1.30"
 enum_primitive = "0.1.0"
 ansi_term = "0.7.0"
 chan-signal = "0.1.5"
+crossbeam = "0.2.8"
 
 [dependencies.clap]
 version = "2.0.1"

@@ -1,8 +1,8 @@
 use std::cmp::max;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use bus::IoResult;
 use bus::mi;
+use bus::IoResult;
 use bus::mem_map::*;
 use ui::{UiChannel, UiOutput};
 
@@ -54,7 +54,7 @@ impl Vi {
         })
     }
 
-    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mut mi::Mi,
+    pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mi::Mi,
                      ui: &UiChannel) -> IoResult<()> {
         Ok(match addr {
             VI_REG_STATUS   => {

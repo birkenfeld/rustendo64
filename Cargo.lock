@@ -6,6 +6,7 @@ dependencies = [
  "byteorder 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "chan-signal 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "crossbeam 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "enum_primitive 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "minifb 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "nom 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -75,6 +76,11 @@ dependencies = [
  "strsim 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "vec_map 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "crossbeam"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "dylib"

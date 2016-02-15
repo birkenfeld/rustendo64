@@ -3,12 +3,14 @@ mod si;
 mod pi;
 mod ai;
 mod ri;
-pub mod cic;
+mod mem;
 pub mod mi;
 pub mod mem_map;
 
-use std::fmt;
+use std::sync::RwLock;
+use std::sync::atomic::Ordering;
 
+pub use self::mem::RamAccess;
 use self::mem_map::*;
 use self::vi::Vi;
 use self::si::Si;
@@ -19,51 +21,72 @@ use self::ri::Ri;
 use ui::{UiOutput, UiChannel};
 use rsp::{Sp, Dp};
 
-const PIF_ROM_SIZE: usize = 0x800;
+macro_rules! lr {
+    ($what:expr) => { $what.read().unwrap() };
+}
+
+macro_rules! lw {
+    ($what:expr) => { $what.write().unwrap() };
+}
 
 pub type IoResult<T> = Result<T, &'static str>;
 
-pub struct Bus {
-    ui: UiChannel,
-    ram: Box<[u32]>,
-    sp: Sp,
-    dp: Dp,
+pub struct BusInterfaces {
+    // The MI is unlocked here since it is used by everyone for interrupts,
+    // so it only stores registers and uses atomics for them.
     mi: Mi,
-    vi: Vi,
-    ai: Ai,
-    ri: Ri,
-    pi: Pi,
-    si: Si,
+    // All other interfaces are locked, and so can have any kind of data.
+    sp: RwLock<Sp>,
+    dp: RwLock<Dp>,
+    vi: RwLock<Vi>,
+    ai: RwLock<Ai>,
+    ri: RwLock<Ri>,  // includes RDRAM regs
+    pi: RwLock<Pi>,
+    si: RwLock<Si>,
 }
 
-impl Bus {
-    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>, ui: UiChannel) -> Bus {
-        Bus {
-            ui: ui,
-            ram: vec![0; RDRAM_SIZE / 4].into_boxed_slice(),
-            sp: Sp::default(),
-            dp: Dp::default(),
+impl BusInterfaces {
+    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>) -> BusInterfaces {
+        BusInterfaces {
             mi: Mi::default(),
-            vi: Vi::default(),
-            ai: Ai::default(),
-            ri: Ri::default(),
-            pi: Pi::new(cart_rom),
-            si: Si::new(pif_rom),
+            sp: RwLock::new(Sp::default()),
+            dp: RwLock::new(Dp::default()),
+            vi: RwLock::new(Vi::default()),
+            ai: RwLock::new(Ai::default()),
+            ri: RwLock::new(Ri::default()),
+            pi: RwLock::new(Pi::new(cart_rom)),
+            si: RwLock::new(Si::new(pif_rom)),
         }
     }
 
     pub fn power_on_reset(&mut self) {
         // determine checksum seed and write to PIF ram
-        if let Some(seed) = self.pi.get_cic_seed() {
-            self.si.set_cic_seed(seed);
+        if let Some(seed) = lr!(self.pi).get_cic_seed() {
+            lw!(self.si).set_cic_seed(seed);
         } else {
             println!("Warning: no CIC seed found for this ROM");
         }
-        // memory size
-        self.write_word(0x3f0, RDRAM_SIZE as u32).unwrap();
         // power-on reset configs from cen64
-        self.sp.power_on_reset();
-        self.ri.power_on_reset();
+        lw!(self.sp).power_on_reset();
+        lw!(self.ri).power_on_reset();
+    }
+}
+
+pub struct Bus<'i, R, S> where R: RamAccess, S: RamAccess {
+    ui: UiChannel,
+    ifs: &'i BusInterfaces,
+    ram: R,
+    spram: S,
+}
+
+impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
+    pub fn new(ui: UiChannel, ifs: &'i BusInterfaces, ram: R, spram: S) -> Bus<'i, R, S> {
+        Bus {
+            ui: ui,
+            ifs: ifs,
+            ram: ram,
+            spram: spram,
+        }
     }
 
     pub fn read_word(&self, addr: u32) -> IoResult<u32> {
@@ -71,21 +94,21 @@ impl Bus {
             return Err("unaligned access");
         }
         match addr {
-            RDRAM_START     ... RDRAM_END     => Ok(self.ram[addr as usize / 4]),
-            CART_ROM_START  ... CART_ROM_END  => self.pi.read_rom(addr),
-            PIF_ROM_START   ... PIF_ROM_END   => self.si.read_pif_rom(addr),
-            PIF_RAM_START   ... PIF_RAM_END   => self.si.read_pif_ram(addr),
-            SP_DMEM_START   ... SP_DMEM_END   => self.sp.read_dmem(addr),
-            SP_IMEM_START   ... SP_IMEM_END   => self.sp.read_imem(addr),
-            SP_REG_START    ... SP_REG_END    => self.sp.read_reg(addr),
-            DP_REG_START    ... DP_REG_END    => self.dp.read_reg(addr),
-            SI_REG_START    ... SI_REG_END    => self.si.read_reg(addr),
-            MI_REG_START    ... MI_REG_END    => self.mi.read_reg(addr),
-            VI_REG_START    ... VI_REG_END    => self.vi.read_reg(addr),
-            AI_REG_START    ... AI_REG_END    => self.ai.read_reg(addr),
-            PI_REG_START    ... PI_REG_END    => self.pi.read_reg(addr),
+            RDRAM_START     ... RDRAM_END     => Ok(self.ram.read_word(addr as usize / 4)),
+            CART_ROM_START  ... CART_ROM_END  => lr!(self.ifs.pi).read_rom(addr),
+            PIF_ROM_START   ... PIF_ROM_END   => lr!(self.ifs.si).read_pif_rom(addr),
+            PIF_RAM_START   ... PIF_RAM_END   => lr!(self.ifs.si).read_pif_ram(addr),
+            SP_DMEM_START   ... SP_IMEM_END   =>
+                Ok(self.spram.read_word((addr - SP_DMEM_START) as usize / 4)),
+            SP_REG_START    ... SP_REG_END    => lr!(self.ifs.sp).read_reg(addr),
+            DP_REG_START    ... DP_REG_END    => lr!(self.ifs.dp).read_reg(addr),
+            SI_REG_START    ... SI_REG_END    => lr!(self.ifs.si).read_reg(addr),
+            MI_REG_START    ... MI_REG_END    => self.ifs.mi.read_reg(addr),
+            VI_REG_START    ... VI_REG_END    => lr!(self.ifs.vi).read_reg(addr),
+            AI_REG_START    ... AI_REG_END    => lr!(self.ifs.ai).read_reg(addr),
+            PI_REG_START    ... PI_REG_END    => lr!(self.ifs.pi).read_reg(addr),
             RI_REG_START    ... RI_REG_END    |
-            RDRAM_REG_START ... RDRAM_REG_END => self.ri.read_reg(addr),
+            RDRAM_REG_START ... RDRAM_REG_END => lr!(self.ifs.ri).read_reg(addr),
             DD_ROM_START    ... DD_ROM_END    => Ok(0),
             DD_REG_START    ... DD_REG_END    => Ok(0),
             _ => Err("Unsupported read memory area")
@@ -98,56 +121,47 @@ impl Bus {
         }
         match addr {
             RDRAM_START     ... RDRAM_END     =>
-                Ok(self.ram[addr as usize / 4] = word),
+                Ok(self.ram.write_word(addr as usize / 4, word)),
             PIF_RAM_START   ... PIF_RAM_END   =>
-                self.si.write_pif_ram(addr, word, &mut self.mi),
-            SP_DMEM_START   ... SP_DMEM_END   =>
-                self.sp.write_dmem(addr, word),
-            SP_IMEM_START   ... SP_IMEM_END   =>
-                self.sp.write_imem(addr, word),
+                lw!(self.ifs.si).write_pif_ram(addr, word, &self.ifs.mi),
+            SP_DMEM_START   ... SP_IMEM_END   =>
+                Ok(self.spram.write_word((addr - SP_DMEM_START) as usize / 4, word)),
             SP_REG_START    ... SP_REG_END    =>
-                self.sp.write_reg(addr, word, &mut self.mi),
+                lw!(self.ifs.sp).write_reg(addr, word, &self.ifs.mi),
             DP_REG_START    ... DP_REG_END    =>
-                self.dp.write_reg(addr, word),
+                lw!(self.ifs.dp).write_reg(addr, word),
             SI_REG_START    ... SI_REG_END    =>
-                self.si.write_reg(addr, word, &mut self.mi, &mut self.ram, &self.ui),
+                lw!(self.ifs.si).write_reg(addr, word, &self.ifs.mi, &mut self.ram,
+                                           &self.ui),
             MI_REG_START    ... MI_REG_END    =>
-                self.mi.write_reg(addr, word),
+                self.ifs.mi.write_reg(addr, word),
             VI_REG_START    ... VI_REG_END    =>
-                self.vi.write_reg(addr, word, &mut self.mi, &self.ui),
+                lw!(self.ifs.vi).write_reg(addr, word, &self.ifs.mi, &self.ui),
             AI_REG_START    ... AI_REG_END    =>
-                self.ai.write_reg(addr, word, &mut self.mi),
+                lw!(self.ifs.ai).write_reg(addr, word, &self.ifs.mi),
             PI_REG_START    ... PI_REG_END    =>
-                self.pi.write_reg(addr, word, &mut self.mi, &mut self.ram),
+                lw!(self.ifs.pi).write_reg(addr, word, &self.ifs.mi, &mut self.ram),
             RI_REG_START    ... RI_REG_END    |
             RDRAM_REG_START ... RDRAM_REG_END =>
-                self.ri.write_reg(addr, word),
+                lw!(self.ifs.ri).write_reg(addr, word),
             _ => Err("Unsupported memory write area")
         }
     }
 
     pub fn vi_cycle(&mut self) {
-        self.ui.send(UiOutput::Update(
-            self.ram[self.vi.vram_start..self.vi.vram_end].to_vec()));
-        self.mi.set_interrupt(mi::Intr::VI);
+        let (s, l) = {
+            let vi = lr!(self.ifs.vi);
+            (vi.vram_start, vi.vram_end - vi.vram_start)
+        };
+        self.ui.send(UiOutput::Update(self.ram.read_range(s, l)));
+        self.ifs.mi.set_interrupt(mi::Intr::VI);
     }
 
     pub fn has_interrupt(&self) -> bool {
-        self.mi.has_interrupt
+        self.ifs.mi.has_interrupt.load(Ordering::SeqCst)
     }
-}
 
-impl fmt::Debug for Bus {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Bus")
-         .field("sp", &self.sp)
-         .field("dp", &self.dp)
-         .field("mi", &self.mi)
-         .field("vi", &self.vi)
-         .field("ai", &self.ai)
-         .field("pi", &self.pi)
-         .field("ri", &self.ri)
-         .field("si", &self.si)
-         .finish()
+    pub fn destroy(self) -> UiChannel {
+        self.ui
     }
 }

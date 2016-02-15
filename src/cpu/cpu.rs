@@ -1,4 +1,5 @@
 use std::fmt;
+use std::sync::RwLock;
 
 use bus::Bus;
 use bus::mem_map::*;
@@ -35,6 +36,8 @@ pub struct Cpu {
     reg_llbit:          bool,
     reg_fcr31:          u32,
 }
+
+pub type CpuBus<'a> = Bus<'a, &'a mut [u32], &'a RwLock<Box<[u32]>>>;
 
 #[cfg(debug_assertions)]
 macro_rules! dprintln {
@@ -98,7 +101,7 @@ impl Cpu {
         self.reg_pc = RESET_VECTOR;
     }
 
-    pub fn run_instruction(&mut self, bus: &mut Bus) {
+    pub fn run_instruction(&mut self, bus: &mut CpuBus) {
         // Process interrupts from interconnect.
         if bus.has_interrupt() {
             self.flag_exception(Exception::Interrupt(Intr::Ext(0)));
@@ -127,7 +130,7 @@ impl Cpu {
         self.reg_pc = self.next_pc.take().unwrap_or(self.reg_pc + 4);
     }
 
-    pub fn run_branch_delay_slot(&mut self, bus: &mut Bus, addr: u64) {
+    pub fn run_branch_delay_slot(&mut self, bus: &mut CpuBus, addr: u64) {
         if self.in_branch_delay {
             self.bug(format!("Branching in branch delay slot -- check semantics!"));
         }
@@ -140,7 +143,7 @@ impl Cpu {
     }
 
     #[cfg(debug_assertions)]
-    fn handle_debug(&mut self, bus: &mut Bus, pc: u64, instr: &Instruction) {
+    fn handle_debug(&mut self, bus: &mut CpuBus, pc: u64, instr: &Instruction) {
         use std::u64;
         use ansi_term::Colour;
         use debug::Debugger;
@@ -174,10 +177,10 @@ impl Cpu {
     }
 
     #[cfg(not(debug_assertions))]
-    fn handle_debug(&mut self, _: &mut Bus, _: u64, _: &Instruction) { }
+    fn handle_debug(&mut self, _: &mut CpuBus, _: u64, _: &Instruction) { }
 
     #[inline(always)]
-    fn dispatch_instr(&mut self, bus: &mut Bus, instr: &Instruction) {
+    fn dispatch_instr(&mut self, bus: &mut CpuBus, instr: &Instruction) {
         match instr.opcode() {
             LUI   => {
                 let val = instr.imm_sign_ext() << 16;
@@ -464,7 +467,7 @@ impl Cpu {
         }
     }
 
-    fn mem_load<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction,
+    fn mem_load<T: MemFmt, F>(&mut self, bus: &CpuBus, instr: &Instruction,
                               linked: bool, func: F) where F: Fn(T) -> u64
     {
         let addr = self.aligned_addr(instr, T::get_align());
@@ -478,7 +481,7 @@ impl Cpu {
         self.write_gpr(instr.rt(), data);
     }
 
-    fn mem_store<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction,
+    fn mem_store<T: MemFmt, F>(&mut self, bus: &mut CpuBus, instr: &Instruction,
                                linked: bool, func: F) where F: Fn(u64) -> T
     {
         let addr = self.aligned_addr(instr, T::get_align());
@@ -496,7 +499,7 @@ impl Cpu {
         }
     }
 
-    fn mem_load_unaligned<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction,
+    fn mem_load_unaligned<T: MemFmt, F>(&mut self, bus: &CpuBus, instr: &Instruction,
                                         right: bool, func: F) where F: Fn(T) -> u64
     {
         let addr = self.aligned_addr(&instr, 1);
@@ -520,7 +523,7 @@ impl Cpu {
         self.write_gpr(instr.rt(), reg);
     }
 
-    fn mem_store_unaligned<T: MemFmt, F>(&mut self, bus: &mut Bus, instr: &Instruction,
+    fn mem_store_unaligned<T: MemFmt, F>(&mut self, bus: &mut CpuBus, instr: &Instruction,
                                          right: bool, func: F) where F: Fn(u64, T, u64) -> T
     {
         let addr = self.aligned_addr(&instr, 1);
@@ -584,7 +587,7 @@ impl Cpu {
         self.write_gpr(instr.rd(), res);
     }
 
-    fn jump(&mut self, bus: &mut Bus, addr: u64, link_reg: usize) {
+    fn jump(&mut self, bus: &mut CpuBus, addr: u64, link_reg: usize) {
         if addr & 0b11 != 0 {
             self.bug(format!("Unaligned address in jump: {:#x}", addr));
         }
@@ -598,7 +601,7 @@ impl Cpu {
         self.run_branch_delay_slot(bus, addr);
     }
 
-    fn branch<P>(&mut self, bus: &mut Bus, instr: &Instruction, likely: bool,
+    fn branch<P>(&mut self, bus: &mut CpuBus, instr: &Instruction, likely: bool,
                  link: bool, mut predicate: P) where P: FnMut(&mut Self) -> bool
     {
         // Offset is relative to the delay slot.
@@ -718,7 +721,7 @@ impl Cpu {
         }
     }
 
-    fn mem_load_fp<T: FpFmt + MemFmt>(&mut self, bus: &mut Bus, instr: &Instruction) {
+    fn mem_load_fp<T: FpFmt + MemFmt>(&mut self, bus: &CpuBus, instr: &Instruction) {
         let addr = self.aligned_addr(&instr, T::get_align());
         let data = T::load_from(self, bus, addr);
         dprintln!(self, "{} $f{:02} <- {:16.8} :  mem @ {:#x}",
@@ -736,7 +739,7 @@ impl Cpu {
         }
     }
 
-    fn mem_store_fp<T: FpFmt + MemFmt>(&mut self, bus: &mut Bus, instr: &Instruction) {
+    fn mem_store_fp<T: FpFmt + MemFmt>(&mut self, bus: &mut CpuBus, instr: &Instruction) {
         let addr = self.aligned_addr(&instr, T::get_align());
         let reg = instr.ft();
         let data = if self.cp0.reg_status.additional_fp_regs {
@@ -789,7 +792,7 @@ impl Cpu {
         self.write_gpr(instr.rt(), func(data));
     }
 
-    pub fn read_word(&self, bus: &Bus, virt_addr: u64, load_instr: bool) -> u32 {
+    pub fn read_word(&self, bus: &CpuBus, virt_addr: u64, load_instr: bool) -> u32 {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         match bus.read_word(phys_addr as u32) {
             Ok(res) => {
@@ -802,7 +805,7 @@ impl Cpu {
         }
     }
 
-    pub fn write_word(&mut self, bus: &mut Bus, virt_addr: u64, word: u32) {
+    pub fn write_word(&mut self, bus: &mut CpuBus, virt_addr: u64, word: u32) {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         if (phys_addr as u32) & !0xF == self.cp0.reg_lladdr {
             self.reg_llbit = false;
@@ -813,12 +816,12 @@ impl Cpu {
         }
     }
 
-    pub fn read_dword(&self, bus: &Bus, virt_addr: u64) -> u64 {
+    pub fn read_dword(&self, bus: &CpuBus, virt_addr: u64) -> u64 {
         (self.read_word(bus, virt_addr, false) as u64) << 32 |
         self.read_word(bus, virt_addr + 4, false) as u64
     }
 
-    pub fn write_dword(&mut self, bus: &mut Bus, virt_addr: u64, dword: u64) {
+    pub fn write_dword(&mut self, bus: &mut CpuBus, virt_addr: u64, dword: u64) {
         self.write_word(bus, virt_addr, (dword >> 32) as u32);
         self.write_word(bus, virt_addr + 4, dword as u32);
     }
