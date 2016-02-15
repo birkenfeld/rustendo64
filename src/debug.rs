@@ -160,6 +160,7 @@ impl fmt::Debug for DebugSpec {
 pub struct DebugSpecList(Vec<DebugSpec>);
 
 impl DebugSpecList {
+    #[cfg(debug_assertions)]
     pub fn from_args(args: Vec<String>) -> DebugSpecList {
         let specs = args.into_iter().filter_map(|arg| {
             match arg.parse::<DebugSpec>() {
@@ -171,6 +172,14 @@ impl DebugSpecList {
             }
         }).collect();
         DebugSpecList(specs)
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub fn from_args(args: Vec<String>) -> DebugSpecList {
+        if !args.is_empty() {
+            println!("Warning: debug specs not supported in release build");
+        }
+        DebugSpecList(vec![])
     }
 
     pub fn add_spec(&mut self, spec: DebugSpec) {

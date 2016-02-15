@@ -1,6 +1,4 @@
 use std::fmt;
-use std::u64;
-use ansi_term::Colour;
 
 use bus::Bus;
 use bus::mem_map::*;
@@ -8,7 +6,7 @@ use cpu::cp0::Cp0;
 use cpu::instruction::*;
 use cpu::exception::*;
 use cpu::types::*;
-use debug::{Debugger, DebugSpecList};
+use debug::DebugSpecList;
 use util::{mult_64_64_unsigned, mult_64_64_signed};
 
 const NUM_GPR: usize = 32;
@@ -38,15 +36,19 @@ pub struct Cpu {
     reg_fcr31:          u32,
 }
 
-macro_rules! bug {
-    ($cpu:expr, $($args:expr),+) => { $cpu.bug(format!($($args),+)); }
+#[cfg(debug_assertions)]
+macro_rules! dprintln {
+    ($cpu:expr, $($args:expr),+) => {
+        if $cpu.debug_print {
+            use ansi_term::Colour;
+            println!("{}", Colour::Blue.paint(format!($($args),+)));
+        }
+    }
 }
 
+#[cfg(not(debug_assertions))]
 macro_rules! dprintln {
-    ($cpu:expr, $($args:expr),+) => { if $cpu.debug_print {
-        println!("{}", Colour::Blue.paint(format!($($args),+)));
-    } }
-    //($cpu:expr, $($args:expr),+) => { }
+    ($cpu:expr, $($args:expr),+) => { }
 }
 
 
@@ -127,7 +129,7 @@ impl Cpu {
 
     pub fn run_branch_delay_slot(&mut self, bus: &mut Bus, addr: u64) {
         if self.in_branch_delay {
-            bug!(self, "Branching in branch delay slot -- check semantics!");
+            self.bug(format!("Branching in branch delay slot -- check semantics!"));
         }
         self.in_branch_delay = true;
         self.reg_pc += 4;
@@ -137,7 +139,12 @@ impl Cpu {
         self.in_branch_delay = false;
     }
 
+    #[cfg(debug_assertions)]
     fn handle_debug(&mut self, bus: &mut Bus, pc: u64, instr: &Instruction) {
+        use std::u64;
+        use ansi_term::Colour;
+        use debug::Debugger;
+
         let (debug_for, dump_here, break_here) =
             self.debug_specs.check_instr(pc, instr, &self.reg_gpr);
         self.instr_counter += 1;
@@ -165,6 +172,9 @@ impl Cpu {
             self.debug_print = false;
         }
     }
+
+    #[cfg(not(debug_assertions))]
+    fn handle_debug(&mut self, _: &mut Bus, _: u64, _: &Instruction) { }
 
     #[inline(always)]
     fn dispatch_instr(&mut self, bus: &mut Bus, instr: &Instruction) {
@@ -297,7 +307,7 @@ impl Cpu {
                 // TEQ, TGE, TGEU, TLT, TLTU, TNE
                 SYNC  => { }
                 // SYSCALL
-                _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
+                _ => self.bug(format!("#UD: I {:#b} -- {:?}", instr.0, instr))
             },
             REGIMM => match instr.regimm_op() {
                 BGEZ    => self.branch(bus, instr, false, false,
@@ -317,7 +327,7 @@ impl Cpu {
                 BLTZALL => self.branch(bus, instr, true,  true,
                                        |cpu| (cpu.read_gpr(instr.rs()) >> 63) != 0),
                 // TEQI, TGEI, TGEIU, TLTI, TLTIU, TNEI
-                _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
+                _ => self.bug(format!("#UD: I {:#b} -- {:?}", instr.0, instr))
             },
             COP0 => match instr.cop_op() {
                 // TODO: do these really transfer 64 bits?
@@ -348,16 +358,16 @@ impl Cpu {
                             self.next_pc = Some(self.cp0.reg_epc);
                             self.cp0.reg_status.exception_level = false;
                         } else {
-                            bug!(self, "ERET without error/exception bit set");
+                            self.bug(format!("ERET without error/exception bit set"));
                         }
                     }
                     TLBP  => { }
                     TLBR  => { }
                     TLBWI => { }
                     TLBWR => { }
-                    _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
+                    _ => self.bug(format!("#UD: I {:#b} -- {:?}", instr.0, instr))
                 },
-                _ => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
+                _ => self.bug(format!("#UD: I {:#b} -- {:?}", instr.0, instr))
             },
             COP1 => match instr.cop_op() {
                 MF  => self.reg_store_fp(instr, |v: i32| v as u64),
@@ -368,7 +378,7 @@ impl Cpu {
                     let data = match instr.fs() {
                         31 => self.reg_fcr31,
                         0  => 0xB << 8 | 0,  // TODO: constant
-                        _  => bug!(self, "#RG: invalid read fp control reg {}", instr.fs())
+                        _  => self.bug(format!("#RG: invalid read fp control reg {}", instr.fs()))
                     };
                     dprintln!(self, "{} cp1[{:2}] :  {:#18x}, {:#066b}",
                               INDENT, instr.fs(), data, data);
@@ -381,7 +391,7 @@ impl Cpu {
                     if instr.fs() == 31 {
                         self.reg_fcr31 = data as u32;
                     } else {
-                        bug!(self, "#RG: invalid write fp control reg {}", instr.fs());
+                        self.bug(format!("#RG: invalid write fp control reg {}", instr.fs()));
                     }
                 }
                 BC  => match instr.regimm_op() {
@@ -389,7 +399,7 @@ impl Cpu {
                     BCFL => self.branch(bus, instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 == 0),
                     BCT  => self.branch(bus, instr, false, false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
                     BCTL => self.branch(bus, instr, true,  false, |cpu| cpu.reg_fcr31 & 0x80_0000 != 0),
-                    _    => bug!(self, "#UD: {:#b} -- {:?}", instr.0, instr)
+                    _    => self.bug(format!("#UD: {:#b} -- {:?}", instr.0, instr))
                 },
                 _   => match instr.fp_op() {
                     // TODO: exceptions
@@ -408,13 +418,13 @@ impl Cpu {
                         FMT_D => self.fp_convert::<f64, _, _>(instr, |a| a as f32),
                         FMT_W => self.fp_convert::<i32, _, _>(instr, |a| a as f32),
                         FMT_L => self.fp_convert::<i64, _, _>(instr, |a| a as f32),
-                        _     => bug!(self, "invalid FP source format: {:?}", instr)
+                        _     => self.bug(format!("invalid FP source format: {:?}", instr))
                     },
                     FCVTD   => match instr.fp_fmt() {
                         FMT_S => self.fp_convert::<f32, _, _>(instr, |a| a as f64),
                         FMT_W => self.fp_convert::<i32, _, _>(instr, |a| a as f64),
                         FMT_L => self.fp_convert::<i64, _, _>(instr, |a| a as f64),
-                        _     => bug!(self, "invalid FP source format: {:?}", instr)
+                        _     => self.bug(format!("invalid FP source format: {:?}", instr))
                     },
                     FCVTW   => self.fp_convert_2way(instr, |a| a.round() as i32, |a| a.round() as i32),
                     FCVTL   => self.fp_convert_2way(instr, |a| a.round() as i64, |a| a.round() as i64),
@@ -443,14 +453,14 @@ impl Cpu {
                     FCNGE   => self.fp_compare_2way(instr, true,  |r| r == FpOrd::Lt || r == FpOrd::No),
                     FCLE    => self.fp_compare_2way(instr, true,  |r| r != FpOrd::Gt && r != FpOrd::No),
                     FCNGT   => self.fp_compare_2way(instr, true,  |r| r != FpOrd::Gt),
-                    _       => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
+                    _       => self.bug(format!("#UD: I {:#b} -- {:?}", instr.0, instr))
                 }
             },
             LDC1 => self.mem_load_fp::<u64> (bus, instr),
             LWC1 => self.mem_load_fp::<u32> (bus, instr),
             SDC1 => self.mem_store_fp::<u64>(bus, instr),
             SWC1 => self.mem_store_fp::<u32>(bus, instr),
-            _    => bug!(self, "#UD: I {:#b} -- {:?}", instr.0, instr)
+            _    => self.bug(format!("#UD: I {:#b} -- {:?}", instr.0, instr))
         }
     }
 
@@ -576,7 +586,7 @@ impl Cpu {
 
     fn jump(&mut self, bus: &mut Bus, addr: u64, link_reg: usize) {
         if addr & 0b11 != 0 {
-            bug!(self, "Unaligned address in jump: {:#x}", addr);
+            self.bug(format!("Unaligned address in jump: {:#x}", addr));
         }
         if link_reg > 0 {
             let return_addr = self.reg_pc + 8;
@@ -614,7 +624,7 @@ impl Cpu {
     fn aligned_addr(&self, instr: &Instruction, align: u64) -> u64 {
         let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_ext());
         if addr & (align - 1) != 0 {
-            bug!(self, "Address not aligned to {} bytes: {:#x}", align, addr);
+            self.bug(format!("Address not aligned to {} bytes: {:#x}", align, addr));
         }
         addr
     }
@@ -635,7 +645,7 @@ impl Cpu {
         match instr.fp_fmt() {
             FMT_S => self.fp_unary(&instr, f),
             FMT_D => self.fp_unary(&instr, g),
-            _     => { bug!(self, "invalid FP format: {:?}", instr); }
+            _     => self.bug(format!("invalid FP format: {:?}", instr)),
         }
     }
 
@@ -657,7 +667,7 @@ impl Cpu {
         match instr.fp_fmt() {
             FMT_S => self.fp_binary(&instr, f),
             FMT_D => self.fp_binary(&instr, g),
-            _     => { bug!(self, "invalid FP format: {:?}", instr); }
+            _     => self.bug(format!("invalid FP format: {:?}", instr)),
         }
     }
 
@@ -677,7 +687,7 @@ impl Cpu {
         match instr.fp_fmt() {
             FMT_S => self.fp_convert(&instr, f),
             FMT_D => self.fp_convert(&instr, g),
-            _     => { bug!(self, "invalid FP format: {:?}", instr); }
+            _     => self.bug(format!("invalid FP format: {:?}", instr)),
         }
     }
 
@@ -704,7 +714,7 @@ impl Cpu {
         match instr.fp_fmt() {
             FMT_S => self.fp_compare::<f32, _>(&instr, signal, f),
             FMT_D => self.fp_compare::<f64, _>(&instr, signal, f),
-            _     => { bug!(self, "invalid FP format: {:?}", instr); }
+            _     => self.bug(format!("invalid FP format: {:?}", instr)),
         }
     }
 
@@ -743,13 +753,11 @@ impl Cpu {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         match bus.read_word(phys_addr as u32) {
             Ok(res) => {
-                if !load_instr && self.debug_specs.matches_mem(phys_addr as u64, false) {
-                    println!("Bus read:  {:#10x} :  {:#10x}", phys_addr, res);
-                }
+                self.debug_read(phys_addr, load_instr, res);
                 res
             }
             Err(desc) => {
-                bug!(self, "{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr);
+                self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
             }
         }
     }
@@ -759,11 +767,9 @@ impl Cpu {
         if (phys_addr as u32) & !0xF == self.cp0.reg_lladdr {
             self.reg_llbit = false;
         }
-        if self.debug_specs.matches_mem(phys_addr as u64, true) {
-            println!("Bus write: {:#10x} <- {:#10x}", phys_addr, word);
-        }
+        self.debug_write(phys_addr, word);
         if let Err(desc) = bus.write_word(phys_addr as u32, word) {
-            bug!(self, "{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr);
+            self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
         }
     }
 
@@ -777,6 +783,26 @@ impl Cpu {
         self.write_word(bus, virt_addr + 4, dword as u32);
     }
 
+    #[cfg(debug_assertions)]
+    fn debug_read(&self, phys_addr: u64, load_instr: bool, res: u32) {
+        if !load_instr && self.debug_specs.matches_mem(phys_addr, false) {
+            println!("Bus read:  {:#10x} :  {:#10x}", phys_addr, res);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_write(&self, phys_addr: u64, word: u32) {
+        if self.debug_specs.matches_mem(phys_addr, true) {
+            println!("Bus write: {:#10x} <- {:#10x}", phys_addr, word);
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn debug_read(&self, _: u64, _: bool, _: u32) { }
+
+    #[cfg(not(debug_assertions))]
+    fn debug_write(&self, _: u64, _: u32) { }
+
     fn virt_addr_to_phys_addr(&self, virt_addr: u64) -> u64 {
         // See Table 5-3 in the VR4300 User's Manual
         let addr_bit_values = (virt_addr >> 29) & 0b111;
@@ -789,7 +815,7 @@ impl Cpu {
             virt_addr - KSEG0_START
         } else {
             // TODO
-            bug!(self, "Unrecognized virtual address: {:#x}", virt_addr);
+            self.bug(format!("Unrecognized virtual address: {:#x}", virt_addr));
         }
     }
 
