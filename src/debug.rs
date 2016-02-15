@@ -182,7 +182,7 @@ impl DebugSpecList {
     }
 
     pub fn check_instr(&mut self, pc: u64, instr: &Instruction, gprs: &[u64])
-                       -> (u32, bool, bool) {
+                       -> (u64, bool, bool) {
         let mut debug_for = 0;
         let mut dump = false;
         let mut breakpt = false;
@@ -248,7 +248,7 @@ impl DebugSpecList {
             DebugSpec::BreakIn(0)                   => false,
             _ => true
         });
-        (debug_for as u32, dump, breakpt)
+        (debug_for, dump, breakpt)
     }
 
     pub fn matches_mem(&self, addr: u64, write: bool) -> bool {

@@ -1,5 +1,5 @@
 use std::fmt;
-use std::u32;
+use std::u64;
 use ansi_term::Colour;
 
 use bus::Bus;
@@ -16,9 +16,9 @@ const NUM_GPR: usize = 32;
 pub struct Cpu {
     // Debugging info
     pub debug_specs:    DebugSpecList,
-    instr_counter:      u32,
+    instr_counter:      u64,
     debug_print:        bool,
-    debug_print_until:  u32,
+    debug_print_until:  u64,
     last_instr:         Instruction,
 
     // Helpers
@@ -156,8 +156,8 @@ impl Cpu {
         }
         if debug_for > 0 {
             self.debug_print = true;
-            if debug_for == u32::MAX {
-                self.debug_print_until = u32::MAX;
+            if debug_for == u64::MAX {
+                self.debug_print_until = u64::MAX;
             } else if debug_for > 1 {
                 self.debug_print_until = self.instr_counter + debug_for;
             }
