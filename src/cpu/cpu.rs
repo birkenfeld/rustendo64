@@ -97,24 +97,49 @@ impl Cpu {
     }
 
     pub fn run_instruction(&mut self, bus: &mut Bus) {
+        // Process interrupts from interconnect.
+        if bus.has_interrupt() {
+            self.flag_exception(Exception::Interrupt(Intr::Ext(0)));
+        }
+
         // Timer interrupt?
         self.cp0.reg_count = self.cp0.reg_count.wrapping_add(1);
         if self.cp0.reg_compare == self.cp0.reg_count {
             self.flag_exception(Exception::Interrupt(Intr::Timer));
         }
 
-        // Process interrupts from interconnect
-        if bus.has_interrupt() {
-            self.flag_exception(Exception::Interrupt(Intr::Ext(0)));
-        }
-
+        // Read next instruction.
         let pc = self.reg_pc;
         self.last_instr = Instruction(self.read_word(bus, pc, true));
         let instr = self.last_instr;
 
-        // Debug stuff. This might not really belong here?
+        // Maybe process some debug stuff.
+        self.handle_debug(bus, pc, &instr);
+
+        // Dispatch.
+        dprintln!(self, "op: {:#10x}   {:?}", pc as u32, instr);
+        self.dispatch_instr(bus, &instr);
+
+        // Go to next instruction if current instruction didn't jump
+        // (or set an exception vector, etc.)
+        self.reg_pc = self.next_pc.take().unwrap_or(self.reg_pc + 4);
+    }
+
+    pub fn run_branch_delay_slot(&mut self, bus: &mut Bus, addr: u64) {
+        if self.in_branch_delay {
+            bug!(self, "Branching in branch delay slot -- check semantics!");
+        }
+        self.in_branch_delay = true;
+        self.reg_pc += 4;
+        self.next_pc = Some(addr); // prepare jump
+        self.run_instruction(bus);
+        self.next_pc = Some(self.reg_pc); // no adjustment to pc
+        self.in_branch_delay = false;
+    }
+
+    fn handle_debug(&mut self, bus: &mut Bus, pc: u64, instr: &Instruction) {
         let (debug_for, dump_here, break_here) =
-            self.debug_specs.check_instr(pc, &instr, &self.reg_gpr);
+            self.debug_specs.check_instr(pc, instr, &self.reg_gpr);
         self.instr_counter += 1;
         if break_here {
             println!("{}", Colour::Red.paint(
@@ -139,25 +164,6 @@ impl Cpu {
         } else if self.debug_print && self.instr_counter > self.debug_print_until {
             self.debug_print = false;
         }
-        dprintln!(self, "op: {:#10x}   {:?}", pc as u32, instr);
-
-        self.dispatch_instr(bus, &instr);
-
-        // Go to next instruction if current instruction didn't jump
-        // (or set an exception vector, etc.)
-        self.reg_pc = self.next_pc.take().unwrap_or(self.reg_pc + 4);
-    }
-
-    pub fn run_branch_delay_slot(&mut self, bus: &mut Bus, addr: u64) {
-        if self.in_branch_delay {
-            bug!(self, "Branching in branch delay slot -- check semantics!");
-        }
-        self.in_branch_delay = true;
-        self.reg_pc += 4;
-        self.next_pc = Some(addr); // prepare jump
-        self.run_instruction(bus);
-        self.next_pc = Some(self.reg_pc); // no adjustment to pc
-        self.in_branch_delay = false;
     }
 
     #[inline(always)]
