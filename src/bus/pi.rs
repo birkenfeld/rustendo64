@@ -82,7 +82,13 @@ impl Pi {
 
     pub fn read_rom(&self, addr: u32) -> IoResult<u32> {
         let rel_addr = (addr - CART_ROM_START) as usize;
-        Ok(BigEndian::read_u32(&self.cart_rom[rel_addr..]))
+        if rel_addr > self.cart_rom.len() - 4 {
+            println!("Warning: reading {} bytes beyond end of ROM data, returning zeros.",
+                     (4 + rel_addr) - self.cart_rom.len());
+            Ok(0)
+        } else {
+            Ok(BigEndian::read_u32(&self.cart_rom[rel_addr..]))
+        }
     }
 
     pub fn dma_read(&mut self, ram: &mut [u32], word: u32) {
