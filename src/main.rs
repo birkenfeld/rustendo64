@@ -20,7 +20,7 @@ mod debug;
 
 use std::process;
 use std::thread;
-use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
+use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT};
 use clap::{App, Arg, ArgMatches};
 use chan_signal::{notify, Signal};
 
@@ -68,13 +68,25 @@ fn get_arguments<'a>() -> ArgMatches<'a> {
         .get_matches()
 }
 
+#[cfg(debug_assertions)]
+fn sigint_handler() {
+    use std::sync::atomic::Ordering;
+    CAUGHT_SIGINT.store(true, Ordering::Relaxed);
+}
+
+#[cfg(not(debug_assertions))]
+fn sigint_handler() {
+    println!("Exiting on keyboard interrupt.");
+    process::exit(2);
+}
+
 /// Set up a signal handler to break into the debugger on Ctrl-C.
 fn setup_signal_handler() {
     let sig = notify(&[Signal::INT, Signal::TERM, Signal::QUIT]);
     thread::spawn(move || {
         while let Some(sig) = sig.recv() {
             match sig {
-                Signal::INT  => CAUGHT_SIGINT.store(true, Ordering::Relaxed),
+                Signal::INT  => sigint_handler(),
                 // We need to handle these, currently chan-signal does
                 // block them otherwise.
                 Signal::TERM => process::exit(2),
