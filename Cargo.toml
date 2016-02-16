@@ -4,6 +4,11 @@ version = "0.1.0"
 authors = ["ferris <jake@fusetools.com>"]
 license = "MIT/Apache-2.0"
 
+[profile.dev]
+opt-level = 1
+debug = true
+codegen-units = 2
+
 [dependencies]
 byteorder = "0.4.2"
 minifb = "0.4.0"
