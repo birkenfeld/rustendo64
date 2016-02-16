@@ -40,7 +40,7 @@ impl Vi {
             VI_REG_V_INTR   => self.reg_intr,
             /* TODO */
             VI_REG_CURRENT  =>
-                self.reg_current.fetch_add(1, Ordering::Relaxed) as u32 % 525,
+                (self.reg_current.fetch_add(1, Ordering::Relaxed) as u32 % 525) & !1,
             VI_REG_BURST    => self.reg_burst,
             VI_REG_V_SYNC   => self.reg_v_sync,
             VI_REG_H_SYNC   => self.reg_h_sync,
@@ -136,5 +136,6 @@ impl Vi {
         self.vram_end   = self.vram_start +
             (self.reg_width as usize) * self.frame_height *
             self.vram_pixelsize / 4;
+        // println!("VRAM: {:#x} to {:#x}", self.vram_start, self.vram_end);
     }
 }
