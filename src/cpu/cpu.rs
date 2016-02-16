@@ -634,8 +634,8 @@ impl Cpu {
     {
         let a = T::read_fpr(&self.reg_fpr[instr.fs()]);
         let res = f(a);
-        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.fs(), a);
-        dprintln!(self, "{} $f{} <- {:16.8}", INDENT, instr.fd(), res);
+        dprintln!(self, "{} $f{:02} :  {:16.8}", INDENT, instr.fs(), a);
+        dprintln!(self, "{} $f{:02} <- {:16.8}", INDENT, instr.fd(), res);
         T::write_fpr(&mut self.reg_fpr[instr.fd()], res);
     }
 
@@ -655,9 +655,9 @@ impl Cpu {
         let a = T::read_fpr(&self.reg_fpr[instr.fs()]);
         let b = T::read_fpr(&self.reg_fpr[instr.ft()]);
         let res = f(a, b);
-        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.fs(), a);
-        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.ft(), b);
-        dprintln!(self, "{} $f{} <- {:16.8}", INDENT, instr.fd(), res);
+        dprintln!(self, "{} $f{:02} :  {:16.8}", INDENT, instr.fs(), a);
+        dprintln!(self, "{} $f{:02} :  {:16.8}", INDENT, instr.ft(), b);
+        dprintln!(self, "{} $f{:02} <- {:16.8}", INDENT, instr.fd(), res);
         T::write_fpr(&mut self.reg_fpr[instr.fd()], res);
     }
 
@@ -676,8 +676,8 @@ impl Cpu {
     {
         let value = T::read_fpr(&self.reg_fpr[instr.fs()]);
         let res = f(value);
-        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.fs(), value);
-        dprintln!(self, "{} $f{} <- {:16.8}", INDENT, instr.fd(), res);
+        dprintln!(self, "{} $f{:02} :  {:16.8}", INDENT, instr.fs(), value);
+        dprintln!(self, "{} $f{:02} <- {:16.8}", INDENT, instr.fd(), res);
         U::write_fpr(&mut self.reg_fpr[instr.fd()], res);
     }
 
@@ -702,8 +702,8 @@ impl Cpu {
             return;
         }
         let cond = f(FpOrd::from(a, b));
-        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.fs(), a);
-        dprintln!(self, "{} $f{} :  {:16.8}", INDENT, instr.ft(), b);
+        dprintln!(self, "{} $f{:02} :  {:16.8}", INDENT, instr.fs(), a);
+        dprintln!(self, "{} $f{:02} :  {:16.8}", INDENT, instr.ft(), b);
         dprintln!(self, "{} cond <- {}", INDENT, cond);
         self.reg_fcr31 = (self.reg_fcr31 & 0xff7f_ffff) | ((cond as u32) << 23);
     }
@@ -721,7 +721,7 @@ impl Cpu {
     fn mem_load_fp<T: FpFmt + MemFmt>(&mut self, bus: &mut Bus, instr: &Instruction) {
         let addr = self.aligned_addr(&instr, T::get_align());
         let data = T::load_from(self, bus, addr);
-        dprintln!(self, "{} $f{} <- {:16.8} :  mem @ {:#x}",
+        dprintln!(self, "{} $f{:02} <- {:16.8} :  mem @ {:#x}",
                   INDENT, instr.ft(), data, addr);
         T::write_fpr(&mut self.reg_fpr[instr.ft()], data);
     }
@@ -737,7 +737,7 @@ impl Cpu {
         where F: Fn(u64) -> T
     {
         let value = func(self.read_gpr(instr.rt()));
-        dprintln!(self, "{} $f{} <- {:16.8}", INDENT, instr.fs(), value);
+        dprintln!(self, "{} $f{:02} <- {:16.8}", INDENT, instr.fs(), value);
         T::write_fpr(&mut self.reg_fpr[instr.fs()], value);
     }
 
@@ -786,14 +786,16 @@ impl Cpu {
     #[cfg(debug_assertions)]
     fn debug_read(&self, phys_addr: u64, load_instr: bool, res: u32) {
         if !load_instr && self.debug_specs.matches_mem(phys_addr, false) {
-            println!("Bus read:  {:#10x} :  {:#10x}", phys_addr, res);
+            println!("   {:#10x}   Bus read:  {:#10x} :  {:#10x}",
+                     self.reg_pc as u32, phys_addr, res);
         }
     }
 
     #[cfg(debug_assertions)]
     fn debug_write(&self, phys_addr: u64, word: u32) {
         if self.debug_specs.matches_mem(phys_addr, true) {
-            println!("Bus write: {:#10x} <- {:#10x}", phys_addr, word);
+            println!("   {:#10x}   Bus write: {:#10x} <- {:#10x}",
+                     self.reg_pc as u32, phys_addr, word);
         }
     }
 
