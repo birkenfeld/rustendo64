@@ -1,3 +1,4 @@
+use std::cmp::max;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bus::IoResult;
@@ -111,7 +112,8 @@ impl Vi {
         //          hstart, vstart, hend, vend, hcoeff, vcoeff, width, height);
         self.frame_width  = width as usize;
         self.frame_height = height as usize;
-        self.frame_hskip  = self.reg_width as usize - self.frame_width;
+        self.frame_hskip  = max(self.reg_width as usize, self.frame_width)
+            - self.frame_width;
         self.vram_pixelsize = match self.reg_status & 0b11 {
             0b00 => 0,
             0b01 => panic!("using reserved video mode"),
