@@ -723,12 +723,32 @@ impl Cpu {
         let data = T::load_from(self, bus, addr);
         dprintln!(self, "{} $f{:02} <- {:16.8} :  mem @ {:#x}",
                   INDENT, instr.ft(), data, addr);
-        T::write_fpr(&mut self.reg_fpr[instr.ft()], data);
+        let reg = instr.ft();
+        if self.cp0.reg_status.additional_fp_regs {
+            T::write_fpr(&mut self.reg_fpr[reg], data);
+        } else {
+            if reg & 1 != 0 {
+                // fill the high bytes of the even-numbered register
+                T::write_fpr_hi(&mut self.reg_fpr[reg & !1], data);
+            } else {
+                T::write_fpr(&mut self.reg_fpr[reg], data);
+            }
+        }
     }
 
     fn mem_store_fp<T: FpFmt + MemFmt>(&mut self, bus: &mut Bus, instr: &Instruction) {
         let addr = self.aligned_addr(&instr, T::get_align());
-        let data = T::read_fpr(&self.reg_fpr[instr.ft()]);
+        let reg = instr.ft();
+        let data = if self.cp0.reg_status.additional_fp_regs {
+            T::read_fpr(&self.reg_fpr[reg])
+        } else {
+            if reg & 1 != 0 {
+                // read the high bytes of the even-numbered register
+                T::read_fpr_hi(&self.reg_fpr[reg & !1])
+            } else {
+                T::read_fpr(&self.reg_fpr[reg])
+            }
+        };
         dprintln!(self, "{}         {:16.8} -> mem @ {:#x}", INDENT, data, addr);
         T::store_to(self, bus, addr, data);
     }
@@ -736,17 +756,37 @@ impl Cpu {
     fn reg_load_fp<T: FpFmt, F>(&mut self, instr: &Instruction, func: F)
         where F: Fn(u64) -> T
     {
-        let value = func(self.read_gpr(instr.rt()));
-        dprintln!(self, "{} $f{:02} <- {:16.8}", INDENT, instr.fs(), value);
-        T::write_fpr(&mut self.reg_fpr[instr.fs()], value);
+        let data = func(self.read_gpr(instr.rt()));
+        dprintln!(self, "{} $f{:02} <- {:16.8}", INDENT, instr.fs(), data);
+        let reg = instr.fs();
+        if self.cp0.reg_status.additional_fp_regs {
+            T::write_fpr(&mut self.reg_fpr[reg], data);
+        } else {
+            if reg & 1 != 0 {
+                // fill the high bytes of the even-numbered register
+                T::write_fpr_hi(&mut self.reg_fpr[reg & !1], data);
+            } else {
+                T::write_fpr(&mut self.reg_fpr[reg], data);
+            }
+        }
     }
 
     fn reg_store_fp<T: FpFmt, F>(&mut self, instr: &Instruction, func: F)
         where F: Fn(T) -> u64
     {
-        let value = T::read_fpr(&self.reg_fpr[instr.fs()]);
-        dprintln!(self, "{} {} <- {:16.8}", INDENT, REG_NAMES[instr.rt()], value);
-        self.write_gpr(instr.rt(), func(value));
+        let reg = instr.fs();
+        let data = if self.cp0.reg_status.additional_fp_regs {
+            T::read_fpr(&self.reg_fpr[reg])
+        } else {
+            if reg & 1 != 0 {
+                // read the high bytes of the even-numbered register
+                T::read_fpr_hi(&self.reg_fpr[reg & !1])
+            } else {
+                T::read_fpr(&self.reg_fpr[reg])
+            }
+        };
+        dprintln!(self, "{} {} <- {:16.8}", INDENT, REG_NAMES[instr.rt()], data);
+        self.write_gpr(instr.rt(), func(data));
     }
 
     pub fn read_word(&self, bus: &Bus, virt_addr: u64, load_instr: bool) -> u32 {

@@ -87,8 +87,10 @@ impl FpOrd {
 const LO: usize = 4;
 
 pub trait FpFmt: Copy + fmt::Display + PartialOrd {
-    fn read_fpr(&[u8; 8]) -> Self;
-    fn write_fpr(&mut [u8; 8], value: Self);
+    fn read_fpr(reg: &[u8; 8]) -> Self;
+    fn read_fpr_hi(reg: &[u8; 8]) -> Self { Self::read_fpr(reg) }
+    fn write_fpr(reg: &mut [u8; 8], value: Self);
+    fn write_fpr_hi(reg: &mut [u8; 8], value: Self) { Self::write_fpr(reg, value); }
     fn is_nan(&self) -> bool { false }
 }
 
@@ -96,8 +98,14 @@ impl FpFmt for f32 {
     fn read_fpr(reg: &[u8; 8]) -> f32 {
         BigEndian::read_f32(&reg[LO..])
     }
+    fn read_fpr_hi(reg: &[u8; 8]) -> f32 {
+        BigEndian::read_f32(&reg[..])
+    }
     fn write_fpr(reg: &mut [u8; 8], value: f32) {
         BigEndian::write_f32(&mut reg[LO..], value);
+    }
+    fn write_fpr_hi(reg: &mut [u8; 8], value: f32) {
+        BigEndian::write_f32(&mut reg[..], value);
     }
     fn is_nan(&self) -> bool { f32::is_nan(*self) }
 }
@@ -116,8 +124,14 @@ impl FpFmt for i32 {
     fn read_fpr(reg: &[u8; 8]) -> i32 {
         BigEndian::read_i32(&reg[LO..])
     }
+    fn read_fpr_hi(reg: &[u8; 8]) -> i32 {
+        BigEndian::read_i32(&reg[..])
+    }
     fn write_fpr(reg: &mut [u8; 8], value: i32) {
         BigEndian::write_i32(&mut reg[LO..], value);
+    }
+    fn write_fpr_hi(reg: &mut [u8; 8], value: i32) {
+        BigEndian::write_i32(&mut reg[..], value);
     }
 }
 
@@ -135,8 +149,14 @@ impl FpFmt for u32 {
     fn read_fpr(reg: &[u8; 8]) -> u32 {
         BigEndian::read_u32(&reg[LO..])
     }
+    fn read_fpr_hi(reg: &[u8; 8]) -> u32 {
+        BigEndian::read_u32(&reg[..])
+    }
     fn write_fpr(reg: &mut [u8; 8], value: u32) {
         BigEndian::write_u32(&mut reg[LO..], value);
+    }
+    fn write_fpr_hi(reg: &mut [u8; 8], value: u32) {
+        BigEndian::write_u32(&mut reg[..], value);
     }
 }
 

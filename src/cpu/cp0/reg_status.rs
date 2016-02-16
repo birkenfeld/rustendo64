@@ -9,7 +9,7 @@ pub struct RegStatus {
     low_power: bool,
 
     // FR
-    additional_fp_regs: bool,
+    pub additional_fp_regs: bool,
 
     // RE
     reverse_endian: bool,
