@@ -32,6 +32,7 @@ pub enum DebugSpec {
     MemRange(MemAccess, u64, u64),
     InsnRange(u64, u64),
     InsnFrom(u64, u64),
+    InsnMnemonic(String),
     StateAt(u64),
     BreakAt(u64, bool),  // if true, remove breakpoint after hit
     MemBreak(MemAccess, u64),
@@ -56,7 +57,7 @@ impl fmt::Debug for MemAccess {
 /// Nom parsers for debug specs as given on the command line.
 mod parsers  {
     use std::{str, u64};
-    use nom::{eof, hex_u32};
+    use nom::{eof, hex_u32, anychar};
     use super::{DebugSpec, MemAccess};
 
     named!(dec_u32<u32>, map_res!(
@@ -111,8 +112,13 @@ mod parsers  {
         tag!("i:"), map!(addr_range, |(a1, a2)| { DebugSpec::InsnRange(a1, a2) })
     ));
 
+    named!(insnname<DebugSpec>, preceded!(
+        tag!("in:"), map!(many1!(anychar),
+                          |s: Vec<char>| { DebugSpec::InsnMnemonic(s.into_iter().collect()) })
+    ));
+
     named!(pub debugspec<DebugSpec>, terminated!(
-        alt!(insn | insnfrom | memrange | breakat | membreak | stateat),
+        alt!(insn | insnfrom | insnname | memrange | breakat | membreak | stateat),
         eof));
 }
 
@@ -149,6 +155,8 @@ impl fmt::Debug for DebugSpec {
                 write!(f, "print {} insns from pc {:#x}", n, a),
             DebugSpec::InsnRange(a, b)  =>
                 write!(f, "print insns from pc {:#x} to pc {:#x}", a, b),
+            DebugSpec::InsnMnemonic(ref s)  =>
+                write!(f, "print insns starting with {}", s),
             DebugSpec::StateAt(a)       =>
                 write!(f, "print CPU state at pc {:#x}", a),
             DebugSpec::MemRange(ref acc, a, b) =>
@@ -208,6 +216,11 @@ impl DebugSpecList {
                 }
                 DebugSpec::InsnFrom(a, duration) if pc == a => {
                     debug_for = max(debug_for, duration);
+                }
+                DebugSpec::InsnMnemonic(ref s) => {
+                    if format!("{:?}", instr).starts_with(s) {
+                        debug_for = max(debug_for, 1);
+                    }
                 }
                 DebugSpec::StateAt(a) if a == pc => {
                     dump = true;
