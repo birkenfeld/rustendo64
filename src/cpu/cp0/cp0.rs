@@ -22,7 +22,9 @@ pub struct Cp0 {
     pub reg_error_epc: u64,
     pub reg_bad_vaddr: u64,
 
-    reg_tag_lo:  u32,
+    reg_tag_lo:   u32,
+    reg_watch_lo: u32,
+    reg_watch_hi: u32,
 }
 
 impl Cp0 {
@@ -34,15 +36,17 @@ impl Cp0 {
     pub fn write_reg(&mut self, index: usize, data: u64) {
         match index {
             8  => { self.reg_bad_vaddr = data; }
-            9  => { self.reg_count   = data as u32; }
-            11 => { self.reg_compare = data as u32; }
-            12 => { self.reg_status  = (data as u32).into(); }
-            13 => { self.reg_cause   = (data as u32).into(); }
-            14 => { self.reg_epc     = data; }
-            16 => { self.reg_config  = (data as u32).into(); }
-            17 => { self.reg_lladdr  = data as u32; }
+            9  => { self.reg_count     = data as u32; }
+            11 => { self.reg_compare   = data as u32; }
+            12 => { self.reg_status    = (data as u32).into(); }
+            13 => { self.reg_cause     = (data as u32).into(); }
+            14 => { self.reg_epc       = data; }
+            16 => { self.reg_config    = (data as u32).into(); }
+            17 => { self.reg_lladdr    = data as u32; }
+            18 => { self.reg_watch_lo  = data as u32; }
+            19 => { self.reg_watch_hi  = data as u32; }
             // Cache tag registers
-            28 => { self.reg_tag_lo  = data as u32; }
+            28 => { self.reg_tag_lo    = data as u32; }
             29 => if data != 0 { panic!("wrote nonzero to TAG_HI reg"); },
             // TLB related registers
             0  => { self.reg_index     = data as u32; }
@@ -63,6 +67,8 @@ impl Cp0 {
             13 => self.reg_cause.to_u32() as u64,
             14 => self.reg_epc,
             17 => self.reg_lladdr as u64,
+            18 => self.reg_watch_lo as u64,
+            19 => self.reg_watch_hi as u64,
             28 => self.reg_tag_lo as u64,
             29 => 0,  // reg_tag_hi is reserved
             30 => self.reg_error_epc,
