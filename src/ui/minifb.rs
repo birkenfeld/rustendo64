@@ -1,24 +1,27 @@
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::sync::mpsc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use minifb::{Window, WindowOptions, Scale, Key};
 
-use ui::{Interface, UiOutput, CONTROLLER};
+use ui::{Interface, UiOutput};
 
 pub struct MinifbInterface {
     receiver: mpsc::Receiver<UiOutput>,
     size: (usize, usize),
     mode: usize,
     window: Option<Window>,
+    input: Arc<AtomicUsize>,
 }
 
 impl Interface for MinifbInterface {
-    fn new(outrecv: mpsc::Receiver<UiOutput>) -> Self {
+    fn new(outrecv: mpsc::Receiver<UiOutput>, input: Arc<AtomicUsize>) -> Self {
         MinifbInterface {
             receiver: outrecv,
-            window: None,
-            mode: 0,
             size: (0, 0),
+            mode: 0,
+            window: None,
+            input: input,
         }
     }
 
@@ -125,7 +128,7 @@ impl MinifbInterface {
                 }
                 state | ((a_x as u8 as u32) << 8) | (a_y as u8 as u32)
             }) {
-                CONTROLLER.store(cstate as usize, Ordering::Relaxed);
+                self.input.store(cstate as usize, Ordering::Relaxed);
             }
         }
         quit
