@@ -504,8 +504,8 @@ impl Cpu {
         let amask = align - 1;
         let aligned_addr = addr & !amask;
         let offset = addr & amask;
+        let shift = if right { (amask - offset) * 8 } else { offset * 8 };
         let data = func(T::load_from(self, bus, aligned_addr));
-        let shift = if right { (amask - offset) << amask } else { offset << amask };
         let sh_data = if right { data >> shift } else { data << shift };
         let mask = if align == 8 { // XXX: can this be written easier?
             if right { !0 >> shift } else { !0 << shift }
@@ -528,8 +528,8 @@ impl Cpu {
         let amask = align - 1;
         let aligned_addr = addr & !amask;
         let offset = addr & amask;
+        let shift = if right { (amask - offset) * 8 } else { offset * 8 };
         let reg = self.read_gpr(instr.rt());
-        let shift = if right { (amask - offset) << amask } else { offset << amask };
         let sh_reg = if right { reg << shift } else { reg >> shift };
         let mask = if right { !0 << shift } else { !0 >> shift };
         let orig_data = T::load_from(self, bus, aligned_addr);
