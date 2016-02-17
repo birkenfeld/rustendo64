@@ -5,16 +5,6 @@ use bus::IoResult;
 use bus::mem_map::*;
 use util::{bit_set, clear_or_set_bit, clear_bit};
 
-#[derive(Default)]
-pub struct Rsp;
-
-impl Rsp {
-    // TODO: Read general regs
-    pub fn read_status_reg(&self) -> u32 {
-        1 // TODO: Properly implement this
-    }
-}
-
 #[derive(Debug)]
 pub struct Sp {
     reg_mem_addr:  u32,

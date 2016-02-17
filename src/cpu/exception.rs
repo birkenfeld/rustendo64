@@ -4,6 +4,7 @@ use cpu::cp0::InterruptMask;
 use cpu::cp0::Cp0;
 use bus::mem_map::*;
 
+#[allow(dead_code)]
 pub enum Exception {
     // ColdReset, SoftReset and NMI never happens
     InstrAddressError,

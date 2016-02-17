@@ -214,7 +214,7 @@ pub const FP_FORMATS: [&'static str; 32] = [
     "s", "d", "?", "?", "w", "l", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?"];
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Instruction(pub u32);
 
 // Note: all the accessors are declared inline(always) so that they are also

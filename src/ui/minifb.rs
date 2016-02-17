@@ -116,6 +116,8 @@ impl MinifbInterface {
                     win.update_with_buffer(&buf32);
                 }
             } // else it's blank
+
+            // Update controller button state.
             if let Some(cstate) = win.get_keys().map(|keys| {
                 let mut a_x = 0_i8;
                 let mut a_y = 0_i8;

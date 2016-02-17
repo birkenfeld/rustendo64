@@ -137,7 +137,7 @@ impl Pi {
             CRC_NUS_6103 => Some(CIC_SEED_NUS_6103),
             CRC_NUS_6105 => Some(CIC_SEED_NUS_6105),
             CRC_NUS_6106 => Some(CIC_SEED_NUS_6106),
-            CRC_NUS_8303 => Some(CIC_SEED_NUS_6101),
+            CRC_NUS_8303 => Some(CIC_SEED_NUS_8303),
             _            => None
         }
     }

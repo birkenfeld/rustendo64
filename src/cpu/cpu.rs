@@ -12,13 +12,14 @@ use util::{mult_64_64_unsigned, mult_64_64_signed};
 
 const NUM_GPR: usize = 32;
 
+#[derive(Default)]
 pub struct Cpu {
     // Debugging info
     pub debug_specs:    DebugSpecList,
     instr_counter:      u64,
-    debug_print:        bool,
-    debug_print_until:  u64,
     last_instr:         Instruction,
+    #[cfg(debug_assertions)] debug_print: bool,
+    #[cfg(debug_assertions)] debug_until: u64,
 
     // Helpers
     in_branch_delay:    bool,
@@ -49,6 +50,9 @@ macro_rules! dprintln {
     }
 }
 
+#[cfg(debug_assertions)]
+pub const INDENT: &'static str = "                                       ";
+
 #[cfg(not(debug_assertions))]
 macro_rules! dprintln {
     ($cpu:expr, $($args:expr),+) => { }
@@ -70,29 +74,10 @@ impl fmt::Debug for Cpu {
     }
 }
 
-pub const INDENT: &'static str = "                                       ";
-
 impl Cpu {
     pub fn new(debug: DebugSpecList) -> Cpu {
         Cpu {
-            debug_specs:        debug,
-            instr_counter:      0,
-            debug_print_until:  0,
-            debug_print:        false,
-            last_instr:         Instruction(0),
-
-            in_branch_delay:    false,
-            next_pc:            None,
-
-            cp0:                Cp0::default(),
-
-            reg_gpr:            [0; NUM_GPR],
-            reg_fpr:            [[0; 8]; NUM_GPR],
-            reg_pc:             0,
-            reg_hi:             0,
-            reg_lo:             0,
-            reg_llbit:          false,
-            reg_fcr31:          0,
+            debug_specs: debug, .. Cpu::default()
         }
     }
 
@@ -167,11 +152,11 @@ impl Cpu {
         if debug_for > 0 {
             self.debug_print = true;
             if debug_for == u64::MAX {
-                self.debug_print_until = u64::MAX;
+                self.debug_until = u64::MAX;
             } else if debug_for > 1 {
-                self.debug_print_until = self.instr_counter + debug_for;
+                self.debug_until = self.instr_counter + debug_for;
             }
-        } else if self.debug_print && self.instr_counter > self.debug_print_until {
+        } else if self.debug_print && self.instr_counter > self.debug_until {
             self.debug_print = false;
         }
     }
@@ -901,14 +886,17 @@ impl Cpu {
         panic!(msg);
     }
 
+    #[cfg(debug_assertions)]
     pub fn read_pc(&self) -> u64 {
         self.reg_pc
     }
 
+    #[cfg(debug_assertions)]
     pub fn cp0_dump(&self) {
         println!("{:#?}", self.cp0);
     }
 
+    #[cfg(debug_assertions)]
     pub fn cp1_dump(&self) {
         for i in 0..32 {
             println!("  $f{:02} = {:12.6}s {:16.10}d {:11}w {:21}l", i,

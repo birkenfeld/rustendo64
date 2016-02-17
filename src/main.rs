@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[macro_use] extern crate clap;
 #[macro_use] extern crate nom;
 #[macro_use] extern crate enum_primitive;

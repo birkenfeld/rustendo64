@@ -3,6 +3,22 @@
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
+// use std::{thread, time, process};
+
+/// A guard that will exit the process when dropped.
+///
+/// Useful for infinite loops that will only end when the thread
+/// is panicking.
+// pub struct ExitGuard;
+
+// impl Drop for ExitGuard {
+//     fn drop(&mut self) {
+//         // give other threads time to panic
+//         thread::sleep(time::Duration::from_millis(100));
+//         println!("Exiting.");
+//         process::exit(2);
+//     }
+// }
 
 pub fn read_bin<P: AsRef<Path>>(path: P) -> Box<[u8]> {
     let mut file = File::open(path).unwrap();
@@ -52,10 +68,10 @@ pub fn bit_set(value: u32, bit: u32) -> bool {
     value & (1 << bit) != 0
 }
 
-#[inline]
-pub fn set_bit(target: &mut u32, bit: u32) {
-    *target |= 1 << bit;
-}
+// #[inline]
+// pub fn set_bit(target: &mut u32, bit: u32) {
+//     *target |= 1 << bit;
+// }
 
 #[inline]
 pub fn clear_bit(target: &mut u32, bit: u32) {

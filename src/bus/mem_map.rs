@@ -77,8 +77,8 @@ pub const SP_RAM_SIZE: usize = 0x2000;
 
 define_consts!(
     SP_DMEM_START = 0x0400_0000,
-    SP_DMEM_END   = 0x0400_0fff,
-    SP_IMEM_START = 0x0400_1000,
+    // SP_DMEM_END   = 0x0400_0fff,
+    // SP_IMEM_START = 0x0400_1000,
     SP_IMEM_END   = 0x0400_1fff
 );
 
@@ -148,10 +148,6 @@ define_registers!(
     VI_REG_V_BURST,
     VI_REG_X_SCALE,
     VI_REG_Y_SCALE
-);
-
-define_consts!(  // aliases
-    VI_REG_CONTROL = VI_REG_STATUS
 );
 
 // Audio interface -------------------------------------------------------------

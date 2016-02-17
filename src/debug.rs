@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), allow(dead_code, unused_imports))]
+
 //! Debugger interface.
 //!
 //! There are two components to this:
@@ -164,6 +166,7 @@ impl fmt::Debug for DebugSpec {
     }
 }
 
+#[derive(Default)]
 pub struct DebugSpecList(Vec<DebugSpec>);
 
 impl DebugSpecList {
@@ -288,12 +291,6 @@ impl DebugSpecList {
     }
 }
 
-pub enum DebuggerResult {
-    Step,
-    Continue,
-    Quit,
-}
-
 pub struct Debugger<'c, 'i: 'c> {
     histfile: Option<PathBuf>,
     editor: Editor<'c>,
@@ -301,6 +298,7 @@ pub struct Debugger<'c, 'i: 'c> {
     bus: &'c mut CpuBus<'i>,
 }
 
+#[cfg(debug_assertions)]
 impl<'c, 'i> Debugger<'c, 'i> {
     pub fn new<'a>(cpu: &'a mut Cpu, bus: &'a mut CpuBus<'i>) -> Debugger<'a, 'i> {
         let mut editor = Editor::new();
