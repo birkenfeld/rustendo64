@@ -88,7 +88,10 @@ impl MinifbInterface {
                 }
             } // else it's blank
             if let Some(cstate) = win.get_keys().map(|keys| {
-                keys.iter().fold(0, |a, &key| a | match key {
+                let mut a_x = 0_i8;
+                let mut a_y = 0_i8;
+                let mut a_throttle = 0_i8;
+                let state = keys.iter().fold(0, |a, &key| a | match key {
                     Key::LeftShift  => 1 << 31,  // A
                     Key::LeftCtrl   => 1 << 30,  // B
                     Key::Z          => 1 << 29,  // Z
@@ -103,15 +106,24 @@ impl MinifbInterface {
                     Key::K          => 1 << 18,  // C-down
                     Key::J          => 1 << 17,  // C-left
                     Key::L          => 1 << 16,  // C-right
-                    Key::Up         => 0x007f,
-                    Key::Down       => 0x0080,   // Analog pad
-                    Key::Left       => 0x8000,   // (full throttle)
-                    Key::Right      => 0x7f00,
+                    Key::Left       => { a_x -= 127; 0 },
+                    Key::Right      => { a_x += 127; 0 },  // Analog pad
+                    Key::Down       => { a_y -= 127; 0 },  // (L/R cancel out)
+                    Key::Up         => { a_y += 127; 0 },
+                    Key::RightShift => { a_throttle += 1; 0 },
+                    Key::RightCtrl  => { a_throttle += 2; 0 },
                     Key::Escape     => { quit = true; 0 },
                     _ => 0
-                })
+                });
+                match a_throttle {
+                    1 => { a_x = (a_x / 4) * 3; a_y = (a_y / 4) * 3; }
+                    2 => { a_x /= 2; a_y /= 2; }
+                    3 => { a_x /= 4; a_y /= 4; }
+                    _ => { }
+                }
+                state | ((a_x as u8 as u32) << 8) | (a_y as u8 as u32)
             }) {
-                CONTROLLER.store(cstate, Ordering::Relaxed);
+                CONTROLLER.store(cstate as usize, Ordering::Relaxed);
             }
         }
         quit
