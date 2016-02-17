@@ -10,6 +10,7 @@ extern crate rustyline;
 extern crate ansi_term;
 extern crate chan_signal;
 extern crate crossbeam;
+extern crate cpal;
 
 mod n64;
 mod cpu;

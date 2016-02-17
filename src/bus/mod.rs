@@ -72,6 +72,7 @@ impl BusInterfaces {
     }
 }
 
+#[derive(Clone)]
 pub struct Bus<'i, R, S> where R: RamAccess, S: RamAccess {
     ui: UiChannel,
     ifs: &'i BusInterfaces,
@@ -138,7 +139,8 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
             VI_REG_START    ... VI_REG_END    =>
                 lw!(self.ifs.vi).write_reg(addr, word, &self.ifs.mi, &self.ui),
             AI_REG_START    ... AI_REG_END    =>
-                lw!(self.ifs.ai).write_reg(addr, word, &self.ifs.mi),
+                lw!(self.ifs.ai).write_reg(addr, word, &self.ifs.mi, &mut self.ram,
+                                           &self.ui),
             PI_REG_START    ... PI_REG_END    =>
                 lw!(self.ifs.pi).write_reg(addr, word, &self.ifs.mi, &mut self.ram),
             RI_REG_START    ... RI_REG_END    |
@@ -155,6 +157,14 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
         };
         self.ui.send(UiOutput::Update(self.ram.read_range(s, l)));
         self.ifs.mi.set_interrupt(mi::Intr::VI);
+    }
+
+    pub fn ai_cycle(&mut self) {
+        let samples = self.ui.get_pending_audio();
+        if samples < 5000 {
+            let mut ai = lw!(self.ifs.ai);
+            ai.buffer_empty(&self.ifs.mi);
+        }
     }
 
     pub fn has_interrupt(&self) -> bool {

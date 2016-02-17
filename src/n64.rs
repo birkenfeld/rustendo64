@@ -38,13 +38,21 @@ impl N64 {
 
     pub fn run(&mut self) {
         crossbeam::scope(|scope| {
+            let vi_ui = self.ui.clone();
+            let mut vi_bus = bus::Bus::new(vi_ui, &self.ifs, &self.ram, &self.spram);
+            let mut ai_bus = vi_bus.clone();
             // VI thread
-            let mut ui_bus = Bus::new(self.ui.clone(), &self.ifs,
-                                      &self.ram, &self.spram);
             scope.spawn(move || {
                 loop {
-                    ui_bus.vi_cycle();
+                    vi_bus.vi_cycle();
                     thread::sleep(Duration::new(0, 16_666_666));
+                }
+            });
+            // AI thread
+            scope.spawn(move || {
+                loop {
+                    ai_bus.ai_cycle();
+                    thread::sleep(Duration::new(0, 1_000_000));
                 }
             });
             // CPU - runs in main thread
