@@ -48,6 +48,8 @@ impl MinifbInterface {
                 scale: if w < 640 { Scale::X2 } else { Scale::X1 },
                 ..WindowOptions::default() }) {
             Ok(win) => {
+                println!("Video: new window with resolution {}x{}, {} bits",
+                         w, h, 8 * mode);
                 self.size = (w, h);
                 self.mode = mode;
                 self.window = Some(win);
@@ -107,7 +109,7 @@ impl MinifbInterface {
                     Key::J          => 1 << 17,  // C-left
                     Key::L          => 1 << 16,  // C-right
                     Key::Left       => { a_x -= 127; 0 },
-                    Key::Right      => { a_x += 127; 0 },  // Analog pad
+                    Key::Right      => { a_x += 127; 0 },  // Analog stick
                     Key::Down       => { a_y -= 127; 0 },  // (L/R cancel out)
                     Key::Up         => { a_y += 127; 0 },
                     Key::RightShift => { a_throttle += 1; 0 },
