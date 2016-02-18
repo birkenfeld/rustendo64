@@ -22,7 +22,8 @@ use rustyline::Editor;
 use nom::IResult;
 
 use cpu::{Cpu, CpuBus};
-use cpu::instruction::*;
+use vr4k::instruction::*;
+use vr4k::types::R4300;
 use CAUGHT_SIGINT;
 
 /// Represents the different conditions on which a debugging action can be

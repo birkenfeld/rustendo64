@@ -13,6 +13,7 @@ extern crate cpal;
 mod n64;
 mod cpu;
 mod rsp;
+mod vr4k;
 mod bus;
 mod util;
 mod ui;

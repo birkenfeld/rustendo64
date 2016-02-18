@@ -1,12 +1,14 @@
+use std::cmp::Ordering;
 use std::fmt;
 use std::sync::RwLock;
+use byteorder::{BigEndian, ByteOrder};
 
 use bus::Bus;
 use bus::mem_map::*;
 use cpu::cp0::Cp0;
-use cpu::instruction::*;
 use cpu::exception::*;
-use cpu::types::*;
+use vr4k::instruction::*;
+use vr4k::types::*;
 use debug::DebugSpecList;
 use util::{mult_64_64_unsigned, mult_64_64_signed};
 
@@ -38,7 +40,7 @@ pub struct Cpu {
     reg_fcr31:          u32,
 }
 
-pub type CpuBus<'a> = Bus<'a, &'a mut [u32], &'a RwLock<Box<[u32]>>>;
+pub type CpuBus<'c> = Bus<'c, &'c mut [u32], &'c RwLock<Box<[u32]>>>;
 
 #[cfg(debug_assertions)]
 macro_rules! dprintln {
@@ -452,8 +454,8 @@ impl Cpu {
         }
     }
 
-    fn mem_load<T: MemFmt, F>(&mut self, bus: &CpuBus, instr: &Instruction,
-                              linked: bool, func: F) where F: Fn(T) -> u64
+    fn mem_load<'c, T: MemFmt<'c, Self>, F>(&mut self, bus: &CpuBus<'c>, instr: &Instruction,
+                                            linked: bool, func: F) where F: Fn(T) -> u64
     {
         let addr = self.aligned_addr(instr, T::get_align());
         if linked {
@@ -466,8 +468,8 @@ impl Cpu {
         self.write_gpr(instr.rt(), data);
     }
 
-    fn mem_store<T: MemFmt, F>(&mut self, bus: &mut CpuBus, instr: &Instruction,
-                               linked: bool, func: F) where F: Fn(u64) -> T
+    fn mem_store<'c, T: MemFmt<'c, Self>, F>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction,
+                                     linked: bool, func: F) where F: Fn(u64) -> T
     {
         let addr = self.aligned_addr(instr, T::get_align());
         let data = self.read_gpr(instr.rt());
@@ -484,8 +486,8 @@ impl Cpu {
         }
     }
 
-    fn mem_load_unaligned<T: MemFmt, F>(&mut self, bus: &CpuBus, instr: &Instruction,
-                                        right: bool, func: F) where F: Fn(T) -> u64
+    fn mem_load_unaligned<'c, T: MemFmt<'c, Self>, F>(&mut self, bus: &CpuBus<'c>, instr: &Instruction,
+                                              right: bool, func: F) where F: Fn(T) -> u64
     {
         let addr = self.aligned_addr(&instr, 1);
         let align = T::get_align();
@@ -508,8 +510,8 @@ impl Cpu {
         self.write_gpr(instr.rt(), reg);
     }
 
-    fn mem_store_unaligned<T: MemFmt, F>(&mut self, bus: &mut CpuBus, instr: &Instruction,
-                                         right: bool, func: F) where F: Fn(u64, T, u64) -> T
+    fn mem_store_unaligned<'c, T: MemFmt<'c, Self>, F>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction,
+                                               right: bool, func: F) where F: Fn(u64, T, u64) -> T
     {
         let addr = self.aligned_addr(&instr, 1);
         let align = T::get_align();
@@ -706,7 +708,7 @@ impl Cpu {
         }
     }
 
-    fn mem_load_fp<T: FpFmt + MemFmt>(&mut self, bus: &CpuBus, instr: &Instruction) {
+    fn mem_load_fp<'c, T: FpFmt + MemFmt<'c, Self>>(&mut self, bus: &CpuBus<'c>, instr: &Instruction) {
         let addr = self.aligned_addr(&instr, T::get_align());
         let data = T::load_from(self, bus, addr);
         dprintln!(self, "{} $f{:02} <- {:16.8} :  mem @ {:#x}",
@@ -724,7 +726,7 @@ impl Cpu {
         }
     }
 
-    fn mem_store_fp<T: FpFmt + MemFmt>(&mut self, bus: &mut CpuBus, instr: &Instruction) {
+    fn mem_store_fp<'c, T: FpFmt + MemFmt<'c, Self>>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction) {
         let addr = self.aligned_addr(&instr, T::get_align());
         let reg = instr.ft();
         let data = if self.cp0.reg_status.additional_fp_regs {
@@ -775,40 +777,6 @@ impl Cpu {
         };
         dprintln!(self, "{} {} <- {:16.8}", INDENT, REG_NAMES[instr.rt()], data);
         self.write_gpr(instr.rt(), func(data));
-    }
-
-    pub fn read_word(&self, bus: &CpuBus, virt_addr: u64, load_instr: bool) -> u32 {
-        let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
-        match bus.read_word(phys_addr as u32) {
-            Ok(res) => {
-                self.debug_read(phys_addr, load_instr, res);
-                res
-            }
-            Err(desc) => {
-                self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
-            }
-        }
-    }
-
-    pub fn write_word(&mut self, bus: &mut CpuBus, virt_addr: u64, word: u32) {
-        let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
-        if (phys_addr as u32) & !0xF == self.cp0.reg_lladdr {
-            self.reg_llbit = false;
-        }
-        self.debug_write(phys_addr, word);
-        if let Err(desc) = bus.write_word(phys_addr as u32, word) {
-            self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
-        }
-    }
-
-    pub fn read_dword(&self, bus: &CpuBus, virt_addr: u64) -> u64 {
-        (self.read_word(bus, virt_addr, false) as u64) << 32 |
-        self.read_word(bus, virt_addr + 4, false) as u64
-    }
-
-    pub fn write_dword(&mut self, bus: &mut CpuBus, virt_addr: u64, dword: u64) {
-        self.write_word(bus, virt_addr, (dword >> 32) as u32);
-        self.write_word(bus, virt_addr + 4, dword as u32);
     }
 
     #[cfg(debug_assertions)]
@@ -911,3 +879,163 @@ impl Cpu {
         println!("");
     }
 }
+
+impl<'c> R4300<'c> for Cpu {
+    type Bus = CpuBus<'c>;
+
+    fn read_word(&self, bus: &CpuBus, virt_addr: u64, load_instr: bool) -> u32 {
+        let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
+        match bus.read_word(phys_addr as u32) {
+            Ok(res) => {
+                self.debug_read(phys_addr, load_instr, res);
+                res
+            }
+            Err(desc) => {
+                self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
+            }
+        }
+    }
+
+    fn write_word(&mut self, bus: &mut CpuBus, virt_addr: u64, word: u32) {
+        let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
+        if (phys_addr as u32) & !0xF == self.cp0.reg_lladdr {
+            self.reg_llbit = false;
+        }
+        self.debug_write(phys_addr, word);
+        if let Err(desc) = bus.write_word(phys_addr as u32, word) {
+            self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
+        }
+    }
+}
+
+
+#[derive(PartialEq, Eq)]
+pub enum FpOrd {
+    Eq,
+    Gt,
+    Lt,
+    No
+}
+
+impl FpOrd {
+    pub fn from<T: PartialOrd>(a: T, b: T) -> Self {
+        match a.partial_cmp(&b) {
+            None                    => FpOrd::No,
+            Some(Ordering::Equal)   => FpOrd::Eq,
+            Some(Ordering::Greater) => FpOrd::Gt,
+            Some(Ordering::Less)    => FpOrd::Lt,
+        }
+    }
+}
+
+// TODO: verify this is the correct offset for half-width
+const LO: usize = 4;
+
+pub trait FpFmt: Copy + fmt::Display + PartialOrd {
+    fn read_fpr(reg: &[u8; 8]) -> Self;
+    fn read_fpr_hi(reg: &[u8; 8]) -> Self { Self::read_fpr(reg) }
+    fn write_fpr(reg: &mut [u8; 8], value: Self);
+    fn write_fpr_hi(reg: &mut [u8; 8], value: Self) { Self::write_fpr(reg, value); }
+    fn is_nan(&self) -> bool { false }
+}
+
+impl FpFmt for f32 {
+    fn read_fpr(reg: &[u8; 8]) -> f32 {
+        BigEndian::read_f32(&reg[LO..])
+    }
+    fn read_fpr_hi(reg: &[u8; 8]) -> f32 {
+        BigEndian::read_f32(&reg[..])
+    }
+    fn write_fpr(reg: &mut [u8; 8], value: f32) {
+        BigEndian::write_f32(&mut reg[LO..], value);
+    }
+    fn write_fpr_hi(reg: &mut [u8; 8], value: f32) {
+        BigEndian::write_f32(&mut reg[..], value);
+    }
+    fn is_nan(&self) -> bool { f32::is_nan(*self) }
+}
+
+impl FpFmt for f64 {
+    fn read_fpr(reg: &[u8; 8]) -> f64 {
+        BigEndian::read_f64(reg)
+    }
+    fn write_fpr(reg: &mut [u8; 8], value: f64) {
+        BigEndian::write_f64(reg, value);
+    }
+    fn is_nan(&self) -> bool { f64::is_nan(*self) }
+}
+
+impl FpFmt for i32 {
+    fn read_fpr(reg: &[u8; 8]) -> i32 {
+        BigEndian::read_i32(&reg[LO..])
+    }
+    fn read_fpr_hi(reg: &[u8; 8]) -> i32 {
+        BigEndian::read_i32(&reg[..])
+    }
+    fn write_fpr(reg: &mut [u8; 8], value: i32) {
+        BigEndian::write_i32(&mut reg[LO..], value);
+    }
+    fn write_fpr_hi(reg: &mut [u8; 8], value: i32) {
+        BigEndian::write_i32(&mut reg[..], value);
+    }
+}
+
+impl FpFmt for i64 {
+    fn read_fpr(reg: &[u8; 8]) -> i64 {
+        BigEndian::read_i64(reg)
+    }
+    fn write_fpr(reg: &mut [u8; 8], value: i64) {
+        BigEndian::write_i64(reg, value);
+    }
+}
+
+// For memory loads/stores.
+impl FpFmt for u32 {
+    fn read_fpr(reg: &[u8; 8]) -> u32 {
+        BigEndian::read_u32(&reg[LO..])
+    }
+    fn read_fpr_hi(reg: &[u8; 8]) -> u32 {
+        BigEndian::read_u32(&reg[..])
+    }
+    fn write_fpr(reg: &mut [u8; 8], value: u32) {
+        BigEndian::write_u32(&mut reg[LO..], value);
+    }
+    fn write_fpr_hi(reg: &mut [u8; 8], value: u32) {
+        BigEndian::write_u32(&mut reg[..], value);
+    }
+}
+
+impl FpFmt for u64 {
+    fn read_fpr(reg: &[u8; 8]) -> u64 {
+        BigEndian::read_u64(reg)
+    }
+    fn write_fpr(reg: &mut [u8; 8], value: u64) {
+        BigEndian::write_u64(reg, value);
+    }
+}
+
+pub trait FpRoundExt {
+    fn round_to_even(&self) -> Self;
+}
+
+macro_rules! impl_round {
+    ($ty:ty) => {
+        impl FpRoundExt for $ty {
+            /// Very naive implementation of round-to-even.
+            fn round_to_even(&self) -> Self {
+                let i = self.floor();
+                let r = self - i;
+                match r.partial_cmp(&0.5) {
+                    Some(Ordering::Less)                    => i,
+                    Some(Ordering::Greater)                 => i + 1.0,
+                    Some(Ordering::Equal) if i % 2.0 == 0.0 => i,
+                    Some(Ordering::Equal)                   => i + 1.0,
+                    None                                    => *self,
+                }
+            }
+        }
+    }
+}
+
+impl_round!(f32);
+impl_round!(f64);
