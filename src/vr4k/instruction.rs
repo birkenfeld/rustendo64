@@ -65,6 +65,8 @@ pub const LDC1:    u32 = 0b110101;
 pub const LWC1:    u32 = 0b110001;
 pub const SDC1:    u32 = 0b111101;
 pub const SWC1:    u32 = 0b111001;
+pub const LWC2:    u32 = 0b110010;
+pub const SWC2:    u32 = 0b111010;
 
 // SPECIAL ops
 pub const JR:      u32 = 0b001000;
@@ -197,11 +199,72 @@ pub const FCNGE:   u32 = 0b111101;
 pub const FCLE:    u32 = 0b111110;
 pub const FCNGT:   u32 = 0b111111;
 
+// COP2 vector functions
+pub const VMULF:   u32 = 0b000000;
+pub const VMULU:   u32 = 0b000001;
+pub const VRNDP:   u32 = 0b000010;
+pub const VMULQ:   u32 = 0b000011;
+pub const VMUDL:   u32 = 0b000100;
+pub const VMUDM:   u32 = 0b000101;
+pub const VMUDN:   u32 = 0b000110;
+pub const VMUDH:   u32 = 0b000111;
+pub const VMACF:   u32 = 0b001000;
+pub const VMACU:   u32 = 0b001001;
+pub const VRNDN:   u32 = 0b001010;
+pub const VMACQ:   u32 = 0b001011;
+pub const VMADL:   u32 = 0b001100;
+pub const VMADM:   u32 = 0b001101;
+pub const VMADN:   u32 = 0b001110;
+pub const VMADH:   u32 = 0b001111;
+pub const VADD:    u32 = 0b010000;
+pub const VSUB:    u32 = 0b010001;
+pub const VABS:    u32 = 0b010011;
+pub const VADDC:   u32 = 0b010100;
+pub const VSUBC:   u32 = 0b010101;
+pub const VSAR:    u32 = 0b011101;
+pub const VLT:     u32 = 0b100000;
+pub const VEQ:     u32 = 0b100001;
+pub const VNE:     u32 = 0b100010;
+pub const VGE:     u32 = 0b100011;
+pub const VCL:     u32 = 0b100100;
+pub const VCH:     u32 = 0b100101;
+pub const VCR:     u32 = 0b100110;
+pub const VMRG:    u32 = 0b100111;
+pub const VAND:    u32 = 0b101000;
+pub const VNAND:   u32 = 0b101001;
+pub const VOR:     u32 = 0b101010;
+pub const VNOR:    u32 = 0b101011;
+pub const VXOR:    u32 = 0b101100;
+pub const VNXOR:   u32 = 0b101101;
+pub const VRCP:    u32 = 0b110000;
+pub const VRCPL:   u32 = 0b110001;
+pub const VRCPH:   u32 = 0b110010;
+pub const VMOV:    u32 = 0b110011;
+pub const VRSQ:    u32 = 0b110100;
+pub const VRSQL:   u32 = 0b110101;
+pub const VRSQH:   u32 = 0b110110;
+pub const VNULL:   u32 = 0b111111;
+
 // FP formats
 pub const FMT_S:   u32 = 0b010000;
 pub const FMT_D:   u32 = 0b010001;
 pub const FMT_W:   u32 = 0b010100;
 pub const FMT_L:   u32 = 0b010101;
+
+// Vector formats
+pub const VF_B:    u32 = 0b00000;
+pub const VF_S:    u32 = 0b00001;
+pub const VF_L:    u32 = 0b00010;
+pub const VF_D:    u32 = 0b00011;
+pub const VF_Q:    u32 = 0b00100;
+pub const VF_R:    u32 = 0b00101;
+pub const VF_P:    u32 = 0b00110;
+pub const VF_U:    u32 = 0b00111;
+pub const VF_H:    u32 = 0b01000;
+pub const VF_F:    u32 = 0b01001;
+pub const VF_W:    u32 = 0b01010;
+pub const VF_T:    u32 = 0b01011;
+
 
 // Register names for disassembling
 pub const REG_NAMES: [&'static str; 32] = [
@@ -222,6 +285,16 @@ pub const FP_FORMATS: [&'static str; 32] = [
     "s", "d", "?", "?", "w", "l", "?", "?",
     "?", "?", "?", "?", "?", "?", "?", "?"];
 
+pub const VEC_REG_NAMES: [&'static str; 32] = [
+    "$v0",  "$v1",  "$v2",  "$v3",  "$v4",  "$v5",  "$v6",  "$v7",
+    "$v8",  "$v9",  "$v10", "$v11", "$v12", "$v13", "$v14", "$v15",
+    "$v16", "$v17", "$v18", "$v19", "$v20", "$v21", "$v22", "$v23",
+    "$v24", "$v25", "$v26", "$v27", "$v28", "$v29", "$v30", "$v31"];
+
+pub const VEC_EL_SPEC: [&'static str; 16] = [
+    "", "[0q]", "[1q]", "[0h]", "[1h]", "[2h]", "[3h]", "?",
+    "[0]", "[1]", "[2]", "[3]", "[4]", "[5]", "[6]", "[7]"];
+
 #[derive(Clone, Copy, Default)]
 pub struct Instruction(pub u32);
 
@@ -240,7 +313,7 @@ impl Instruction {
     /// Coprocessor sub-operation -- present in COPx instrs.
     #[inline(always)]
     pub fn cop_op(self) -> u32 {
-        (self.0 as u32 >> 21) & 0b11111
+        (self.0 >> 21) & 0b11111
     }
 
     /// Source register -- present in arithmetic and branch instrs.
@@ -258,7 +331,13 @@ impl Instruction {
     /// FP format -- present in most FP instrs.
     #[inline(always)]
     pub fn fp_fmt(self) -> u32 {
-        (self.0 as u32 >> 21) & 0b11111
+        (self.0 >> 21) & 0b11111
+    }
+
+    /// Vector elements -- present in RSP vector instrs.
+    #[inline(always)]
+    pub fn vel(self) -> usize {
+        (self.0 as usize >> 21) & 0b1111
     }
 
     // Accessors for the bits 16-20
@@ -278,6 +357,17 @@ impl Instruction {
     /// FP source2 or target -- present in FP instrs.
     #[inline(always)]
     pub fn ft(self) -> usize {
+        (self.0 as usize >> 16) & 0b11111
+    }
+
+    /// Vector load/store dest -- present in vector instrs.
+    #[inline(always)]
+    pub fn vt(self) -> usize {
+        (self.0 as usize >> 16) & 0b11111
+    }
+
+    /// Vector source reg 2 -- present in RSP vector instrs.
+    pub fn vs2(self) -> usize {
         (self.0 as usize >> 16) & 0b11111
     }
 
@@ -301,6 +391,16 @@ impl Instruction {
         (self.0 as usize >> 11) & 0b11111
     }
 
+    /// Vector format -- present in RSP vector load/store instrs.
+    pub fn vec_fmt(self) -> u32 {
+        (self.0 >> 11) & 0b11111
+    }
+
+    /// Vector source reg 1 -- present in RSP vector instrs.
+    pub fn vs1(self) -> usize {
+        (self.0 as usize >> 11) & 0b11111
+    }
+
     // Accessors for the bits 6-10
 
     /// Shift amount -- present in immediate shift instrs.
@@ -312,6 +412,18 @@ impl Instruction {
     /// FP destination -- present in FP instrs.
     #[inline(always)]
     pub fn fd(self) -> usize {
+        (self.0 as usize >> 6) & 0b11111
+    }
+
+    /// Vector elements -- present in vector load/store instrs.
+    #[inline(always)]
+    pub fn vdel(self) -> usize {
+        (self.0 as usize >> 7) & 0b1111
+    }
+
+    /// Vector dest register -- present in vector instrs.
+    #[inline(always)]
+    pub fn vd(self) -> usize {
         (self.0 as usize >> 6) & 0b11111
     }
 
@@ -327,6 +439,14 @@ impl Instruction {
     #[inline(always)]
     pub fn fp_op(self) -> u32 {
         self.0 & 0b111111
+    }
+
+    /// Memory offset -- present in vector instrs.
+    #[inline(always)]
+    pub fn voff(self) -> u64 {
+        // 6 bits, have to sign-extend
+        let v = (self.0 & 0b111111) as i8;
+        ((v << 2) >> 2) as u64
     }
 
     // Accessors for the bits 0-15
@@ -386,6 +506,13 @@ impl fmt::Debug for Instruction {
             (ft)    => { FP_REG_NAMES[self.ft()] };
             (fd)    => { FP_REG_NAMES[self.fd()] };
             (fs)    => { FP_REG_NAMES[self.fs()] };
+            (vs1)   => { VEC_REG_NAMES[self.vs1()] };
+            (vs2)   => { VEC_REG_NAMES[self.vs2()] };
+            (vd)    => { VEC_REG_NAMES[self.vd()] };
+            (vt)    => { VEC_REG_NAMES[self.vt()] };
+            (vel)   => { VEC_EL_SPEC[self.vel()] };
+            (vdel)  => { VEC_EL_SPEC[self.vdel()] };
+            (voff)  => { self.voff() };
         }
         /// N-argument instruction with special formats.
         macro_rules! ins1 {
@@ -415,6 +542,17 @@ impl fmt::Debug for Instruction {
                 write!(f, "{:7} {}, {}, {}", format!("{}.{}", $name,
                                                      FP_FORMATS[self.fp_fmt() as usize]),
                        aexp!($a1), aexp!($a2), aexp!($a3)) }
+        }
+        /// RSP vector instructions.
+        macro_rules! vins {
+            ($name:expr, $a1:tt, $a2:tt, $a3:tt, $a4:tt) => {
+                write!(f, "{:7} {}, {}, {}{}", $name, aexp!($a1), aexp!($a2),
+                       aexp!($a3), aexp!($a4)) }
+        }
+        macro_rules! vinsm {
+            ($name:expr, $a1:tt, $a2:tt, $a3:tt, $a4:tt) => {
+                write!(f, "{:7} {}{}, {}({})", $name, aexp!($a1), aexp!($a2),
+                       aexp!($a3), aexp!($a4)) }
         }
         /// For unknown opcodes, write the full word in hex.
         macro_rules! unknown {
@@ -618,6 +756,83 @@ impl fmt::Debug for Instruction {
             LWC1    => insm!("lwc1", ft, ims, base),
             SDC1    => insm!("sdc1", ft, ims, base),
             SWC1    => insm!("swc1", ft, ims, base),
+            COP2    => match self.special_op() {
+                VMULF => vins!("vmulf", vd, vs1, vs2, vel),
+                VMULU => vins!("vmulu", vd, vs1, vs2, vel),
+                VRNDP => vins!("vrndp", vd, vs1, vs2, vel),
+                VMULQ => vins!("vmulq", vd, vs1, vs2, vel),
+                VMUDL => vins!("vmudl", vd, vs1, vs2, vel),
+                VMUDM => vins!("vmudm", vd, vs1, vs2, vel),
+                VMUDN => vins!("vmudn", vd, vs1, vs2, vel),
+                VMUDH => vins!("vmudh", vd, vs1, vs2, vel),
+                VMACF => vins!("vmacf", vd, vs1, vs2, vel),
+                VMACU => vins!("vmacu", vd, vs1, vs2, vel),
+                VRNDN => vins!("vrndn", vd, vs1, vs2, vel),
+                VMACQ => vins!("vmacq", vd, vs1, vs2, vel),
+                VMADL => vins!("vmadl", vd, vs1, vs2, vel),
+                VMADM => vins!("vmadm", vd, vs1, vs2, vel),
+                VMADN => vins!("vmadn", vd, vs1, vs2, vel),
+                VMADH => vins!("vmadh", vd, vs1, vs2, vel),
+                VADD  => vins!("vadd",  vd, vs1, vs2, vel),
+                VSUB  => vins!("vsub",  vd, vs1, vs2, vel),
+                VABS  => vins!("vabs",  vd, vs1, vs2, vel),
+                VADDC => vins!("vaddc", vd, vs1, vs2, vel),
+                VSUBC => vins!("vsubc", vd, vs1, vs2, vel),
+                VSAR  => vins!("vsar",  vd, vs1, vs2, vel),
+                VLT   => vins!("vlt",   vd, vs1, vs2, vel),
+                VEQ   => vins!("veq",   vd, vs1, vs2, vel),
+                VNE   => vins!("vne",   vd, vs1, vs2, vel),
+                VGE   => vins!("vge",   vd, vs1, vs2, vel),
+                VCL   => vins!("vcl",   vd, vs1, vs2, vel),
+                VCH   => vins!("vch",   vd, vs1, vs2, vel),
+                VCR   => vins!("vcr",   vd, vs1, vs2, vel),
+                VMRG  => vins!("vmrg",  vd, vs1, vs2, vel),
+                VAND  => vins!("vand",  vd, vs1, vs2, vel),
+                VNAND => vins!("vnand", vd, vs1, vs2, vel),
+                VOR   => vins!("vor",   vd, vs1, vs2, vel),
+                VNOR  => vins!("vnor",  vd, vs1, vs2, vel),
+                VXOR  => vins!("vxor",  vd, vs1, vs2, vel),
+                VNXOR => vins!("vnxor", vd, vs1, vs2, vel),
+                VRCP  => vins!("vrcp",  vd, vs1, vs2, vel),
+                VRCPL => vins!("vrcpl", vd, vs1, vs2, vel),
+                VRCPH => vins!("vrcph", vd, vs1, vs2, vel),
+                VMOV  => vins!("vmov",  vd, vs1, vs2, vel),
+                VRSQ  => vins!("vrsq",  vd, vs1, vs2, vel),
+                VRSQL => vins!("vrsql", vd, vs1, vs2, vel),
+                VRSQH => vins!("vrsqh", vd, vs1, vs2, vel),
+                VNULL => vins!("vnull", vd, vs1, vs2, vel),
+                _     => unknown!(),
+            },
+            LWC2    => match self.vec_fmt() {
+                VF_B => vinsm!("lbv", vt, vdel, voff, base),
+                VF_S => vinsm!("lsv", vt, vdel, voff, base),
+                VF_L => vinsm!("llv", vt, vdel, voff, base),
+                VF_D => vinsm!("ldv", vt, vdel, voff, base),
+                VF_Q => vinsm!("lqv", vt, vdel, voff, base),
+                VF_R => vinsm!("lrv", vt, vdel, voff, base),
+                VF_P => vinsm!("lpv", vt, vdel, voff, base),
+                VF_U => vinsm!("luv", vt, vdel, voff, base),
+                VF_H => vinsm!("lhv", vt, vdel, voff, base),
+                VF_F => vinsm!("lfv", vt, vdel, voff, base),
+                VF_W => vinsm!("lwv", vt, vdel, voff, base),
+                VF_T => vinsm!("ltv", vt, vdel, voff, base),
+                _    => unknown!(),
+            },
+            SWC2    => match self.vec_fmt() {
+                VF_B => vinsm!("sbv", vt, vdel, voff, base),
+                VF_S => vinsm!("ssv", vt, vdel, voff, base),
+                VF_L => vinsm!("slv", vt, vdel, voff, base),
+                VF_D => vinsm!("sdv", vt, vdel, voff, base),
+                VF_Q => vinsm!("sqv", vt, vdel, voff, base),
+                VF_R => vinsm!("srv", vt, vdel, voff, base),
+                VF_P => vinsm!("spv", vt, vdel, voff, base),
+                VF_U => vinsm!("suv", vt, vdel, voff, base),
+                VF_H => vinsm!("shv", vt, vdel, voff, base),
+                VF_F => vinsm!("sfv", vt, vdel, voff, base),
+                VF_W => vinsm!("swv", vt, vdel, voff, base),
+                VF_T => vinsm!("stv", vt, vdel, voff, base),
+                _    => unknown!(),
+            },
             _       => unknown!(),
         }
     }
