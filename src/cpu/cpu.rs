@@ -2,6 +2,8 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::sync::RwLock;
 use byteorder::{BigEndian, ByteOrder};
+#[cfg(debug_assertions)]
+use ansi_term;
 
 use bus::Bus;
 use bus::mem_map::*;
@@ -12,53 +14,25 @@ use vr4k::types::*;
 use debug::DebugSpecList;
 use util::{mult_64_64_unsigned, mult_64_64_signed};
 
-const NUM_GPR: usize = 32;
+pub const NUM_FPR: usize = 32;
 
 #[derive(Default)]
 pub struct Cpu {
-    // Debugging info
-    pub debug_specs:    DebugSpecList,
-    instr_counter:      u64,
-    last_instr:         Instruction,
-    #[cfg(debug_assertions)] debug_print: bool,
-    #[cfg(debug_assertions)] debug_until: u64,
-
-    // Helpers
-    in_branch_delay:    bool,
-    next_pc:            Option<u64>,
+    // Common members
+    regs:        R4300Common,
 
     // Subcomponents
-    cp0:                Cp0,
+    cp0:         Cp0,
 
-    // Registers
-    reg_gpr:            [u64; NUM_GPR],
-    reg_fpr:            [[u8; 8]; NUM_GPR],
-    reg_pc:             u64,
-    reg_hi:             u64,
-    reg_lo:             u64,
-    reg_llbit:          bool,
-    reg_fcr31:          u32,
+    // CPU-only registers
+    reg_fpr:     [[u8; 8]; NUM_FPR],
+    reg_hi:      u64,
+    reg_lo:      u64,
+    reg_llbit:   bool,
+    reg_fcr31:   u32,
 }
 
 pub type CpuBus<'c> = Bus<'c, &'c mut [u32], &'c RwLock<Box<[u32]>>>;
-
-#[cfg(debug_assertions)]
-macro_rules! dprintln {
-    ($cpu:expr, $($args:expr),+) => {
-        if $cpu.debug_print {
-            use ansi_term::Colour;
-            println!("{}", Colour::Blue.paint(format!($($args),+)));
-        }
-    }
-}
-
-#[cfg(debug_assertions)]
-pub const INDENT: &'static str = "                                       ";
-
-#[cfg(not(debug_assertions))]
-macro_rules! dprintln {
-    ($cpu:expr, $($args:expr),+) => { }
-}
 
 
 impl fmt::Debug for Cpu {
@@ -66,26 +40,32 @@ impl fmt::Debug for Cpu {
         for row in 0..8 {
             for col in 0..4 {
                 let i = row + col * 8;
-                try!(write!(f, "  {:2}:{} = {:016x}", i, REG_NAMES[i], self.reg_gpr[i]));
+                try!(write!(f, "  {:2}:{} = {:016x}", i, REG_NAMES[i], self.regs.gpr[i]));
             }
             try!(write!(f, "\n"));
         }
-        try!(write!(f, "     pc = {:016x}", self.reg_pc));
+        try!(write!(f, "     pc = {:016x}", self.regs.pc));
         try!(write!(f, "     hi = {:016x}     lo = {:016x}", self.reg_hi, self.reg_lo));
         write!(f, "     ll = {:16}\n", self.reg_llbit)
     }
 }
 
 impl Cpu {
+    #[cfg(debug_assertions)]
     pub fn new(debug: DebugSpecList) -> Cpu {
-        Cpu {
-            debug_specs: debug, .. Cpu::default()
-        }
+        let mut cpu = Cpu::default();
+        cpu.regs.debug_specs = debug;
+        cpu
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub fn new(_: DebugSpecList) -> Cpu {
+        Cpu::default()
     }
 
     pub fn power_on_reset(&mut self) {
         self.cp0.power_on_reset();
-        self.reg_pc = RESET_VECTOR;
+        self.regs.pc = RESET_VECTOR;
     }
 
     pub fn run_instruction(&mut self, bus: &mut CpuBus) {
@@ -101,9 +81,9 @@ impl Cpu {
         }
 
         // Read next instruction.
-        let pc = self.reg_pc;
-        self.last_instr = Instruction(self.read_word(bus, pc, true));
-        let instr = self.last_instr;
+        let pc = self.regs.pc;
+        let instr = Instruction(self.read_word(bus, pc, true));
+        self.regs.last_instr = instr;
 
         // Maybe process some debug stuff.
         self.handle_debug(bus, pc, &instr);
@@ -114,19 +94,19 @@ impl Cpu {
 
         // Go to next instruction if current instruction didn't jump
         // (or set an exception vector, etc.)
-        self.reg_pc = self.next_pc.take().unwrap_or(self.reg_pc + 4);
+        self.regs.pc = self.regs.next_pc.take().unwrap_or(self.regs.pc + 4);
     }
 
     pub fn run_branch_delay_slot(&mut self, bus: &mut CpuBus, addr: u64) {
-        if self.in_branch_delay {
+        if self.regs.in_branch_delay {
             self.bug(format!("Branching in branch delay slot -- check semantics!"));
         }
-        self.in_branch_delay = true;
-        self.reg_pc += 4;
-        self.next_pc = Some(addr); // prepare jump
+        self.regs.in_branch_delay = true;
+        self.regs.pc += 4;
+        self.regs.next_pc = Some(addr); // prepare jump
         self.run_instruction(bus);
-        self.next_pc = Some(self.reg_pc); // no adjustment to pc
-        self.in_branch_delay = false;
+        self.regs.next_pc = Some(self.regs.pc); // no adjustment to pc
+        self.regs.in_branch_delay = false;
     }
 
     #[cfg(debug_assertions)]
@@ -136,8 +116,8 @@ impl Cpu {
         use debug::Debugger;
 
         let (debug_for, dump_here, break_here) =
-            self.debug_specs.check_instr(pc, instr, &self.reg_gpr);
-        self.instr_counter += 1;
+            self.regs.debug_specs.check_instr(pc, instr, &self.regs.gpr);
+        self.regs.instr_ctr += 1;
         if break_here {
             println!("{}", Colour::Red.paint(
                 format!("at: {:#10x}   {:?}", pc as u32, instr)));
@@ -152,14 +132,14 @@ impl Cpu {
             println!("{:?}", self);
         }
         if debug_for > 0 {
-            self.debug_print = true;
+            self.regs.debug_print = true;
             if debug_for == u64::MAX {
-                self.debug_until = u64::MAX;
+                self.regs.debug_until = u64::MAX;
             } else if debug_for > 1 {
-                self.debug_until = self.instr_counter + debug_for;
+                self.regs.debug_until = self.regs.instr_ctr + debug_for;
             }
-        } else if self.debug_print && self.instr_counter > self.debug_until {
-            self.debug_print = false;
+        } else if self.regs.debug_print && self.regs.instr_ctr > self.regs.debug_until {
+            self.regs.debug_print = false;
         }
     }
 
@@ -186,11 +166,11 @@ impl Cpu {
             SLTI  => self.binary_imm(instr, |rs| ((rs as i64) < instr.imm_sign_ext() as i64) as u64),
             SLTIU => self.binary_imm(instr, |rs| (rs < instr.imm_sign_ext()) as u64),
             J     => {
-                let addr = ((self.reg_pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
+                let addr = ((self.regs.pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
                 self.jump(bus, addr, 0);
             }
             JAL   => {
-                let addr = ((self.reg_pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
+                let addr = ((self.regs.pc + 4) & 0xffff_ffff_c000_0000) | (instr.j_target() << 2);
                 self.jump(bus, addr, 31);
             }
             BEQ   => self.branch(bus, instr, false, false, |cpu|
@@ -340,12 +320,12 @@ impl Cpu {
                         if self.cp0.reg_status.error_level {
                             dprintln!(self, "{} return from errorlevel to {:#x}",
                                       INDENT, self.cp0.reg_error_epc);
-                            self.next_pc = Some(self.cp0.reg_error_epc);
+                            self.regs.next_pc = Some(self.cp0.reg_error_epc);
                             self.cp0.reg_status.error_level = false;
                         } else if self.cp0.reg_status.exception_level {
                             dprintln!(self, "{} return from exception to {:#x}",
                                       INDENT, self.cp0.reg_epc);
-                            self.next_pc = Some(self.cp0.reg_epc);
+                            self.regs.next_pc = Some(self.cp0.reg_epc);
                             self.cp0.reg_status.exception_level = false;
                         } else {
                             self.bug(format!("ERET without error/exception bit set"));
@@ -579,7 +559,7 @@ impl Cpu {
             self.bug(format!("Unaligned address in jump: {:#x}", addr));
         }
         if link_reg > 0 {
-            let return_addr = self.reg_pc + 8;
+            let return_addr = self.regs.pc + 8;
             self.write_gpr(link_reg, return_addr);
             dprintln!(self, "{} {} <- {:#18x}", INDENT, REG_NAMES[link_reg],
                       return_addr);
@@ -592,9 +572,9 @@ impl Cpu {
                  link: bool, mut predicate: P) where P: FnMut(&mut Self) -> bool
     {
         // Offset is relative to the delay slot.
-        let addr = (instr.imm_sign_ext() << 2).wrapping_add(self.reg_pc + 4);
+        let addr = (instr.imm_sign_ext() << 2).wrapping_add(self.regs.pc + 4);
         let take = predicate(self);
-        let next_instr = self.reg_pc + 8;
+        let next_instr = self.regs.pc + 8;
         if link {
             self.write_gpr(31, next_instr);
             dprintln!(self, "{} ra <- {:#18x}", INDENT, next_instr);
@@ -607,7 +587,7 @@ impl Cpu {
         } else if !likely {
             self.run_branch_delay_slot(bus, next_instr);
         } else {
-            self.next_pc = Some(next_instr);
+            self.regs.next_pc = Some(next_instr);
         }
     }
 
@@ -781,17 +761,17 @@ impl Cpu {
 
     #[cfg(debug_assertions)]
     fn debug_read(&self, phys_addr: u64, load_instr: bool, res: u32) {
-        if !load_instr && self.debug_specs.matches_mem(phys_addr, false) {
+        if !load_instr && self.regs.debug_specs.matches_mem(phys_addr, false) {
             println!("   {:#10x}   Bus read:  {:#10x} :  {:#10x}",
-                     self.reg_pc as u32, phys_addr, res);
+                     self.regs.pc as u32, phys_addr, res);
         }
     }
 
     #[cfg(debug_assertions)]
     fn debug_write(&self, phys_addr: u64, word: u32) {
-        if self.debug_specs.matches_mem(phys_addr, true) {
+        if self.regs.debug_specs.matches_mem(phys_addr, true) {
             println!("   {:#10x}   Bus write: {:#10x} <- {:#10x}",
-                     self.reg_pc as u32, phys_addr, word);
+                     self.regs.pc as u32, phys_addr, word);
         }
     }
 
@@ -819,44 +799,48 @@ impl Cpu {
 
     fn read_gpr(&self, index: usize) -> u64 {
         // Reg 0 is always 0 since we never write it
-        self.reg_gpr[index]
+        self.regs.gpr[index]
     }
 
     fn write_gpr(&mut self, index: usize, value: u64) {
         if index != 0 {
-            self.reg_gpr[index] = value;
+            self.regs.gpr[index] = value;
         }
     }
 
     fn flag_exception(&mut self, exc: Exception) {
         if !self.cp0.reg_status.exception_level && exc.is_enabled(&self.cp0) {
             dprintln!(self, "Starting exception processing: {:?}", exc);
-            self.cp0.reg_epc = self.reg_pc;
-            if self.in_branch_delay {
+            self.cp0.reg_epc = self.regs.pc;
+            if self.regs.in_branch_delay {
                 self.cp0.reg_epc -= 4;
             }
-            self.cp0.reg_cause.exc_in_delay_slot = self.in_branch_delay;
+            self.cp0.reg_cause.exc_in_delay_slot = self.regs.in_branch_delay;
             self.cp0.reg_cause.coprocessor = exc.coprocessor();
             self.cp0.reg_cause.exception_code = exc.code();
             self.cp0.reg_cause.interrupts_pending = exc.interrupt_mask();
             self.cp0.reg_status.exception_level = true;
-            self.reg_pc = exc.vector_location(self.cp0.reg_status.is_bootstrap());
-            self.next_pc = Some(self.reg_pc);
+            self.regs.pc = exc.vector_location(self.cp0.reg_status.is_bootstrap());
+            self.regs.next_pc = Some(self.regs.pc);
         }
     }
 
     #[cold]
     fn bug(&self, msg: String) -> ! {
-        //println!("{:#?}", $cpu.interconnect);
         println!("\nCPU dump:\n{:?}", self);
-        println!("last instr was:    {:?}", self.last_instr);
-        println!("#instrs executed:  {}", self.instr_counter);
+        println!("last instr was:    {:?}", self.regs.last_instr);
+        println!("#instrs executed:  {}", self.regs.instr_ctr);
         panic!(msg);
     }
 
     #[cfg(debug_assertions)]
     pub fn read_pc(&self) -> u64 {
-        self.reg_pc
+        self.regs.pc
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn debug_specs(&mut self) -> &mut DebugSpecList {
+        &mut self.regs.debug_specs
     }
 
     #[cfg(debug_assertions)]
@@ -883,6 +867,9 @@ impl Cpu {
 impl<'c> R4300<'c> for Cpu {
     type Bus = CpuBus<'c>;
 
+    fn get_regs(&self) -> &R4300Common { &self.regs }
+    fn mut_regs(&mut self) -> &mut R4300Common { &mut self.regs }
+
     fn read_word(&self, bus: &CpuBus, virt_addr: u64, load_instr: bool) -> u32 {
         let phys_addr = self.virt_addr_to_phys_addr(virt_addr);
         match bus.read_word(phys_addr as u32) {
@@ -905,6 +892,11 @@ impl<'c> R4300<'c> for Cpu {
         if let Err(desc) = bus.write_word(phys_addr as u32, word) {
             self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
         }
+    }
+
+    #[cfg(debug_assertions)]
+    fn get_debug_color(&self) -> ansi_term::Colour {
+        ansi_term::Colour::Blue
     }
 }
 

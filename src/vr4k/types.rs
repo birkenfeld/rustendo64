@@ -1,9 +1,53 @@
 use std::fmt;
+#[cfg(debug_assertions)]
+use ansi_term;
 
+use vr4k::instruction::*;
+#[cfg(debug_assertions)]
+use debug::DebugSpecList;
+
+const NUM_GPR: usize = 32;
+
+/// Combi
+#[derive(Default)]
+pub struct R4300Common {
+    // Debugging info
+    #[cfg(debug_assertions)] pub debug_specs: DebugSpecList,
+    #[cfg(debug_assertions)] pub debug_print: bool,
+    #[cfg(debug_assertions)] pub debug_until: u64,
+                             pub instr_ctr:   u64,  // TODO
+
+    // Some more informational
+    pub last_instr:      Instruction,
+
+    // Registers
+    pub gpr:             [u64; NUM_GPR],
+    pub pc:              u64,
+
+    // Helpers
+    pub in_branch_delay: bool,
+    pub next_pc:         Option<u64>,
+}
+
+/// Main trait for a VR4300-like processor.
+///
+/// Most functions are default-implemented, others have to be supplied by the
+/// two implementors (Cpu and Rsp).
 pub trait R4300<'c> {
     type Bus;
+
+    /// Read a word from memory.
     fn read_word(&self, &Self::Bus, u64, bool) -> u32;
+    /// Write a word to memory.
     fn write_word(&mut self, &mut Self::Bus, u64, u32);
+
+    /// Get the color to use for debug output.
+    #[cfg(debug_assertions)]
+    fn get_debug_color(&self) -> ansi_term::Colour;
+
+    /// Get references to the common-register struct.
+    fn get_regs(&self) -> &R4300Common;
+    fn mut_regs(&mut self) -> &mut R4300Common;
 
     fn read_dword(&self, bus: &Self::Bus, virt_addr: u64) -> u64 {
         (self.read_word(bus, virt_addr, false) as u64) << 32 |
@@ -16,6 +60,25 @@ pub trait R4300<'c> {
     }
 }
 
+
+#[cfg(debug_assertions)]
+macro_rules! dprintln {
+    ($cpu:expr, $($args:expr),+) => {
+        if $cpu.get_regs().debug_print {
+            println!("{}", $cpu.get_debug_color().paint(format!($($args),+)));
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+pub const INDENT: &'static str = "                                       ";
+
+#[cfg(not(debug_assertions))]
+macro_rules! dprintln {
+    ($cpu:expr, $($args:expr),+) => { }
+}
+
+/// Abstracts the different types we can load and store.
 pub trait MemFmt<'c, C: R4300<'c>>: Copy + fmt::LowerHex {
     fn get_align() -> u64;
     fn load_from(&mut C, &C::Bus, u64) -> Self;

@@ -1,8 +1,15 @@
 use std::fmt;
 
-// not yet
-// use num::FromPrimitive;
-// use super::opcode::Opcode;
+/// This combines all the decodings for instructions available for the main CPU
+/// and the RSP.  CP1 operations are therefore CPU-only, while CP2 operations
+/// are RSP-only.
+///
+/// Further, the RSP doesn't support a range of operations, such as:
+/// * all doubleword ops
+/// * multiplication and division
+/// * some branches and all traps
+/// * syscall, sync, cache, ll/sc
+/// * unaligned loads/stores
 
 // Opcodes
 pub const LUI:     u32 = 0b001111;

@@ -10,10 +10,10 @@ extern crate chan_signal;
 extern crate crossbeam;
 extern crate cpal;
 
+#[macro_use] mod vr4k;
 mod n64;
 mod cpu;
 mod rsp;
-mod vr4k;
 mod bus;
 mod util;
 mod ui;

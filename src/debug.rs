@@ -382,13 +382,13 @@ impl<'c, 'i> Debugger<'c, 'i> {
 
     fn cont(&mut self, until: Option<u64>) -> bool {
         if let Some(addr) = until {
-            self.cpu.debug_specs.add_spec(DebugSpec::BreakAt(addr, true));
+            self.cpu.debug_specs().add_spec(DebugSpec::BreakAt(addr, true));
         }
         true
     }
 
     fn step(&mut self, n: Option<u64>) -> bool {
-        self.cpu.debug_specs.add_spec(DebugSpec::BreakIn(n.unwrap_or(1)));
+        self.cpu.debug_specs().add_spec(DebugSpec::BreakIn(n.unwrap_or(1)));
         true
     }
 
@@ -421,7 +421,7 @@ impl<'c, 'i> Debugger<'c, 'i> {
 
     fn add_break(&mut self, addr: Option<u64>) -> bool {
         if let Some(addr) = addr {
-            self.cpu.debug_specs.add_spec(DebugSpec::BreakAt(addr, false));
+            self.cpu.debug_specs().add_spec(DebugSpec::BreakAt(addr, false));
             println!("Added breakpoint.");
         } else {
             println!("Need an address to break at.");
@@ -442,7 +442,7 @@ impl<'c, 'i> Debugger<'c, 'i> {
                 MemAccess(true, true)
             };
             if let Some(addr) = addr {
-                self.cpu.debug_specs.add_spec(DebugSpec::MemBreak(acc, addr));
+                self.cpu.debug_specs().add_spec(DebugSpec::MemBreak(acc, addr));
                 println!("Added breakpoint.");
             } else {
                 println!("Need an address to break at.");
@@ -457,7 +457,7 @@ impl<'c, 'i> Debugger<'c, 'i> {
         if let Some(n) = n {
             let mut i = 0;
             let mut removed = false;
-            self.cpu.debug_specs.specs().retain(|c| match *c {
+            self.cpu.debug_specs().specs().retain(|c| match *c {
                 DebugSpec::BreakAt(_, false) |
                 DebugSpec::MemBreak(..) => {
                     i += 1;
@@ -484,7 +484,7 @@ impl<'c, 'i> Debugger<'c, 'i> {
     fn list_breaks(&mut self) -> bool {
         println!("#   type address      instruction/access");
         println!("--- ---- ------------ -------------------------");
-        let specs = self.cpu.debug_specs.specs().iter().filter_map(|spec| {
+        let specs = self.cpu.debug_specs().specs().iter().filter_map(|spec| {
             match *spec {
                 DebugSpec::BreakAt(_, false) => Some(spec.clone()),
                 DebugSpec::MemBreak(..) => Some(spec.clone()),
@@ -507,7 +507,7 @@ impl<'c, 'i> Debugger<'c, 'i> {
     fn add_spec(&mut self, spec: Option<&&str>) -> bool {
         if let Some(spec) = spec {
             if let Ok(spec) = DebugSpec::from_str(spec) {
-                self.cpu.debug_specs.add_spec(spec);
+                self.cpu.debug_specs().add_spec(spec);
             } else {
                 println!("Debug spec {} not understood.", spec);
             }
@@ -518,7 +518,7 @@ impl<'c, 'i> Debugger<'c, 'i> {
     }
 
     fn list_specs(&mut self) -> bool {
-        for spec in self.cpu.debug_specs.specs().iter() {
+        for spec in self.cpu.debug_specs().specs().iter() {
             if spec.is_dump() {
                 println!("{:?}", spec);
             }
