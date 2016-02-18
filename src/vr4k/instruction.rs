@@ -60,6 +60,7 @@ pub const SPECIAL: u32 = 0b000000;
 pub const REGIMM:  u32 = 0b000001;
 pub const COP0:    u32 = 0b010000;
 pub const COP1:    u32 = 0b010001;
+pub const COP2:    u32 = 0b010010;
 pub const LDC1:    u32 = 0b110101;
 pub const LWC1:    u32 = 0b110001;
 pub const SDC1:    u32 = 0b111101;

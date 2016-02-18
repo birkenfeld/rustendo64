@@ -4,10 +4,11 @@ use std::thread;
 use crossbeam;
 
 use ui;
-use bus::{self, Bus};
 use cpu;
-use debug::DebugSpecList;
+use vr4k::types::R4300;
+use bus::{self, Bus};
 use bus::mem_map::*;
+use debug::DebugSpecList;
 
 pub struct N64 {
     ui: ui::UiChannel,
