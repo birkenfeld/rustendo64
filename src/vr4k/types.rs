@@ -3,6 +3,7 @@ use std::fmt;
 use ansi_term;
 
 use vr4k::instruction::*;
+#[cfg(debug_assertions)]
 use debug::DebugSpecList;
 
 const NUM_GPR: usize = 32;
@@ -67,8 +68,10 @@ pub trait R4300<'c> where Self: Sized + Default + fmt::Debug {
 
     // FUNCTIONS TO IMPLEMENT
 
+    /// Read an instruction word from memory.
+    fn read_instr(&self, &Self::Bus, u64) -> u32;
     /// Read a word from memory.
-    fn read_word(&self, &Self::Bus, u64, bool) -> u32;
+    fn read_word(&self, &Self::Bus, u64) -> u32;
     /// Write a word to memory.
     fn write_word(&mut self, &mut Self::Bus, u64, u32);
     /// Translate address.
@@ -110,24 +113,13 @@ pub trait R4300<'c> where Self: Sized + Default + fmt::Debug {
 
     // MAIN FUNCTIONS
 
-    #[cfg(debug_assertions)]
-    fn new(debug: DebugSpecList) -> Self {
-        let mut cpu = Self::default();
-        cpu.mut_regs().debug_specs = debug;
-        cpu
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn new(_: DebugSpecList) -> Self {
-        Self::default()
-    }
-
     fn run_instruction(&mut self, bus: &mut Self::Bus) {
+        // Handle pending interrupts.
         self.check_interrupts(bus);
 
         // Read next instruction.
         let pc = self.get_regs().pc;
-        let instr = Instruction(self.read_word(bus, pc, true));
+        let instr = Instruction(self.read_instr(bus, pc));
         self.mut_regs().last_instr = instr;
 
         // Maybe process some debug stuff.
@@ -260,8 +252,8 @@ pub trait R4300<'c> where Self: Sized + Default + fmt::Debug {
     // HELPERS
 
     fn read_dword(&self, bus: &Self::Bus, virt_addr: u64) -> u64 {
-        (self.read_word(bus, virt_addr, false) as u64) << 32 |
-        self.read_word(bus, virt_addr + 4, false) as u64
+        (self.read_word(bus, virt_addr) as u64) << 32 |
+        self.read_word(bus, virt_addr + 4) as u64
     }
 
     fn write_dword(&mut self, bus: &mut Self::Bus, virt_addr: u64, dword: u64) {
@@ -434,18 +426,20 @@ pub trait R4300<'c> where Self: Sized + Default + fmt::Debug {
     }
 
     #[cfg(debug_assertions)]
-    fn debug_read(&self, phys_addr: u64, load_instr: bool, res: u32) {
-        if !load_instr && self.get_regs().check_debug_mem(phys_addr, false) {
-            println!("   {:#10x}   Bus read:  {:#10x} :  {:#10x}",
-                     self.get_regs().pc as u32, phys_addr, res);
+    fn debug_read(&self, phys_addr: u64, res: u32) {
+        if self.get_regs().check_debug_mem(phys_addr, false) {
+            println!("{}", self.get_debug_color().paint(
+                format!("   {:#10x}   Bus read:  {:#10x} :  {:#10x}",
+                        self.get_regs().pc as u32, phys_addr, res)));
         }
     }
 
     #[cfg(debug_assertions)]
     fn debug_write(&self, phys_addr: u64, word: u32) {
         if self.get_regs().check_debug_mem(phys_addr, true) {
-            println!("   {:#10x}   Bus write: {:#10x} <- {:#10x}",
-                     self.get_regs().pc as u32, phys_addr, word);
+            println!("{}", self.get_debug_color().paint(
+                format!("   {:#10x}   Bus write: {:#10x} <- {:#10x}",
+                        self.get_regs().pc as u32, phys_addr, word)));
         }
     }
 
@@ -460,7 +454,7 @@ pub trait R4300<'c> where Self: Sized + Default + fmt::Debug {
     fn handle_debug(&mut self, _: &mut Self::Bus, _: u64, _: &Instruction) { }
 
     #[cfg(not(debug_assertions))]
-    fn debug_read(&self, _: u64, _: bool, _: u32) { }
+    fn debug_read(&self, _: u64, _: u32) { }
 
     #[cfg(not(debug_assertions))]
     fn debug_write(&self, _: u64, _: u32) { }
@@ -478,12 +472,12 @@ pub trait MemFmt<'c, C: R4300<'c>>: Copy + fmt::LowerHex
 impl<'c, C: R4300<'c>> MemFmt<'c, C> for u8 {
     fn get_align() -> u64 { 1 }
     fn load_from(cpu: &mut C, bus: &C::Bus, addr: u64) -> u8 {
-        let word = cpu.read_word(bus, addr & !3, false);
+        let word = cpu.read_word(bus, addr & !3);
         let shift = 8 * (3 - (addr % 4));  // byte 0: shift 24
         (word >> shift) as u8
     }
     fn store_to(cpu: &mut C, bus: &mut C::Bus, addr: u64, val: u8) {
-        let mut word = cpu.read_word(bus, addr & !3, false);
+        let mut word = cpu.read_word(bus, addr & !3);
         let shift = 8 * (3 - (addr % 4));
         let mask = !(0xFF << shift);
         word = (word & mask) | ((val as u32) << shift);
@@ -494,12 +488,12 @@ impl<'c, C: R4300<'c>> MemFmt<'c, C> for u8 {
 impl<'c, C: R4300<'c>> MemFmt<'c, C> for u16 {
     fn get_align() -> u64 { 2 }
     fn load_from(cpu: &mut C, bus: &C::Bus, addr: u64) -> u16 {
-        let word = cpu.read_word(bus, addr & !3, false);
+        let word = cpu.read_word(bus, addr & !3);
         let shift = 8 * (2 - (addr % 4));  // halfword 0: shift 16
         (word >> shift) as u16
     }
     fn store_to(cpu: &mut C, bus: &mut C::Bus, addr: u64, val: u16) {
-        let mut word = cpu.read_word(bus, addr & !3, false);
+        let mut word = cpu.read_word(bus, addr & !3);
         let shift = 8 * (2 - (addr % 4));
         let mask = !(0xFFFF << shift);
         word = (word & mask) | ((val as u32) << shift);
@@ -510,7 +504,7 @@ impl<'c, C: R4300<'c>> MemFmt<'c, C> for u16 {
 impl<'c, C: R4300<'c>> MemFmt<'c, C> for u32 {
     fn get_align() -> u64 { 4 }
     fn load_from(cpu: &mut C, bus: &C::Bus, addr: u64) -> u32 {
-        cpu.read_word(bus, addr, false)
+        cpu.read_word(bus, addr)
     }
     fn store_to(cpu: &mut C, bus: &mut C::Bus, addr: u64, val: u32) {
         cpu.write_word(bus, addr, val);

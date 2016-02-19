@@ -395,7 +395,7 @@ impl<'r, 'c, C: R4300<'c>> Debugger<'r, 'c, C> {
         if let Some(addr) = addr {
             for i in 0..n.unwrap_or(1) {
                 // TODO: use a non-panicking version
-                let word = self.cpu.read_word(self.bus, addr + 4*i, false);
+                let word = self.cpu.read_word(self.bus, addr + 4*i);
                 println!("{:#10x}  {:#10x}", addr + 4*i, word);
             }
         } else {
@@ -494,7 +494,7 @@ impl<'r, 'c, C: R4300<'c>> Debugger<'r, 'c, C> {
             match spec {
                 DebugSpec::BreakAt(addr, _) =>
                     println!("{:3} pc   {:#10x}   {:?}", i, addr as u32,
-                             Instruction(self.cpu.read_word(self.bus, addr, true))),
+                             Instruction(self.cpu.read_instr(self.bus, addr))),
                 DebugSpec::MemBreak(ref acc, addr) =>
                     println!("{:3} mem  {:#10x}   {:?}", i, addr as u32, acc),
                 _ => {}
@@ -545,7 +545,7 @@ impl<'r, 'c, C: R4300<'c>> Debugger<'r, 'c, C> {
         let base_addr = addr.unwrap_or(self.cpu.read_pc());
         for i in 0..n.unwrap_or(10) {
             let addr = base_addr + 4*i;
-            let instr = Instruction(self.cpu.read_word(self.bus, addr, true));
+            let instr = Instruction(self.cpu.read_instr(self.bus, addr));
             println!(" {} {:#10x}   {:?}",
                      if i == 0 { "->" } else { "  " }, addr as u32, instr);
         }

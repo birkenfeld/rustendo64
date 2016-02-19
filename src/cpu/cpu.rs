@@ -11,6 +11,7 @@ use cpu::cp0::Cp0;
 use cpu::exception::*;
 use vr4k::instruction::*;
 use vr4k::types::*;
+use debug::DebugSpecList;
 use util::{mult_64_64_unsigned, mult_64_64_signed};
 
 pub const NUM_FPR: usize = 32;
@@ -52,13 +53,23 @@ impl fmt::Debug for Cpu {
 impl<'c> R4300<'c> for Cpu {
     type Bus = CpuBus<'c>;
 
-    fn read_word(&self, bus: &CpuBus, virt_addr: u64, load_instr: bool) -> u32 {
+    fn read_instr(&self, bus: &CpuBus, virt_addr: u64) -> u32 {
+        let phys_addr = self.translate_addr(virt_addr);
+        match bus.read_word(phys_addr as u32) {
+            Ok(res) => res,
+            Err(desc) => {
+                self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
+            }
+        }
+    }
+
+    fn read_word(&self, bus: &CpuBus, virt_addr: u64) -> u32 {
         let phys_addr = self.translate_addr(virt_addr);
         match bus.read_word(phys_addr as u32) {
             Ok(res) => {
-                self.debug_read(phys_addr, load_instr, res);
+                self.debug_read(phys_addr, res);
                 res
-            }
+            },
             Err(desc) => {
                 self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
             }
@@ -110,7 +121,7 @@ impl<'c> R4300<'c> for Cpu {
         self.reg_llbit = true;
     }
 
-    fn sc_handler<T: MemFmt<'c, Self>>(&mut self, bus: &mut Self::Bus, instr: &Instruction,
+    fn sc_handler<T: MemFmt<'c, Self>>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction,
                                        virt_addr: u64, data: T) {
         let llbit = self.reg_llbit;
         if llbit {
@@ -222,7 +233,7 @@ impl<'c> R4300<'c> for Cpu {
             DDIVU  => self.binary_hilo(instr, |a, b| (a / b, a % b)),
             // TEQ, TGE, TGEU, TLT, TLTU, TNE
             SYNC   => { }
-            // SYSCALL
+            // SYSCALL, BREAK
             _      => self.bug(format!("#UD: I {:#b} -- {:?}", instr.0, instr))
         }
     }
@@ -366,6 +377,18 @@ impl<'c> R4300<'c> for Cpu {
 }
 
 impl Cpu {
+    #[cfg(debug_assertions)]
+    pub fn new(debug: DebugSpecList) -> Self {
+        let mut cpu = Self::default();
+        cpu.mut_regs().debug_specs = debug;
+        cpu
+    }
+
+    #[cfg(not(debug_assertions))]
+    pub fn new(_: DebugSpecList) -> Self {
+        Self::default()
+    }
+
     pub fn power_on_reset(&mut self) {
         self.cp0.power_on_reset();
         self.regs.pc = RESET_VECTOR;
