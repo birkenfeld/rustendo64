@@ -1,12 +1,18 @@
 use std::fmt;
+use std::mem;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::sync::atomic::AtomicBool;
+use simd::{u8x16, u16x8, i16x8, bool16ix8, i32x4};
+use simd::x86::sse2::{Sse2I8x16, Sse2I16x8, Sse2U16x8, Sse2I32x4};
+use simd::x86::ssse3::Ssse3U8x16;
+use byteorder::{ByteOrder, BigEndian, LittleEndian};
 #[cfg(debug_assertions)]
 use ansi_term;
 
 use bus::{Bus, RamAccess};
 use bus::mem_map::*;
 use rsp::cp2::Cp2;
+use rsp::tables::SimdTables;
 use vr4k::instruction::*;
 use vr4k::types::*;
 use debug::DebugSpecList;
@@ -37,8 +43,9 @@ pub struct Rsp {
     regs:      R4300Common,
     cp2:       Cp2,
     broke:     bool,
-    #[allow(dead_code)] run_bit:   Arc<AtomicBool>,
+    #[allow(dead_code)] run_bit:   Arc<AtomicBool>,  /* TODO: remove if unneeded */
     run_cond:  Arc<Condvar>,
+    tables:    SimdTables,
 }
 
 pub type RspBus<'c> = Bus<'c, &'c RwLock<Box<[u32]>>, &'c mut [u32]>;
@@ -53,7 +60,8 @@ impl fmt::Debug for Rsp {
             }
             try!(write!(f, "\n"));
         }
-        write!(f, "     pc = {:016x}\n", self.regs.pc)
+        try!(write!(f, "     pc = {:016x}\n\n", self.regs.pc));
+        write!(f, "{:?}", self.cp2)
     }
 }
 
@@ -114,13 +122,12 @@ impl<'c> R4300<'c> for Rsp {
 
     #[cfg(debug_assertions)]
     fn cp2_dump(&self) {
-        println!("{:#?}", self.cp2);
     }
 
-    fn dispatch_op(&mut self, _: &mut RspBus, instr: &Instruction) {
+    fn dispatch_op(&mut self, bus: &mut RspBus, instr: &Instruction) {
         match instr.opcode() {
-            // LWC2   => self.mem_load_vec::<u32> (bus, instr),
-            // SWC2   => self.mem_store_vec::<u32>(bus, instr),
+            LWC2   => self.mem_load_vec(bus, instr),
+            SWC2   => self.mem_store_vec(bus, instr),
             _      => self.bug(format!("#UD: I {:#b} -- {:?}", instr.0, instr))
         }
     }
@@ -168,9 +175,267 @@ impl<'c> R4300<'c> for Rsp {
     }
 
     fn dispatch_cop2_op(&mut self, _: &mut RspBus, instr: &Instruction) {
-        self.bug(format!("#CU CP2: I {:#b} -- {:?}", instr.0, instr))
+        // println!("{:?}", instr);
+        match instr.cop_op() {
+            CF => {
+                // TODO: check rd range (0-2)
+                let flo = self.read_flags(instr.rd(), LO);
+                let fhi = self.read_flags(instr.rd(), HI);
+                let fcomb = flo.packs(fhi);
+                let res = fcomb.move_mask() as i32 as u64;
+                self.write_gpr(instr.rt(), res);
+            },
+            c  => {
+                if c & 0b10000 == 0 {
+                    self.bug(format!("#CU CP2: I {:#b} -- {:?}", instr.0, instr));
+                }
+                let op = instr.special_op();
+                // These operations are basically just translated from CEN64's
+                // C code.  Didn't bother copying the comments.
+                match op {
+                    VSAR  => {
+                        match instr.vel() {
+                            8  => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_HI],
+                            9  => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_MD],
+                            10 => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_LO],
+                            _  => self.cp2.vec[instr.vd()] = [0; 16],
+                        }
+                    },
+                    VADD  => self.vec_binop(instr, |vs, vt, cpu| {
+                        // Signed sum of  carry + source1 + source2.
+                        let carry = cpu.read_flags(VCO, LO);
+                        let vd = vs + vt;
+                        cpu.write_acc(ACC_LO, vd - carry);
+                        let min = vs.min(vt);
+                        let max = vs.max(vt);
+                        let min = min.subs(carry);
+                        cpu.write_flags(VCO, HI, zero());
+                        cpu.write_flags(VCO, LO, zero());
+                        min.adds(max)
+                    }),
+                    VADDC => self.vec_binop(instr, |vs, vt, cpu| {
+                        let sat_sum = vs.to_u16().adds(vt.to_u16()).to_i16();
+                        let unsat_sum = vs + vt;
+                        let sn = frombool(sat_sum.ne(unsat_sum));
+                        cpu.write_flags(VCO, HI, zero());
+                        cpu.write_flags(VCO, LO, sn);
+                        cpu.write_acc(ACC_LO, unsat_sum);
+                        unsat_sum
+                    }),
+                    VSUB  => self.vec_binop(instr, |vs, vt, cpu| {
+                        let carry = cpu.read_flags(VCO, LO);
+                        let unsat_diff = vt - carry;
+                        let sat_diff = vt.subs(carry);
+                        cpu.write_acc(ACC_LO, vs - unsat_diff);
+                        let vd = vs.subs(sat_diff);
+                        let overflow = frombool(sat_diff.gt(unsat_diff));
+                        cpu.write_flags(VCO, HI, zero());
+                        cpu.write_flags(VCO, LO, zero());
+                        vd.adds(overflow)
+                    }),
+                    VSUBC => self.vec_binop(instr, |vs, vt, cpu| {
+                        let sat_udiff = vs.to_u16().subs(vt.to_u16()).to_i16();
+                        let equal = frombool(vs.eq(vt));
+                        let sat_udiff_zero = frombool(sat_udiff.eq(zero()));
+                        let eq = frombool(equal.eq(zero()));
+                        let sn = !equal & sat_udiff_zero;
+                        let result = vs - vt;
+                        cpu.write_flags(VCO, HI, eq);
+                        cpu.write_flags(VCO, LO, sn);
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VMULU | VMULF => self.vec_binop(instr, |vs, vt, cpu| {
+                        let lo = vs * vt;
+                        let sign1 = ((lo.to_u16() >> 15) as u16x8).to_i16();
+                        let lo = lo + lo;
+                        let round = i16x8::splat(1 << 15);
+                        let hi = vs.mulhi(vt);
+                        let sign2 = ((lo.to_u16() >> 15) as u16x8).to_i16();
+                        cpu.write_acc(ACC_LO, round + lo);
+                        let sign1 = sign1 + sign2;
+
+                        let hi = hi << 1;
+                        let eq = frombool(vs.eq(vt));
+                        let neq = eq;
+                        let accmd = sign1 + hi;
+                        cpu.write_acc(ACC_MD, accmd);
+                        let neg = accmd >> 15;
+
+                        if op == VMULU {
+                            let acchi = !eq & neg;
+                            cpu.write_acc(ACC_HI, acchi);
+                            let hi = accmd | neg;
+                            !acchi & hi
+                        } else {
+                            let eq = eq & neg;
+                            let acchi = !neq & neg;
+                            cpu.write_acc(ACC_HI, acchi);
+                            accmd + eq
+                        }
+                    }),
+                    VMADN | VMUDN => self.vec_binop(instr, |vs, vt, cpu| {
+                        let lo = vs * vt;
+                        let hi = vs.to_u16().mulhi(vt.to_u16()).to_i16();
+                        let sign = vt >> 15;
+                        let vs = vs & sign;
+                        let hi = hi - vs;
+
+                        if op == VMADN {
+                            let acc_lo = cpu.read_acc(ACC_LO);
+                            let acc_md = cpu.read_acc(ACC_MD);
+                            let acc_hi = cpu.read_acc(ACC_HI);
+
+                            let overflow_mask = acc_lo.to_u16().adds(lo.to_u16()).to_i16();
+                            let acc_lo = acc_lo + lo;
+
+                            let overflow_mask = frombool(acc_lo.ne(overflow_mask));
+
+                            let hi = hi - overflow_mask;
+
+                            let overflow_mask = acc_md.to_u16().adds(hi.to_u16()).to_i16();
+                            let acc_md = acc_md + hi;
+
+                            let overflow_mask = frombool(acc_md.ne(overflow_mask));
+
+                            let acc_hi = acc_hi + (hi >> 15);
+                            let acc_hi = acc_hi - overflow_mask;
+
+                            cpu.write_acc(ACC_LO, acc_lo);
+                            cpu.write_acc(ACC_MD, acc_md);
+                            cpu.write_acc(ACC_HI, acc_hi);
+                            uclamp_acc(acc_lo, acc_md, acc_hi)
+                        } else {
+                            cpu.write_acc(ACC_LO, lo);
+                            cpu.write_acc(ACC_MD, hi);
+                            cpu.write_acc(ACC_HI, hi >> 15);
+                            lo
+                        }
+                    }),
+                    VMADH | VMUDH => self.vec_binop(instr, |vs, vt, cpu| {
+                        let lo = vs * vt;
+                        let hi = vs.mulhi(vt);
+
+                        let (acc_md, acc_hi) = if op == VMADH {
+                            let acc_md = cpu.read_acc(ACC_MD);
+                            let acc_hi = cpu.read_acc(ACC_HI);
+
+                            let overflow_mask = acc_md.to_u16().adds(lo.to_u16()).to_i16();
+                            let acc_md = acc_md + lo;
+
+                            let overflow_mask = frombool(acc_md.ne(overflow_mask));
+
+                            let hi = hi - overflow_mask;
+                            let acc_hi = acc_hi + hi;
+
+                            cpu.write_acc(ACC_MD, acc_md);
+                            cpu.write_acc(ACC_HI, acc_hi);
+                            (acc_md, acc_hi)
+                        } else {
+                            cpu.write_acc(ACC_LO, zero());
+                            cpu.write_acc(ACC_MD, lo);
+                            cpu.write_acc(ACC_HI, hi);
+                            (lo, hi)
+                        };
+                        sclamp_acc_tomd(acc_md, acc_hi)
+                    }),
+                    VABS  => self.vec_binop(instr, |vs, vt, cpu| {
+                        let vs_zero = frombool(vs.eq(zero()));
+                        let sign_lt = vs >> 15;
+                        let vd = !vs_zero & vt;
+                        let vd = vd ^ sign_lt;
+                        cpu.write_acc(ACC_LO, vd - sign_lt);
+                        vd.subs(sign_lt)
+                    }),
+                    VMOV  => self.vec_binop(instr, |_, vt, cpu| {
+                        cpu.write_acc(ACC_LO, vt);
+                        let data_el = vt.extract(instr.vs() as u32 & 0x7);
+                        let reg = cpu.read_vec(instr.vd());
+                        reg.replace(instr.vel() as u32 & 0x7, data_el)
+                    }),
+                    VAND  => self.vec_binop(instr, |vs, vt, cpu| {
+                        let result = vs & vt;
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VNAND => self.vec_binop(instr, |vs, vt, cpu| {
+                        let result = !(vs & vt);
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VOR   => self.vec_binop(instr, |vs, vt, cpu| {
+                        let result = vs | vt;
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VNOR  => self.vec_binop(instr, |vs, vt, cpu| {
+                        let result = !(vs | vt);
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VXOR  => self.vec_binop(instr, |vs, vt, cpu| {
+                        let result = vs ^ vt;
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VNXOR => self.vec_binop(instr, |vs, vt, cpu| {
+                        let result = !(vs ^ vt);
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VNOP | VNULL => self.vec_binop(instr, |vs, _, _| {
+                        vs
+                    }),
+                    _     => self.bug(format!("#CU CP2: I {:#b} -- {:?}", instr.0, instr))
+                }
+            }
+        }
     }
 }
+
+fn sclamp_acc_tomd(acc_md: i16x8, acc_hi: i16x8) -> i16x8 {
+    let acc_md = acc_md.to_u16();
+    let acc_hi = acc_hi.to_u16();
+    // unpack intrinsics are missing...
+    let l0 = acc_md.extract(0) as i32 | ((acc_hi.extract(0) as i32) << 16);
+    let l1 = acc_md.extract(1) as i32 | ((acc_hi.extract(1) as i32) << 16);
+    let l2 = acc_md.extract(2) as i32 | ((acc_hi.extract(2) as i32) << 16);
+    let l3 = acc_md.extract(3) as i32 | ((acc_hi.extract(3) as i32) << 16);
+    let h0 = acc_md.extract(4) as i32 | ((acc_hi.extract(4) as i32) << 16);
+    let h1 = acc_md.extract(5) as i32 | ((acc_hi.extract(5) as i32) << 16);
+    let h2 = acc_md.extract(6) as i32 | ((acc_hi.extract(6) as i32) << 16);
+    let h3 = acc_md.extract(7) as i32 | ((acc_hi.extract(7) as i32) << 16);
+    i32x4::new(l0, l1, l2, l3).packs(i32x4::new(h0, h1, h2, h3))
+}
+
+fn uclamp_acc(val: i16x8, acc_md: i16x8, acc_hi: i16x8) -> i16x8 {
+    p128("val", val);
+    p128("md", acc_md);
+    p128("hi", acc_hi);
+    let hi_negative: i16x8 = acc_hi >> 15;
+    let md_negative = acc_md >> 15;
+    let hi_sign_check = hi_negative.eq(acc_hi);
+    let md_sign_check = hi_negative.eq(md_negative);
+    let clamp_mask = hi_sign_check & md_sign_check;
+    p128("cm", frombool(clamp_mask));
+
+    let clamped_val = frombool(hi_negative.eq(zero()));
+    let res = clamp_mask.select(val, clamped_val);
+    p128("uclamp res", res);
+    res
+}
+
+
+pub const VCO: usize = 0;
+pub const VCC: usize = 1;
+pub const VCE: usize = 2;
+pub const HI:  usize = 0;
+pub const LO:  usize = 16;
+
+pub const ACC_HI:  usize = 0;
+pub const ACC_MD:  usize = 1;
+pub const ACC_LO:  usize = 2;
+
 
 impl Rsp {
     #[cfg(debug_assertions)]
@@ -181,6 +446,7 @@ impl Rsp {
             broke:     false,
             run_bit:   run_bit,
             run_cond:  run_cond,
+            tables:    SimdTables::new()
         };
         rsp.mut_regs().debug_specs = debug;
         rsp
@@ -194,6 +460,7 @@ impl Rsp {
             broke:     false,
             run_bit:   run_bit,
             run_cond:  run_cond,
+            tables:    SimdTables::new()
         }
     }
 
@@ -228,4 +495,218 @@ impl Rsp {
             self.bug(format!("{}: {:#x}", desc, phys_addr));
         }
     }
+
+    // Load/store implementations
+
+    fn aligned_shift_addr(&self, instr: &Instruction, shift: u64, align: u64) -> u64 {
+        let addr = self.read_gpr(instr.base()).wrapping_add(instr.voff() << shift);
+        if addr & (align - 1) != 0 {
+            self.bug(format!("Address not aligned to {} bytes: {:#x}", align, addr));
+        }
+        addr
+    }
+
+    fn restricted_vdel(&self, instr: &Instruction, modulus: usize) -> usize {
+        let vdel = instr.vdel();
+        if vdel % modulus != 0 {
+            self.bug(format!("Element spec not divisible by {}: {}", modulus, vdel));
+        }
+        vdel
+    }
+
+    // fn read_vec(&self, index: usize) -> i16x8 {
+    //     self.cp2.regs[index]
+    // }
+
+    fn mem_load_vec(&mut self, bus: &RspBus, instr: &Instruction) {
+        let vf = instr.vec_fmt();
+        match vf {
+            VLF_B | VLF_S | VLF_L | VLF_D => {
+                // Load byte/hword/word/dword into part of the vector
+                // indexed by element.  Other parts are unaffected.
+                let shift = vf as u64 & 0b11;
+                let addr = self.aligned_shift_addr(instr, shift, 1);
+                let index = self.restricted_vdel(instr, 1 << shift);
+                match vf {
+                    VLF_B => {
+                        let data = u8::load_unaligned_from(self, bus, addr);
+                        self.cp2.vec[instr.vt()][index] = data;
+                    }
+                    // XXX: doesn't work with wraparound
+                    VLF_S => {
+                        let data = u16::load_unaligned_from(self, bus, addr);
+                        LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index..], data);
+                    }
+                    VLF_L => {
+                        let data = u32::load_unaligned_from(self, bus, addr);
+                        LittleEndian::write_u32(&mut self.cp2.vec[instr.vt()][index..], data);
+                    }
+                    VLF_D => {
+                        let data = u64::load_unaligned_from(self, bus, addr);
+                        LittleEndian::write_u64(&mut self.cp2.vec[instr.vt()][index..], data);
+                    }
+                    _    => unreachable!()
+                }
+            },
+            VLF_Q | VLF_R => {
+                // Load unaligned quadword into part of the vector.
+                let addr = self.aligned_shift_addr(instr, 4, 1);
+                self.restricted_vdel(instr, 16);  // ensure zero
+                let offset = addr & 0b1111;
+                let aligned_addr = addr & !0b1111;
+                let mut buffer = [0_u8; 16];
+                // XXX: implement load_from for u8x16
+                BigEndian::write_u64(&mut buffer[0..], u64::load_from(self, bus, aligned_addr));
+                BigEndian::write_u64(&mut buffer[8..], u64::load_from(self, bus, aligned_addr + 8));
+                let val = u8x16::load(&buffer, 0);
+                let mut reg = u8x16::load(&self.cp2.vec[instr.vt()], 0);
+                if vf == VLF_Q {
+                    // XXX: precombine tables
+                    let mask = self.tables.keep_r[offset as usize].shuffle_bytes(self.tables.bswap);
+                    let shift = self.tables.shift_l[offset as usize].shuffle_bytes(self.tables.bswap);
+                    reg = reg & mask;
+                    reg = reg | val.shuffle_bytes(shift);
+                } else {
+                    // XXX: bug when offset == 0
+                    // XXX: bswap
+                    reg = reg & self.tables.keep_l[16 - offset as usize];
+                    reg = reg | val.shuffle_bytes(self.tables.shift_r[16 - offset as usize]);
+                }
+                reg.store(&mut self.cp2.vec[instr.vt()], 0);
+            }
+            _ => self.bug(format!("Unimplemented vector load format: {}", vf))
+        }
+    }
+
+    fn mem_store_vec(&mut self, bus: &mut RspBus, instr: &Instruction) {
+        let vf = instr.vec_fmt();
+        match vf {
+            VLF_B | VLF_S | VLF_L | VLF_D => {
+                // Store byte/hword/word/dword part of the vector
+                // indexed by element.  Other parts are unaffected.
+                let shift = vf as u64 & 0b11;
+                let addr = self.aligned_shift_addr(instr, shift, 1);
+                let index = self.restricted_vdel(instr, 1 << shift);
+                match vf {
+                    VLF_B => {
+                        let data = self.cp2.vec[instr.vt()][index];
+                        u8::store_unaligned_to(self, bus, addr, data);
+                    }
+                    // XXX: doesn't work with wraparound
+                    VLF_S => {
+                        let data = LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index..]);
+                        u16::store_unaligned_to(self, bus, addr, data);
+                    }
+                    VLF_L => {
+                        let data = LittleEndian::read_u32(&self.cp2.vec[instr.vt()][index..]);
+                        u32::store_unaligned_to(self, bus, addr, data);
+                    }
+                    VLF_D => {
+                        let data = LittleEndian::read_u64(&self.cp2.vec[instr.vt()][index..]);
+                        u64::store_unaligned_to(self, bus, addr, data);
+                    }
+                    _    => unreachable!()
+                }
+            },
+            VLF_Q | VLF_R => {
+                // Store part of the vector into unaligned quadword.
+                let addr = self.aligned_shift_addr(instr, 4, 1);
+                self.restricted_vdel(instr, 16);  // ensure zero
+                let offset = addr & 0b1111;
+                let aligned_addr = addr & !0b1111;
+                let mut buffer = [0_u8; 16];
+                BigEndian::write_u64(&mut buffer[0..], u64::load_from(self, bus, aligned_addr));
+                BigEndian::write_u64(&mut buffer[8..], u64::load_from(self, bus, aligned_addr + 8));
+                let mut val = u8x16::load(&buffer, 0);
+                let reg = u8x16::load(&self.cp2.vec[instr.vt()], 0);
+                if vf == VLF_Q {
+                    let mask = self.tables.keep_l[offset as usize];
+                    let shift = self.tables.shift_r[offset as usize];
+                    val = val & mask;
+                    // XXX first shift or first swap?
+                    val = val | reg.shuffle_bytes(self.tables.bswap).shuffle_bytes(shift);
+                } else {
+                    // XXX: bswap
+                    // XXX: bug when offset == 0
+                    val = val & self.tables.keep_r[16 - offset as usize];
+                    val = val | reg.shuffle_bytes(self.tables.shift_l[16 - offset as usize]);
+                }
+                val.store(&mut buffer, 0);
+                u64::store_to(self, bus, aligned_addr, BigEndian::read_u64(&buffer[0..]));
+                u64::store_to(self, bus, aligned_addr + 8, BigEndian::read_u64(&buffer[8..]));
+            }
+            _ => self.bug(format!("Unimplemented vector load format: {}", vf))
+        }
+    }
+
+    fn vec_binop<F>(&mut self, instr: &Instruction, func: F)
+        where F: Fn(i16x8, i16x8, &mut Self) -> i16x8
+    {
+        let res: u8x16 = unsafe {
+            let s1 = self.read_vec(instr.vs());
+            let s2 = u8x16::load(&self.cp2.vec[instr.vt()], 0);
+            let s2 = mem::transmute(s2.shuffle_bytes(self.tables.el_shuf[instr.vel()]));
+            p128("vs", s1);
+            p128("vt", s2);
+            let res = func(s1, s2, self);
+            p128("vres", res);
+            mem::transmute(res)
+        };
+        res.store(&mut self.cp2.vec[instr.vd()], 0);
+    }
+
+    fn read_vec(&self, index: usize) -> i16x8 {
+        unsafe {
+            mem::transmute(u8x16::load(&self.cp2.vec[index], 0))
+        }
+    }
+
+    fn read_acc(&self, index: usize) -> i16x8 {
+        unsafe {
+            mem::transmute(u8x16::load(&self.cp2.acc[index], 0))
+        }
+    }
+
+    fn write_acc(&mut self, index: usize, value: i16x8) {
+        let res: u8x16 = unsafe {  mem::transmute(value) };
+        res.store(&mut self.cp2.acc[index], 0);
+    }
+
+    fn read_flags(&self, index: usize, offset: usize) -> i16x8 {
+        unsafe {
+            mem::transmute(u8x16::load(&self.cp2.flags[index], offset))
+        }
+    }
+
+    fn write_flags(&mut self, index: usize, offset: usize, value: i16x8) {
+        let res: u8x16 = unsafe {  mem::transmute(value) };
+        res.store(&mut self.cp2.flags[index], offset);
+    }
 }
+
+#[inline(always)]
+fn zero() -> i16x8 {
+    i16x8::splat(0)
+}
+
+#[inline(always)]
+fn frombool(x: bool16ix8) -> i16x8 {
+    x.select(i16x8::splat(-1), i16x8::splat(0))
+}
+
+fn p128(s: &'static str, v: i16x8) {
+    println!("{}: {:04x} {:04x} {:04x} {:04x} {:04x} {:04x} {:04x} {:04x}",
+             s,
+             v.extract(0), v.extract(1), v.extract(2), v.extract(3),
+             v.extract(4), v.extract(5), v.extract(6), v.extract(7));
+}
+
+// fn pu8(s: &'static str, v: u8x16) {
+//     println!("{}: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} \
+//               {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+//              s,
+//              v.extract(0), v.extract(1), v.extract(2), v.extract(3),
+//              v.extract(4), v.extract(5), v.extract(6), v.extract(7),
+//              v.extract(8), v.extract(9), v.extract(10), v.extract(11),
+//              v.extract(12), v.extract(13), v.extract(14), v.extract(15));
+// }
