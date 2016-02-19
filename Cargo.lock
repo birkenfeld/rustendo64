@@ -13,6 +13,7 @@ dependencies = [
  "nom 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num 0.1.30 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustyline 0.2.0 (git+http://github.com/birkenfeld/rustyline)",
+ "simd 0.1.0 (git+https://github.com/huonw/simd)",
 ]
 
 [[package]]
@@ -258,6 +259,11 @@ dependencies = [
  "nix 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "unicode-width 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
+
+[[package]]
+name = "simd"
+version = "0.1.0"
+source = "git+https://github.com/huonw/simd#03de1cd0a278ab902b4beb402d57505f3797ea56"
 
 [[package]]
 name = "strsim"

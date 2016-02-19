@@ -9,6 +9,7 @@ extern crate ansi_term;
 extern crate chan_signal;
 extern crate crossbeam;
 extern crate cpal;
+extern crate simd;
 
 #[macro_use] mod vr4k;
 mod n64;

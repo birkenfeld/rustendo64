@@ -19,10 +19,11 @@ ansi_term = "0.7.0"
 chan-signal = "0.1.5"
 crossbeam = "0.2.8"
 cpal = "0.2.9"
+simd = { git = "https://github.com/huonw/simd" }
 
 [dependencies.clap]
 version = "2.0.1"
 features = [ "suggestions", "color" ]
 
 [dependencies.rustyline]
-git = "http://github.com/birkenfeld/rustyline"
+git = "https://github.com/birkenfeld/rustyline"
