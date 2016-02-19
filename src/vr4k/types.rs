@@ -63,7 +63,7 @@ impl R4300Common {
 ///
 /// Most functions are default-implemented, others have to be supplied by the
 /// two implementors (Cpu and Rsp).
-pub trait R4300<'c> where Self: Sized + Default + fmt::Debug {
+pub trait R4300<'c> where Self: Sized + fmt::Debug {
     type Bus;
 
     // FUNCTIONS TO IMPLEMENT

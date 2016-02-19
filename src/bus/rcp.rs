@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Condvar};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use bus::mi;
@@ -6,7 +6,6 @@ use bus::mem_map::*;
 use bus::{IoResult, RamAccess};
 use util::{bit_set, clear_or_set_bit};
 
-#[derive(Default)]
 pub struct SpRegs {
     reg_mem_addr:  u32,
     reg_dram_addr: u32,
@@ -19,12 +18,26 @@ pub struct SpRegs {
     reg_pc:        AtomicUsize,
     reg_ibist:     u32,
 
-    run:           Arc<AtomicBool>,
+    run_bit:       Arc<AtomicBool>,
+    run_cond:      Arc<Condvar>,
 }
 
 impl SpRegs {
-    pub fn new(rsp_sync: Arc<AtomicBool>) -> SpRegs {
-        SpRegs { run: rsp_sync, ..SpRegs::default() }
+    pub fn new(run_bit: Arc<AtomicBool>, run_cond: Arc<Condvar>) -> SpRegs {
+        SpRegs {
+            reg_mem_addr:  0,
+            reg_dram_addr: 0,
+            reg_rd_len:    0,
+            reg_wr_len:    0,
+            reg_status:    0,
+            reg_dma_full:  0,
+            reg_dma_busy:  0,
+            reg_semaphore: AtomicBool::new(false),
+            reg_pc:        AtomicUsize::new(0),
+            reg_ibist:     0,
+            run_bit:       run_bit,
+            run_cond:      run_cond,
+        }
     }
 
     pub fn power_on_reset(&mut self) {
@@ -71,10 +84,11 @@ impl SpRegs {
             SP_REG_STATUS     => {
                 if bit_set(word, 0) {
                     println!("RSP: starting.");
-                    self.run.store(true, Ordering::SeqCst);
+                    self.run_bit.store(true, Ordering::SeqCst);
+                    self.run_cond.notify_all();
                 }
                 if bit_set(word, 1) {
-                    self.run.store(false, Ordering::SeqCst);
+                    self.run_bit.store(false, Ordering::SeqCst);
                 }
                 // halt
                 clear_or_set_bit(&mut self.reg_status, 0, word, 0, 1);

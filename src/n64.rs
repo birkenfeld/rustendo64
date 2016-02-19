@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Condvar, RwLock};
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 use std::thread;
@@ -23,12 +23,13 @@ pub struct N64 {
 impl N64 {
     pub fn new(ui_opts: ui::Options, pif_rom: Box<[u8]>, cart_rom: Box<[u8]>,
                debug_cpu: DebugSpecList, debug_rsp: DebugSpecList) -> N64 {
-        let rsp_sync = Arc::new(AtomicBool::new(false));
+        let rsp_sync_bit = Arc::new(AtomicBool::new(false));
+        let rsp_sync_cond = Arc::new(Condvar::new());
         N64 {
             ui: ui::init_ui::<ui::minifb::MinifbInterface>(ui_opts),
             cpu: cpu::Cpu::new(debug_cpu),
-            rsp: rsp::Rsp::new(debug_rsp, rsp_sync.clone()),
-            ifs: bus::BusInterfaces::new(pif_rom, cart_rom, rsp_sync),
+            rsp: rsp::Rsp::new(debug_rsp, rsp_sync_bit.clone(), rsp_sync_cond.clone()),
+            ifs: bus::BusInterfaces::new(pif_rom, cart_rom, rsp_sync_bit, rsp_sync_cond),
             ram: RwLock::new(vec![0; RDRAM_SIZE/4].into_boxed_slice()),
             spram: RwLock::new(vec![0; SP_RAM_SIZE/4].into_boxed_slice()),
         }

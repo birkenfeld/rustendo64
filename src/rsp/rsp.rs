@@ -1,8 +1,6 @@
 use std::fmt;
-use std::sync::{Arc, RwLock};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::sync::atomic::AtomicBool;
 #[cfg(debug_assertions)]
 use ansi_term;
 
@@ -35,12 +33,12 @@ pub const COP0_REG_MAP: [u32; 16] = [
 ];
 
 
-#[derive(Default)]
 pub struct Rsp {
-    regs:   R4300Common,
-    run:    Arc<AtomicBool>,
-    cp2:    Cp2,
-    broke:  bool,
+    regs:      R4300Common,
+    cp2:       Cp2,
+    broke:     bool,
+    #[allow(dead_code)] run_bit:   Arc<AtomicBool>,
+    run_cond:  Arc<Condvar>,
 }
 
 pub type RspBus<'c> = Bus<'c, &'c RwLock<Box<[u32]>>, &'c mut [u32]>;
@@ -176,23 +174,32 @@ impl<'c> R4300<'c> for Rsp {
 
 impl Rsp {
     #[cfg(debug_assertions)]
-    pub fn new(debug: DebugSpecList, run: Arc<AtomicBool>) -> Self {
-        let mut rsp = Self::default();
-        rsp.run = run;
+    pub fn new(debug: DebugSpecList, run_bit: Arc<AtomicBool>, run_cond: Arc<Condvar>) -> Self {
+        let mut rsp = Rsp {
+            regs:      R4300Common::default(),
+            cp2:       Cp2::default(),
+            broke:     false,
+            run_bit:   run_bit,
+            run_cond:  run_cond,
+        };
         rsp.mut_regs().debug_specs = debug;
         rsp
     }
 
     #[cfg(not(debug_assertions))]
-    pub fn new(_: DebugSpecList, run: Arc<AtomicBool>) -> Self {
-        Rsp { run: run, ..Self::default() }
+    pub fn new(_: DebugSpecList, run_bit: Arc<AtomicBool>, run_cond: Arc<Condvar>) -> Self {
+        Rsp {
+            regs:      R4300Common::default(),
+            cp2:       Cp2::default(),
+            broke:     false,
+            run_bit:   run_bit,
+            run_cond:  run_cond,
+        }
     }
 
     pub fn wait_for_start(&self) {
-        /* TODO: make this a condvar? */
-        while !self.run.load(Ordering::SeqCst) {
-            thread::sleep(Duration::new(0, 1_000));
-        }
+        let mutex = Mutex::new(());
+        let _ = self.run_cond.wait(mutex.lock().unwrap()).unwrap();
     }
 
     pub fn run_sequence(&mut self, bus: &mut RspBus, n: usize) {

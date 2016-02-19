@@ -8,7 +8,7 @@ pub mod mi;
 pub mod mem;
 pub mod mem_map;
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Condvar, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use self::mem::RamAccess;
@@ -47,10 +47,13 @@ pub struct BusInterfaces {
 }
 
 impl BusInterfaces {
-    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>, rsp_sync: Arc<AtomicBool>) -> BusInterfaces {
+    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>,
+               rsp_run_bit: Arc<AtomicBool>, rsp_run_cond: Arc<Condvar>)
+               -> BusInterfaces
+    {
         BusInterfaces {
             mi: Mi::default(),
-            sp: RwLock::new(SpRegs::new(rsp_sync)),
+            sp: RwLock::new(SpRegs::new(rsp_run_bit, rsp_run_cond)),
             dp: RwLock::new(DpRegs::default()),
             vi: RwLock::new(Vi::default()),
             ai: RwLock::new(Ai::default()),
