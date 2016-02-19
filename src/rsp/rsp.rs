@@ -14,6 +14,26 @@ use vr4k::types::*;
 use debug::DebugSpecList;
 use util::bit_set;
 
+/// Maps RSP CP0 register indices to bus addresses.
+pub const COP0_REG_MAP: [u32; 16] = [
+    SP_REG_MEM_ADDR,
+    SP_REG_DRAM_ADDR,
+    SP_REG_RD_LEN,
+    SP_REG_WR_LEN,
+    SP_REG_STATUS,
+    SP_REG_DMA_FULL,
+    SP_REG_DMA_BUSY,
+    SP_REG_SEMAPHORE,
+    DPC_REG_DMA_START,
+    DPC_REG_DMA_END,
+    DPC_REG_CURRENT,
+    DPC_REG_STATUS,
+    DPC_REG_CLOCK,
+    DPC_REG_BUFBUSY,
+    DPC_REG_PIPEBUSY,
+    DPC_REG_TMEM,
+];
+
 
 #[derive(Default)]
 pub struct Rsp {
@@ -44,37 +64,23 @@ impl<'c> R4300<'c> for Rsp {
 
     fn read_instr(&self, bus: &RspBus, virt_addr: u64) -> u32 {
         let phys_addr = self.translate_addr(virt_addr + 0x1000);
-        match bus.read_word(phys_addr as u32) {
-            Ok(res) => res,
-            Err(desc) => {
-                self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
-            }
-        }
+        self.read_word_raw(bus, phys_addr as u32)
     }
 
     fn read_word(&self, bus: &RspBus, virt_addr: u64) -> u32 {
         let phys_addr = self.translate_addr(virt_addr);
-        match bus.read_word(phys_addr as u32) {
-            Ok(res) => {
-                self.debug_read(phys_addr, res);
-                res
-            }
-            Err(desc) => {
-                self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
-            }
-        }
+        let res = self.read_word_raw(bus, phys_addr as u32);
+        self.debug_read(phys_addr, res);
+        res
     }
 
     fn write_word(&mut self, bus: &mut RspBus, virt_addr: u64, word: u32) {
         let phys_addr = self.translate_addr(virt_addr);
-        self.debug_write(phys_addr, word);
-        if let Err(desc) = bus.write_word(phys_addr as u32, word) {
-            self.bug(format!("{}: ({:#x}) {:#x}", desc, virt_addr, phys_addr));
-        }
+        self.write_word_raw(bus, phys_addr as u32, word);
     }
 
     fn translate_addr(&self, virt_addr: u64) -> u64 {
-        if virt_addr >= 0x2000 {  // TODO: limits
+        if virt_addr >= 0x2000 {
             self.bug(format!("Cannot access memory at {:#x} from RSP", virt_addr));
         }
         virt_addr + 0x0400_0000
@@ -145,25 +151,15 @@ impl<'c> R4300<'c> for Rsp {
     fn dispatch_cop0_op(&mut self, bus: &mut RspBus, instr: &Instruction) {
         match instr.cop_op() {
             MF => {
-                let reg_addr = COP0_REG_MAP[instr.rd()];  // TODO: check range
-                let data = match bus.read_word(reg_addr) {
-                    Ok(res) => {
-                        self.debug_read(reg_addr as u64, res);
-                        res
-                    }
-                    Err(desc) => {
-                        self.bug(format!("{}: {:#x}", desc, reg_addr));
-                    }
-                };
+                let reg_addr = COP0_REG_MAP[instr.rd()];
+                let data = self.read_word_raw(bus, reg_addr);
+                self.debug_read(reg_addr as u64, data);
                 self.write_gpr(instr.rt(), data as i32 as u64);
             }
             MT => {
-                let reg_addr = COP0_REG_MAP[instr.rd()];  // TODO: check range
+                let reg_addr = COP0_REG_MAP[instr.rd()];
                 let data = self.read_gpr(instr.rt()) as u32;
-                self.debug_write(reg_addr as u64, data);
-                if let Err(desc) = bus.write_word(reg_addr, data) {
-                    self.bug(format!("{}: {:#x}", desc, reg_addr));
-                }
+                self.write_word_raw(bus, reg_addr, data);
             }
             _  => self.bug(format!("#CU CP0: I {:#b} -- {:?}", instr.0, instr))
         }
@@ -207,23 +203,22 @@ impl Rsp {
             self.run_instruction(bus);
         }
     }
-}
 
-pub const COP0_REG_MAP: [u32; 16] = [
-    SP_REG_MEM_ADDR,
-    SP_REG_DRAM_ADDR,
-    SP_REG_RD_LEN,
-    SP_REG_WR_LEN,
-    SP_REG_STATUS,
-    SP_REG_DMA_FULL,
-    SP_REG_DMA_BUSY,
-    SP_REG_SEMAPHORE,
-    DPC_REG_DMA_START,
-    DPC_REG_DMA_END,
-    DPC_REG_CURRENT,
-    DPC_REG_STATUS,
-    DPC_REG_CLOCK,
-    DPC_REG_BUFBUSY,
-    DPC_REG_PIPEBUSY,
-    DPC_REG_TMEM,
-];
+    // Helpers
+
+    fn read_word_raw(&self, bus: &RspBus, phys_addr: u32) -> u32 {
+        match bus.read_word(phys_addr) {
+            Ok(res) => res,
+            Err(desc) => {
+                self.bug(format!("{}: {:#x}", desc, phys_addr));
+            }
+        }
+    }
+
+    fn write_word_raw(&self, bus: &mut RspBus, phys_addr: u32, data: u32) {
+        self.debug_write(phys_addr as u64, data);
+        if let Err(desc) = bus.write_word(phys_addr, data) {
+            self.bug(format!("{}: {:#x}", desc, phys_addr));
+        }
+    }
+}
