@@ -3,6 +3,7 @@ mod si;
 mod pi;
 mod ai;
 mod ri;
+mod rcp;
 pub mod mi;
 pub mod mem;
 pub mod mem_map;
@@ -18,8 +19,8 @@ use self::pi::Pi;
 use self::mi::Mi;
 use self::ai::Ai;
 use self::ri::Ri;
+use self::rcp::{SpRegs, DpRegs};
 use ui::{UiOutput, UiChannel};
-use rsp::{Sp, Dp};
 
 macro_rules! lr {
     ($what:expr) => { $what.read().unwrap() };
@@ -36,8 +37,8 @@ pub struct BusInterfaces {
     // so it only stores registers and uses atomics for them.
     mi: Mi,
     // All other interfaces are locked, and so can have any kind of data.
-    sp: RwLock<Sp>,
-    dp: RwLock<Dp>,
+    sp: RwLock<SpRegs>,
+    dp: RwLock<DpRegs>,
     vi: RwLock<Vi>,
     ai: RwLock<Ai>,
     ri: RwLock<Ri>,  // includes RDRAM regs
@@ -49,8 +50,8 @@ impl BusInterfaces {
     pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>, rsp_sync: Arc<AtomicBool>) -> BusInterfaces {
         BusInterfaces {
             mi: Mi::default(),
-            sp: RwLock::new(Sp::new(rsp_sync)),
-            dp: RwLock::new(Dp::default()),
+            sp: RwLock::new(SpRegs::new(rsp_sync)),
+            dp: RwLock::new(DpRegs::default()),
             vi: RwLock::new(Vi::default()),
             ai: RwLock::new(Ai::default()),
             ri: RwLock::new(Ri::default()),
