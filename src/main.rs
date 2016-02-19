@@ -34,15 +34,17 @@ fn main() {
     let arguments = get_arguments();
     let pif_file_name = arguments.value_of("pif").unwrap();
     let rom_file_name = arguments.value_of("rom").unwrap();
-    let debug_specs = debug::DebugSpecList::from_args(
+    let debug_cpu = debug::DebugSpecList::from_args(
         arguments.values_of_lossy("debug").unwrap_or_default());
+    let debug_rsp = debug::DebugSpecList::from_args(
+        arguments.values_of_lossy("debug_rsp").unwrap_or_default());
 
     let pif_data = util::read_bin(pif_file_name);
     let rom_data = util::read_bin(rom_file_name);
 
     setup_signal_handler();
 
-    let mut n64 = n64::N64::new(pif_data, rom_data, debug_specs);
+    let mut n64 = n64::N64::new(pif_data, rom_data, debug_cpu, debug_rsp);
     n64.power_on_reset();
     n64.run();
 }
@@ -56,6 +58,12 @@ fn get_arguments<'a>() -> ArgMatches<'a> {
         .arg(Arg::with_name("debug")
                  .short("d")
                  .long("debug")
+                 .takes_value(true)
+                 .number_of_values(1)
+                 .multiple(true))
+        .arg(Arg::with_name("debug_rsp")
+                 .short("r")
+                 .long("debug-rsp")
                  .takes_value(true)
                  .number_of_values(1)
                  .multiple(true))

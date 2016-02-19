@@ -73,10 +73,10 @@ pub fn bit_set(value: u32, bit: u32) -> bool {
 //     *target |= 1 << bit;
 // }
 
-#[inline]
-pub fn clear_bit(target: &mut u32, bit: u32) {
-    *target &= !(1 << bit);
-}
+// #[inline]
+// pub fn clear_bit(target: &mut u32, bit: u32) {
+//     *target &= !(1 << bit);
+// }
 
 #[inline]
 pub fn clear_or_set_bit(target: &mut u32, bit: u32,

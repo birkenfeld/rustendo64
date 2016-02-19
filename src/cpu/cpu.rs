@@ -394,6 +394,13 @@ impl Cpu {
         self.regs.pc = RESET_VECTOR;
     }
 
+    pub fn run_sequence(&mut self, bus: &mut CpuBus, n: usize) {
+        /* TODO: tweak this */
+        for _ in 0..n {
+            self.run_instruction(bus);
+        }
+    }
+
     // EXCEPTION HANDLING
 
     fn flag_exception(&mut self, exc: Exception) {

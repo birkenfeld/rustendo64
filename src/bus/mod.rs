@@ -3,12 +3,12 @@ mod si;
 mod pi;
 mod ai;
 mod ri;
-mod mem;
 pub mod mi;
+pub mod mem;
 pub mod mem_map;
 
-use std::sync::RwLock;
-use std::sync::atomic::Ordering;
+use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use self::mem::RamAccess;
 use self::mem_map::*;
@@ -46,10 +46,10 @@ pub struct BusInterfaces {
 }
 
 impl BusInterfaces {
-    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>) -> BusInterfaces {
+    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>, rsp_sync: Arc<AtomicBool>) -> BusInterfaces {
         BusInterfaces {
             mi: Mi::default(),
-            sp: RwLock::new(Sp::default()),
+            sp: RwLock::new(Sp::new(rsp_sync)),
             dp: RwLock::new(Dp::default()),
             vi: RwLock::new(Vi::default()),
             ai: RwLock::new(Ai::default()),
@@ -128,7 +128,8 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
             SP_DMEM_START   ... SP_IMEM_END   =>
                 Ok(self.spram.write_word((addr - SP_DMEM_START) as usize / 4, word)),
             SP_REG_START    ... SP_REG_END    =>
-                lw!(self.ifs.sp).write_reg(addr, word, &self.ifs.mi),
+                lw!(self.ifs.sp).write_reg(addr, word, &self.ifs.mi, &mut self.ram,
+                                           &mut self.spram),
             DP_REG_START    ... DP_REG_END    =>
                 lw!(self.ifs.dp).write_reg(addr, word),
             SI_REG_START    ... SI_REG_END    =>
@@ -171,7 +172,7 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
         self.ifs.mi.has_interrupt.load(Ordering::SeqCst)
     }
 
-    pub fn destroy(self) -> UiChannel {
+    pub fn into_ui(self) -> UiChannel {
         self.ui
     }
 }
