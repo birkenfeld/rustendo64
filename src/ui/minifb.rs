@@ -2,10 +2,10 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use minifb::{Window, WindowOptions, Scale, Key};
+use minifb_crate::{Window, WindowOptions, Scale, Key};
 use cpal;
 
-use ui::{Interface, UiOutput, Options};
+use {Interface, UiOutput, Options};
 
 pub struct MinifbInterface {
     receiver: mpsc::Receiver<UiOutput>,

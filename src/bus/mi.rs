@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 
-use bus::IoResult;
-use bus::mem_map::*;
+use IoResult;
+use mem_map::*;
 use util::{bit_set, clear_or_set_bit};
 
 // Discriminants are the bits set in reg_intr and reg_intr_mask.

@@ -2,9 +2,10 @@ use std::sync::{Arc, Condvar};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rdp;
-use bus::mi;
-use bus::mem_map::*;
-use bus::{IoResult, RamAccess};
+
+use mi;
+use mem_map::*;
+use {IoResult, RamAccess};
 use util::{bit_set, clear_or_set_bit};
 
 pub struct SpRegs {

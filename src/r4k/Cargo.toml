@@ -1,0 +1,20 @@
+[package]
+name = "rustendo64-r4k"
+version = "0.1.0"
+authors = ["Georg Brandl <georg@python.org>"]
+license = "MIT/Apache-2.0"
+
+[lib]
+path = "lib.rs"
+
+[profile.dev]
+opt-level = 1
+debug = true
+codegen-units = 2
+
+[dependencies]
+nom = "1.1.0"
+ansi_term = "0.7.0"
+
+[dependencies.rustyline]
+git = "https://github.com/birkenfeld/rustyline"

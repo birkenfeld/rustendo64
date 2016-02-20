@@ -1,5 +1,5 @@
-use bus::IoResult;
-use bus::mem_map::*;
+use IoResult;
+use mem_map::*;
 
 #[derive(Default, Debug)]
 pub struct Ri {

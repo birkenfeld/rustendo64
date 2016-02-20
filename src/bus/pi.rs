@@ -1,9 +1,9 @@
 use std::cmp::min;
 use byteorder::{BigEndian, ByteOrder};
 
-use bus::mi;
-use bus::{IoResult, RamAccess};
-use bus::mem_map::*;
+use mi;
+use {IoResult, RamAccess};
+use mem_map::*;
 use util::bit_set;
 
 // From cen64.

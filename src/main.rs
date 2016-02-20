@@ -1,43 +1,34 @@
-#[macro_use] extern crate clap;
-#[macro_use] extern crate nom;
-#[macro_use] extern crate enum_primitive;
-extern crate num;
-extern crate minifb;
-extern crate byteorder;
-extern crate rustyline;
-extern crate ansi_term;
+#[macro_use]
+extern crate clap;
 extern crate chan_signal;
 extern crate crossbeam;
-extern crate cpal;
-extern crate simd;
+#[macro_use]
+extern crate rustendo64_r4k as r4k;
+extern crate rustendo64_bus as bus;
+extern crate rustendo64_cpu as cpu;
+extern crate rustendo64_rsp as rsp;
 extern crate rustendo64_rdp as rdp;
+extern crate rustendo64_ui as ui;
+extern crate rustendo64_util as util;
 
-#[macro_use] mod vr4k;
 mod n64;
-mod cpu;
-mod rsp;
-mod bus;
-mod util;
-mod ui;
-mod debug;
 
-use std::process;
-use std::thread;
-use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT};
+use std::{process, thread};
 use clap::{App, Arg, ArgMatches};
 use chan_signal::{notify, Signal};
 
-/// Set to true when SIGINT is caught.
-pub static CAUGHT_SIGINT: AtomicBool = ATOMIC_BOOL_INIT;
+#[cfg(debug_assertions)]
+use r4k::debug::CAUGHT_SIGINT;
+use r4k::debug::DebugSpecList;
 
 /// Main entry point for the emulator.
 fn main() {
     let arguments = get_arguments();
     let pif_file_name = arguments.value_of("pif").unwrap();
     let rom_file_name = arguments.value_of("rom").unwrap();
-    let debug_cpu = debug::DebugSpecList::from_args(
+    let debug_cpu = DebugSpecList::from_args(
         arguments.values_of_lossy("debug").unwrap_or_default());
-    let debug_rsp = debug::DebugSpecList::from_args(
+    let debug_rsp = DebugSpecList::from_args(
         arguments.values_of_lossy("debug_rsp").unwrap_or_default());
 
     let pif_data = util::read_bin(pif_file_name);

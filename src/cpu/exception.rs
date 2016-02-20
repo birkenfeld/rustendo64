@@ -1,7 +1,7 @@
 use std::fmt;
 
-use cpu::cp0::InterruptMask;
-use cpu::cp0::Cp0;
+use cp0::InterruptMask;
+use cp0::Cp0;
 use bus::mem_map::*;
 
 #[allow(dead_code)]

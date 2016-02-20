@@ -17,13 +17,15 @@ use std::fmt;
 use std::str::FromStr;
 use std::process;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, ATOMIC_BOOL_INIT, Ordering};
 use rustyline::Editor;
 use nom::IResult;
 
-use vr4k::instruction::*;
-use vr4k::types::R4300;
-use CAUGHT_SIGINT;
+use instruction::*;
+use R4300;
+
+/// Should be set to true from the main app when SIGINT is caught.
+pub static CAUGHT_SIGINT: AtomicBool = ATOMIC_BOOL_INIT;
 
 /// Represents the different conditions on which a debugging action can be
 /// triggered.  Actions are dumping the current instruction, dumping the

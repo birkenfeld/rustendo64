@@ -10,7 +10,7 @@ use rdp;
 use rsp;
 use bus::{self, Bus};
 use bus::mem_map::*;
-use debug::DebugSpecList;
+use r4k::debug::DebugSpecList;
 
 pub struct N64 {
     ui: ui::UiChannel,

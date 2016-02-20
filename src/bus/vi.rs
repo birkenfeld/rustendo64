@@ -1,9 +1,9 @@
 use std::cmp::max;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use bus::mi;
-use bus::IoResult;
-use bus::mem_map::*;
+use mi;
+use IoResult;
+use mem_map::*;
 use ui::{UiChannel, UiOutput};
 
 #[derive(Default, Debug)]

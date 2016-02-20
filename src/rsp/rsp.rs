@@ -9,13 +9,13 @@ use byteorder::{ByteOrder, BigEndian, LittleEndian};
 #[cfg(debug_assertions)]
 use ansi_term;
 
+use cp2::Cp2;
+use tables::SimdTables;
 use bus::{Bus, RamAccess};
 use bus::mem_map::*;
-use rsp::cp2::Cp2;
-use rsp::tables::SimdTables;
-use vr4k::instruction::*;
-use vr4k::types::*;
-use debug::DebugSpecList;
+use r4k::{R4300, R4300Common, MemFmt};
+use r4k::instruction::*;
+use r4k::debug::DebugSpecList;
 use util::bit_set;
 
 /// Maps RSP CP0 register indices to bus addresses.

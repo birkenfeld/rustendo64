@@ -7,12 +7,13 @@ use ansi_term;
 
 use bus::Bus;
 use bus::mem_map::*;
-use cpu::cp0::Cp0;
-use cpu::exception::*;
-use vr4k::instruction::*;
-use vr4k::types::*;
-use debug::DebugSpecList;
+use r4k::instruction::*;
+use r4k::{R4300, R4300Common, MemFmt};
+use r4k::debug::DebugSpecList;
 use util::{mult_64_64_unsigned, mult_64_64_signed};
+
+use cp0::Cp0;
+use exception::*;
 
 pub const NUM_FPR: usize = 32;
 
@@ -33,6 +34,9 @@ pub struct Cpu {
 }
 
 pub type CpuBus<'c> = Bus<'c, &'c mut [u32], &'c RwLock<Box<[u32]>>>;
+
+#[cfg(debug_assertions)]
+pub const INDENT: &'static str = "                                       ";
 
 
 impl fmt::Debug for Cpu {

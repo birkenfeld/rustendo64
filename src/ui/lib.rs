@@ -1,3 +1,6 @@
+extern crate minifb as minifb_crate;
+extern crate cpal;
+
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicUsize, Ordering};

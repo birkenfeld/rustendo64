@@ -1,6 +1,6 @@
-use bus::mi;
-use bus::{IoResult, RamAccess};
-use bus::mem_map::*;
+use mi;
+use {IoResult, RamAccess};
+use mem_map::*;
 use ui::{UiChannel, UiOutput};
 
 #[derive(Default)]

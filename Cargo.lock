@@ -2,19 +2,16 @@
 name = "rustendo64"
 version = "0.1.0"
 dependencies = [
- "ansi_term 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "byteorder 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "chan-signal 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "clap 2.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "cpal 0.2.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clap 2.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "crossbeam 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "enum_primitive 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "minifb 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "nom 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "num 0.1.30 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustendo64-bus 0.1.0",
+ "rustendo64-cpu 0.1.0",
+ "rustendo64-r4k 0.1.0",
  "rustendo64-rdp 0.1.0",
- "rustyline 0.2.0 (git+http://github.com/birkenfeld/rustyline)",
- "simd 0.1.0 (git+https://github.com/huonw/simd)",
+ "rustendo64-rsp 0.1.0",
+ "rustendo64-ui 0.1.0",
+ "rustendo64-util 0.1.0",
 ]
 
 [[package]]
@@ -23,7 +20,7 @@ version = "0.0.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
- "pkg-config 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
+ "pkg-config 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -80,7 +77,7 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "2.1.0"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "ansi_term 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -131,14 +128,6 @@ version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "enum_primitive"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "num 0.1.30 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -217,15 +206,6 @@ version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
-name = "num"
-version = "0.1.30"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-dependencies = [
- "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustc-serialize 0.3.18 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
 name = "ole32-sys"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -235,7 +215,7 @@ dependencies = [
 
 [[package]]
 name = "pkg-config"
-version = "0.3.6"
+version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -247,9 +227,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustc-serialize"
-version = "0.3.18"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+name = "rustendo64-bus"
+version = "0.1.0"
+dependencies = [
+ "byteorder 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustendo64-rdp 0.1.0",
+ "rustendo64-ui 0.1.0",
+ "rustendo64-util 0.1.0",
+]
+
+[[package]]
+name = "rustendo64-cpu"
+version = "0.1.0"
+dependencies = [
+ "ansi_term 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "byteorder 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustendo64-bus 0.1.0",
+ "rustendo64-r4k 0.1.0",
+ "rustendo64-util 0.1.0",
+]
+
+[[package]]
+name = "rustendo64-r4k"
+version = "0.1.0"
+dependencies = [
+ "ansi_term 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "nom 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustyline 0.2.0 (git+https://github.com/birkenfeld/rustyline)",
+]
 
 [[package]]
 name = "rustendo64-rdp"
@@ -259,9 +264,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustendo64-rsp"
+version = "0.1.0"
+dependencies = [
+ "ansi_term 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "byteorder 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustendo64-bus 0.1.0",
+ "rustendo64-r4k 0.1.0",
+ "rustendo64-util 0.1.0",
+ "simd 0.1.0 (git+https://github.com/huonw/simd)",
+]
+
+[[package]]
+name = "rustendo64-ui"
+version = "0.1.0"
+dependencies = [
+ "cpal 0.2.9 (registry+https://github.com/rust-lang/crates.io-index)",
+ "minifb 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "rustendo64-util"
+version = "0.1.0"
+
+[[package]]
 name = "rustyline"
 version = "0.2.0"
-source = "git+http://github.com/birkenfeld/rustyline#d7d8044cc3b1bad7e9dabec5e24a8913063c6dad"
+source = "git+https://github.com/birkenfeld/rustyline#d7d8044cc3b1bad7e9dabec5e24a8913063c6dad"
 dependencies = [
  "libc 0.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "nix 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",

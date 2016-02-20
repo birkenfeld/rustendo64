@@ -1,3 +1,8 @@
+extern crate byteorder;
+extern crate rustendo64_ui as ui;
+extern crate rustendo64_util as util;
+extern crate rustendo64_rdp as rdp;
+
 mod vi;
 mod si;
 mod pi;

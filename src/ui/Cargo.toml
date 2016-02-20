@@ -1,0 +1,17 @@
+[package]
+name = "rustendo64-ui"
+version = "0.1.0"
+authors = ["Georg Brandl <georg@python.org>"]
+license = "MIT/Apache-2.0"
+
+[lib]
+path = "lib.rs"
+
+[profile.dev]
+opt-level = 1
+debug = true
+codegen-units = 2
+
+[dependencies]
+minifb = "0.4.0"
+cpal = "0.2.9"
