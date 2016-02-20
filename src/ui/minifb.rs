@@ -1,3 +1,4 @@
+use std::ops::DerefMut;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -201,7 +202,8 @@ impl MinifbInterface {
                     cpal::UnknownTypeBuffer::U16(_) => { },
                     cpal::UnknownTypeBuffer::I16(mut buf) => {
                         if !self.audio_mute {
-                            for (i, p) in data.iter().enumerate() {
+                            let max = buf.deref_mut().len() / 2;
+                            for (p, i) in data.iter().zip(0..max) {
                                 buf[2*i] = (p >> 16) as i16;
                                 buf[2*i+1] = *p as i16;
                             }
