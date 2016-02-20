@@ -75,7 +75,7 @@ impl N64 {
                     {
                         let mut spram = rsp_spram.write().unwrap();
                         let mut rsp_bus = bus::Bus::new(rsp_ui, rsp_ifs, rsp_ram, &mut **spram);
-                        rsp.run_sequence(&mut rsp_bus, 5_000);
+                        rsp.run_sequence(&mut rsp_bus);
                         rsp_ui = rsp_bus.into_ui();
                     }
                     thread::yield_now();
@@ -87,7 +87,7 @@ impl N64 {
                 {
                     let mut ram = self.ram.write().unwrap();
                     let mut cpu_bus = Bus::new(cpu_ui, &self.ifs, &mut **ram, &self.spram);
-                    self.cpu.run_sequence(&mut cpu_bus, 10_000);
+                    self.cpu.run_sequence(&mut cpu_bus, 100);
                     cpu_ui = cpu_bus.into_ui();
                 }
                 thread::yield_now();

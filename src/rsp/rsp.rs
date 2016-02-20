@@ -832,11 +832,10 @@ impl Rsp {
         }
     }
 
-    pub fn run_sequence(&mut self, bus: &mut RspBus, n: usize) {
+    pub fn run_sequence(&mut self, bus: &mut RspBus) {
         self.regs.pc = (bus.read_word(SP_REG_PC).unwrap() & 0xfff) as u64;
         self.broke = false;
-        for _ in 0..n {
-            if self.broke { break; }
+        while !self.broke {
             self.run_instruction(bus);
         }
     }
