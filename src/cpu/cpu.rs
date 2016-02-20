@@ -180,17 +180,17 @@ impl<'c> R4300<'c> for Cpu {
             LWC1   => self.mem_load_fp::<u32> (bus, instr),
             SDC1   => self.mem_store_fp::<u64>(bus, instr),
             SWC1   => self.mem_store_fp::<u32>(bus, instr),
-            LWL    => self.mem_load_unaligned (bus, instr, false, |data: u32| data as i32 as u64),
-            LWR    => self.mem_load_unaligned (bus, instr, true,  |data: u32| data as i32 as u64),
-            LDL    => self.mem_load_unaligned (bus, instr, false, |data: u64| data),
-            LDR    => self.mem_load_unaligned (bus, instr, true,  |data: u64| data),
-            SWL    => self.mem_store_unaligned(bus, instr, false, |mask, data: u32, reg|
+            LWL    => self.mem_load_leftright (bus, instr, false, |data: u32| data as i32 as u64),
+            LWR    => self.mem_load_leftright (bus, instr, true,  |data: u32| data as i32 as u64),
+            LDL    => self.mem_load_leftright (bus, instr, false, |data: u64| data),
+            LDR    => self.mem_load_leftright (bus, instr, true,  |data: u64| data),
+            SWL    => self.mem_store_leftright(bus, instr, false, |mask, data: u32, reg|
                                                ((data as u64 & !mask) | (reg & mask)) as u32),
-            SWR    => self.mem_store_unaligned(bus, instr, true,  |mask, data: u32, reg|
+            SWR    => self.mem_store_leftright(bus, instr, true,  |mask, data: u32, reg|
                                                ((data as u64 & !mask) | (reg & mask)) as u32),
-            SDL    => self.mem_store_unaligned(bus, instr, false, |mask, data: u64, reg|
+            SDL    => self.mem_store_leftright(bus, instr, false, |mask, data: u64, reg|
                                                (data & !mask) | (reg & mask)),
-            SDR    => self.mem_store_unaligned(bus, instr, true,  |mask, data: u64, reg|
+            SDR    => self.mem_store_leftright(bus, instr, true,  |mask, data: u64, reg|
                                                (data & !mask) | (reg & mask)),
             CACHE  => {
                 /* TODO: do we need to implement this? */
@@ -452,10 +452,11 @@ impl Cpu {
         self.reg_hi = rhi;
     }
 
-    // UNALIGNED LOADS/STORES
+    // LEFT/RIGHT LOADS/STORES
 
-    fn mem_load_unaligned<'c, T: MemFmt<'c, Self>, F>(&mut self, bus: &CpuBus<'c>, instr: &Instruction,
-                                                      right: bool, func: F) where F: Fn(T) -> u64
+    fn mem_load_leftright<'c, T, F>(&mut self, bus: &CpuBus<'c>, instr: &Instruction,
+                                    right: bool, func: F)
+        where T: MemFmt<'c, Self>, F: Fn(T) -> u64
     {
         let addr = self.aligned_offset(&instr, 1);
         let align = T::get_align();
@@ -478,8 +479,9 @@ impl Cpu {
         self.write_gpr(instr.rt(), reg);
     }
 
-    fn mem_store_unaligned<'c, T: MemFmt<'c, Self>, F>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction,
-                                                       right: bool, func: F) where F: Fn(u64, T, u64) -> T
+    fn mem_store_leftright<'c, T, F>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction,
+                                     right: bool, func: F)
+        where T: MemFmt<'c, Self>, F: Fn(u64, T, u64) -> T
     {
         let addr = self.aligned_offset(&instr, 1);
         let align = T::get_align();

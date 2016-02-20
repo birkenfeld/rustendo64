@@ -672,7 +672,7 @@ impl Rsp {
                 }
             },
             VLF_Q | VLF_R => {
-                // Load unaligned quadword into part of the vector.
+                // Load left/right part of quadword into part of the vector.
                 let addr = self.aligned_shift_addr(instr, 4, 1);
                 self.restricted_vdel(instr, 16);  // ensure zero
                 let offset = addr & 0b1111;
@@ -731,7 +731,7 @@ impl Rsp {
                 }
             },
             VLF_Q | VLF_R => {
-                // Store part of the vector into unaligned quadword.
+                // Store part of the vector into left/right part of quadword.
                 let addr = self.aligned_shift_addr(instr, 4, 1);
                 self.restricted_vdel(instr, 16);  // ensure zero
                 let offset = addr & 0b1111;

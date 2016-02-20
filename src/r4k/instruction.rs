@@ -9,7 +9,7 @@ use std::fmt;
 /// * multiplication and division
 /// * some branches and all traps
 /// * syscall, sync, cache, ll/sc
-/// * unaligned loads/stores
+/// * left-right loads/stores
 
 // Opcodes
 pub const LUI:     u32 = 0b001111;
