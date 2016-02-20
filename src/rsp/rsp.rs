@@ -87,6 +87,19 @@ impl<'c> R4300<'c> for Rsp {
         self.write_word_raw(bus, phys_addr as u32, word);
     }
 
+    fn aligned_offset(&self, instr: &Instruction, _: u64) -> u64 {
+        // No alignment is enforced or necessary.
+        self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_ext())
+    }
+
+    fn load_mem<T: MemFmt<'c, Self>>(&mut self, bus: &Self::Bus, addr: u64) -> T {
+        T::load_unaligned_from(self, bus, addr)
+    }
+
+    fn store_mem<T: MemFmt<'c, Self>>(&mut self, bus: &mut Self::Bus, addr: u64, data: T) {
+        T::store_unaligned_to(self, bus, addr, data)
+    }
+
     fn check_interrupts(&mut self, _: &mut RspBus) { }
 
     fn ll_handler(&mut self, _: u64) {
@@ -538,8 +551,8 @@ fn uclamp_acc(val: i16x8, acc_md: i16x8, acc_hi: i16x8) -> i16x8 {
 
 
 pub const VCO: usize = 0;
-pub const VCC: usize = 1;
-pub const VCE: usize = 2;
+//pub const VCC: usize = 1;
+//pub const VCE: usize = 2;
 pub const HI:  usize = 0;
 pub const LO:  usize = 16;
 
@@ -640,20 +653,19 @@ impl Rsp {
                 let index = self.restricted_vdel(instr, 1 << shift);
                 match vf {
                     VLF_B => {
-                        let data = u8::load_unaligned_from(self, bus, addr);
+                        let data = self.load_mem(bus, addr);
                         self.cp2.vec[instr.vt()][index] = data;
                     }
-                    // XXX: doesn't work with wraparound
                     VLF_S => {
-                        let data = u16::load_unaligned_from(self, bus, addr);
+                        let data = self.load_mem(bus, addr);
                         LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index..], data);
                     }
                     VLF_L => {
-                        let data = u32::load_unaligned_from(self, bus, addr);
+                        let data = self.load_mem(bus, addr);
                         LittleEndian::write_u32(&mut self.cp2.vec[instr.vt()][index..], data);
                     }
                     VLF_D => {
-                        let data = u64::load_unaligned_from(self, bus, addr);
+                        let data = self.load_mem(bus, addr);
                         LittleEndian::write_u64(&mut self.cp2.vec[instr.vt()][index..], data);
                     }
                     _    => unreachable!()
@@ -667,8 +679,8 @@ impl Rsp {
                 let aligned_addr = addr & !0b1111;
                 let mut buffer = [0_u8; 16];
                 // XXX: implement load_from for u8x16
-                BigEndian::write_u64(&mut buffer[0..], u64::load_from(self, bus, aligned_addr));
-                BigEndian::write_u64(&mut buffer[8..], u64::load_from(self, bus, aligned_addr + 8));
+                BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, aligned_addr));
+                BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, aligned_addr + 8));
                 let val = u8x16::load(&buffer, 0);
                 let mut reg = u8x16::load(&self.cp2.vec[instr.vt()], 0);
                 if vf == VLF_Q {
@@ -701,20 +713,19 @@ impl Rsp {
                 match vf {
                     VLF_B => {
                         let data = self.cp2.vec[instr.vt()][index];
-                        u8::store_unaligned_to(self, bus, addr, data);
+                        self.store_mem(bus, addr, data);
                     }
-                    // XXX: doesn't work with wraparound
                     VLF_S => {
                         let data = LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index..]);
-                        u16::store_unaligned_to(self, bus, addr, data);
+                        self.store_mem(bus, addr, data);
                     }
                     VLF_L => {
                         let data = LittleEndian::read_u32(&self.cp2.vec[instr.vt()][index..]);
-                        u32::store_unaligned_to(self, bus, addr, data);
+                        self.store_mem(bus, addr, data);
                     }
                     VLF_D => {
                         let data = LittleEndian::read_u64(&self.cp2.vec[instr.vt()][index..]);
-                        u64::store_unaligned_to(self, bus, addr, data);
+                        self.store_mem(bus, addr, data);
                     }
                     _    => unreachable!()
                 }
@@ -726,8 +737,8 @@ impl Rsp {
                 let offset = addr & 0b1111;
                 let aligned_addr = addr & !0b1111;
                 let mut buffer = [0_u8; 16];
-                BigEndian::write_u64(&mut buffer[0..], u64::load_from(self, bus, aligned_addr));
-                BigEndian::write_u64(&mut buffer[8..], u64::load_from(self, bus, aligned_addr + 8));
+                BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, aligned_addr));
+                BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, aligned_addr + 8));
                 let mut val = u8x16::load(&buffer, 0);
                 let reg = u8x16::load(&self.cp2.vec[instr.vt()], 0);
                 if vf == VLF_Q {
@@ -743,8 +754,8 @@ impl Rsp {
                     val = val | reg.shuffle_bytes(self.tables.shift_l[16 - offset as usize]);
                 }
                 val.store(&mut buffer, 0);
-                u64::store_to(self, bus, aligned_addr, BigEndian::read_u64(&buffer[0..]));
-                u64::store_to(self, bus, aligned_addr + 8, BigEndian::read_u64(&buffer[8..]));
+                self.store_mem(bus, aligned_addr, BigEndian::read_u64(&buffer[0..]));
+                self.store_mem(bus, aligned_addr + 8, BigEndian::read_u64(&buffer[8..]));
             }
             _ => self.bug(format!("Unimplemented vector load format: {}", vf))
         }

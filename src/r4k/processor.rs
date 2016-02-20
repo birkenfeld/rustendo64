@@ -78,12 +78,17 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
     /// Write a word to memory.
     fn write_word(&mut self, &mut Self::Bus, u64, u32);
 
+    /// Memory operations that should check and assume alignment if the
+    /// processor requires aligned memory access.
+    fn aligned_offset(&self, &Instruction, u64) -> u64;
+    fn load_mem<T: MemFmt<'c, Self>>(&mut self, &Self::Bus, u64) -> T;
+    fn store_mem<T: MemFmt<'c, Self>>(&mut self, &mut Self::Bus, u64, T);
+
     /// Interrupt handling before an instruction.
     fn check_interrupts(&mut self, &mut Self::Bus);
     /// Linked-load/store handlers.
     fn ll_handler(&mut self, virt_addr: u64);
-    fn sc_handler<T: MemFmt<'c, Self>>(&mut self, &mut Self::Bus,
-                                       &Instruction, virt_addr: u64, T);
+    fn sc_handler<T: MemFmt<'c, Self>>(&mut self, &mut Self::Bus, &Instruction, u64, T);
 
     /// Get the color to use for debug output.
     #[cfg(debug_assertions)]
@@ -273,14 +278,6 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
         }
     }
 
-    fn aligned_addr(&self, instr: &Instruction, align: u64) -> u64 {
-        let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_ext());
-        if addr & (align - 1) != 0 {
-            self.bug(format!("Address not aligned to {} bytes: {:#x}", align, addr));
-        }
-        addr
-    }
-
     #[cold]
     fn bug(&self, msg: String) -> ! {
         println!("\nBug in {}! Processor dump:\n{:?}", self.get_desc(), self);
@@ -289,17 +286,17 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
         panic!(msg);
     }
 
-    // OPS
+    // IMPLEMENTATIONS FOR INSTRUCTIONS
 
     fn mem_load<T: MemFmt<'c, Self>, F>(&mut self, bus: &Self::Bus, instr: &Instruction,
                                         linked: bool, func: F) where F: Fn(T) -> u64
     {
-        let addr = self.aligned_addr(instr, T::get_align());
+        let addr = self.aligned_offset(instr, T::get_align());
         if linked {
             self.ll_handler(addr);
         }
 
-        let data = func(T::load_from(self, bus, addr));
+        let data = func(self.load_mem(bus, addr));
         dprintln!(self, "{} {} <- {:#18x} :  mem @ {:#x}",
                   INDENT, REG_NAMES[instr.rt()], data, addr);
         self.write_gpr(instr.rt(), data);
@@ -308,14 +305,14 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
     fn mem_store<T: MemFmt<'c, Self>, F>(&mut self, bus: &mut Self::Bus, instr: &Instruction,
                                           linked: bool, func: F) where F: Fn(u64) -> T
     {
-        let addr = self.aligned_addr(instr, T::get_align());
+        let addr = self.aligned_offset(instr, T::get_align());
         let data = self.read_gpr(instr.rt());
         let data = func(data);
         dprintln!(self, "{}       {:#18x} -> mem @ {:#x}", INDENT, data, addr);
         if linked {
             self.sc_handler(bus, instr, addr, data);
         } else {
-            T::store_to(self, bus, addr, data);
+            self.store_mem(bus, addr, data);
         }
     }
 

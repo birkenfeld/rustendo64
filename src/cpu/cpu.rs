@@ -91,6 +91,22 @@ impl<'c> R4300<'c> for Cpu {
         }
     }
 
+    fn aligned_offset(&self, instr: &Instruction, align: u64) -> u64 {
+        let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_ext());
+        if addr & (align - 1) != 0 {
+            self.bug(format!("Address not aligned to {} bytes: {:#x}", align, addr));
+        }
+        addr
+    }
+
+    fn load_mem<T: MemFmt<'c, Self>>(&mut self, bus: &Self::Bus, addr: u64) -> T {
+        T::load_from(self, bus, addr)
+    }
+
+    fn store_mem<T: MemFmt<'c, Self>>(&mut self, bus: &mut Self::Bus, addr: u64, data: T) {
+        T::store_to(self, bus, addr, data)
+    }
+
     fn check_interrupts(&mut self, bus: &mut CpuBus) {
         // Process interrupts from interconnect.
         if bus.has_interrupt() {
@@ -113,7 +129,7 @@ impl<'c> R4300<'c> for Cpu {
                                        virt_addr: u64, data: T) {
         let llbit = self.reg_llbit;
         if llbit {
-            T::store_to(self, bus, virt_addr, data);
+            self.store_mem(bus, virt_addr, data);
         }
         self.write_gpr(instr.rt(), llbit as u64);
     }
@@ -441,13 +457,13 @@ impl Cpu {
     fn mem_load_unaligned<'c, T: MemFmt<'c, Self>, F>(&mut self, bus: &CpuBus<'c>, instr: &Instruction,
                                                       right: bool, func: F) where F: Fn(T) -> u64
     {
-        let addr = self.aligned_addr(&instr, 1);
+        let addr = self.aligned_offset(&instr, 1);
         let align = T::get_align();
         let amask = align - 1;
         let aligned_addr = addr & !amask;
         let offset = addr & amask;
         let shift = if right { (amask - offset) * 8 } else { offset * 8 };
-        let data = func(T::load_from(self, bus, aligned_addr));
+        let data = func(self.load_mem(bus, aligned_addr));
         let sh_data = if right { data >> shift } else { data << shift };
         let mask = if align == 8 { // XXX: can this be written easier?
             if right { !0 >> shift } else { !0 << shift }
@@ -465,7 +481,7 @@ impl Cpu {
     fn mem_store_unaligned<'c, T: MemFmt<'c, Self>, F>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction,
                                                        right: bool, func: F) where F: Fn(u64, T, u64) -> T
     {
-        let addr = self.aligned_addr(&instr, 1);
+        let addr = self.aligned_offset(&instr, 1);
         let align = T::get_align();
         let amask = align - 1;
         let aligned_addr = addr & !amask;
@@ -474,12 +490,12 @@ impl Cpu {
         let reg = self.read_gpr(instr.rt());
         let sh_reg = if right { reg << shift } else { reg >> shift };
         let mask = if right { !0 << shift } else { !0 >> shift };
-        let orig_data = T::load_from(self, bus, aligned_addr);
+        let orig_data = self.load_mem(bus, aligned_addr);
         let data = func(mask, orig_data, sh_reg);
         dprintln!(self, "{}       {:#18x} :  mem @ {:#x}",
                   INDENT, orig_data, aligned_addr);
         dprintln!(self, "{}       {:#18x} -> mem @ {:#x}", INDENT, data, addr);
-        T::store_to(self, bus, aligned_addr, data);
+        self.store_mem(bus, aligned_addr, data);
     }
 
     // FLOATING-POINT OPS
@@ -574,8 +590,8 @@ impl Cpu {
     }
 
     fn mem_load_fp<'c, T: FpFmt + MemFmt<'c, Self>>(&mut self, bus: &CpuBus<'c>, instr: &Instruction) {
-        let addr = self.aligned_addr(&instr, T::get_align());
-        let data = T::load_from(self, bus, addr);
+        let addr = self.aligned_offset(&instr, T::get_align());
+        let data = self.load_mem(bus, addr);
         dprintln!(self, "{} $f{:02} <- {:16.8} :  mem @ {:#x}",
                   INDENT, instr.ft(), data, addr);
         let reg = instr.ft();
@@ -592,7 +608,7 @@ impl Cpu {
     }
 
     fn mem_store_fp<'c, T: FpFmt + MemFmt<'c, Self>>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction) {
-        let addr = self.aligned_addr(&instr, T::get_align());
+        let addr = self.aligned_offset(&instr, T::get_align());
         let reg = instr.ft();
         let data = if self.cp0.reg_status.additional_fp_regs {
             T::read_fpr(&self.reg_fpr[reg])
@@ -605,7 +621,7 @@ impl Cpu {
             }
         };
         dprintln!(self, "{}         {:16.8} -> mem @ {:#x}", INDENT, data, addr);
-        T::store_to(self, bus, addr, data);
+        self.store_mem(bus, addr, data);
     }
 
     fn reg_load_fp<T: FpFmt, F>(&mut self, instr: &Instruction, func: F)
