@@ -1,7 +1,7 @@
 use std::fmt;
 use std::mem;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use simd::{u8x16, u16x8, i16x8, bool16ix8, i32x4};
 use simd::x86::sse2::{Sse2I8x16, Sse2I16x8, Sse2U16x8, Sse2I32x4};
 use simd::x86::ssse3::Ssse3U8x16;
@@ -154,7 +154,7 @@ impl<'c> R4300<'c> for Rsp {
                 // set break
                 write_status |= 1 << 31;
                 bus.write_word(SP_REG_STATUS, write_status).unwrap();
-                println!("RSP: break.");
+                // println!("RSP: break.");
                 self.broke = true;
             }
             _     => self.bug(format!("#UD: I {:#b} -- {:?}", instr.0, instr))
@@ -835,8 +835,10 @@ impl Rsp {
     }
 
     pub fn wait_for_start(&self) {
-        let mutex = Mutex::new(());
-        let _ = self.run_cond.wait(mutex.lock().unwrap()).unwrap();
+        if !self.run_bit.load(Ordering::SeqCst) {
+            let mutex = Mutex::new(());
+            let _ = self.run_cond.wait(mutex.lock().unwrap()).unwrap();
+        }
     }
 
     pub fn run_sequence(&mut self, bus: &mut RspBus, n: usize) {

@@ -86,7 +86,7 @@ uint8_t  *rdram_8 = NULL;
 
 int32_t full_synced = 0;
 
-#define LOG_RDP_EXECUTION 1
+#define LOG_RDP_EXECUTION 0
 #define DETAILED_LOGGING 0
 
 FILE *rdp_exec;
@@ -5945,7 +5945,7 @@ static void rdp_sync_tile(uint32_t w1, uint32_t w2) {
 
 static void rdp_sync_full(uint32_t w1, uint32_t w2) {
     z64gl_command = 0;
-    // XXX TODO signal_rcp_interrupt(vr4300, MI_INTR_DP);
+    // printf("RDP: FULL SYNC\n");
     full_synced = 1;
 }
 
@@ -6437,7 +6437,7 @@ int32_t rdp_process_list(uint32_t *dp_start, uint32_t *dp_current, uint32_t *dp_
 
             if (LOG_RDP_EXECUTION) {
                 char string[4000];
-                if (0) {
+                if (1) {
                     z64gl_command += cmd_length;
                     rdp_dasm(string);
                     fprintf(rdp_exec, "%08X: %08X %08X   %s\n", command_counter, rdp_cmd_data[rdp_cmd_cur+0],
