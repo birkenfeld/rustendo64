@@ -193,6 +193,36 @@ impl<'c> R4300<'c> for Rsp {
                 let res = fcomb.move_mask() as i32 as u64;
                 self.write_gpr(instr.rt(), res);
             },
+            MF => {
+                let vec = self.read_vec(instr.rd());
+                let element = instr.vdel() as u32;
+                let lo = element >> 1;
+
+                let res = if element & 1 != 0 {
+                    let hi = (element + 1) >> 1;
+                    let high = vec.extract(lo) << 8;
+                    let low = vec.extract(hi) >> 8;
+                    (high | low) as u64
+                } else {
+                    vec.extract(lo) as u64
+                };
+                self.write_gpr(instr.rt(), res);
+            },
+            MT => {
+                let reg = self.read_gpr(instr.rt()) as i16;
+                let mut vec = self.read_vec(instr.rd());
+                let element = instr.vdel() as u32;
+                let lo = element >> 1;
+
+                if element & 1 != 0 {
+                    let hi = (element + 1) >> 1;
+                    vec = vec.replace(lo, (vec.extract(lo) & !0x00ff) | (reg >> 8 & 0xff));
+                    vec = vec.replace(hi, (vec.extract(hi) & 0x00ff)  | ((reg & 0xff) << 8));
+                } else {
+                    vec = vec.replace(lo, reg);
+                }
+                self.write_vec(instr.rd(), vec);
+            },
             c  => {
                 if c & 0b10000 == 0 {
                     self.bug(format!("#UD CP2: I {:#b} -- {:?}", instr.0, instr));
@@ -994,6 +1024,11 @@ impl Rsp {
         unsafe {
             mem::transmute(u8x16::load(&self.cp2.vec[index], 0))
         }
+    }
+
+    fn write_vec(&mut self, index: usize, value: i16x8) {
+        let res: u8x16 = unsafe {  mem::transmute(value) };
+        res.store(&mut self.cp2.vec[index], 0);
     }
 
     fn read_acc(&self, index: usize) -> i16x8 {

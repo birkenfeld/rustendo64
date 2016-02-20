@@ -21,6 +21,9 @@
 // This would be relevant if we stored big-endian in a byte-wise RAM buffer,
 // but in fact we use a word-wise little-endian buffer.
 
+// Instead, we have to "swap" the addresses for sub-word addressing of the
+// buffer, see the addrswap() macros below.
+
 #define byteswap_16(x) ((uint16_t) (((uint8_t) (x >> 8)) | ((uint16_t) (x << 8))))
 
 static inline uint32_t byteswap_32(uint32_t word) {
@@ -39,9 +42,15 @@ static inline uint32_t byteswap_32(uint32_t word) {
 #endif
 }
 
+#define addrswap_8(x)  (x)
+#define addrswap_16(x) (x)
+
 #else
 #define byteswap_16(x) (x)
 #define byteswap_32(x) (x)
+
+#define addrswap_8(x)  ((x) ^ 3)
+#define addrswap_16(x) ((x) ^ 1)
 #endif
 
 #undef WORD_ADDR_XOR

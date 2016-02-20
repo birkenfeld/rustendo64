@@ -423,40 +423,79 @@ int32_t clamp_t_diff[8];
 int32_t clamp_s_diff[8];
 CVtcmaskDERIVATIVE cvarray[0x100];
 
-#define RDRAM_MASK 0x007fffff
+#define RDRAM_MASK_8  0x007fffff
+#define RDRAM_MASK_16 (0x007fffff >> 1)
+#define RDRAM_MASK_32 (0x007fffff >> 2)
 
 
-#define RREADADDR8(rdst, in) {(in) &= RDRAM_MASK; (rdst) = ((in) <= plim) ? (rdram_8[(in)]) : 0;}
-#define RREADIDX16(rdst, in) {(in) &= (RDRAM_MASK >> 1); (rdst) = ((in) <= idxlim16) ? (byteswap_16(rdram_16[(in)])) : 0;}
-#define RREADIDX32(rdst, in) {(in) &= (RDRAM_MASK >> 2); (rdst) = ((in) <= idxlim32) ? (byteswap_32(rdram[(in)])) : 0;}
+#define RREADADDR8(dst, in)                                             \
+    {                                                                   \
+        (in) &= RDRAM_MASK_8;                                           \
+        (dst) = ((in) <= plim) ? (rdram_8[addrswap_8(in)]) : 0;         \
+    }
+#define RREADIDX16(dst, in)                                             \
+    {                                                                   \
+        (in) &= RDRAM_MASK_16;                                          \
+        (dst) = ((in) <= idxlim16) ? (byteswap_16(rdram_16[addrswap_16(in)])) : 0; \
+    }
+#define RREADIDX32(dst, in)                                             \
+    {                                                                   \
+        (in) &= RDRAM_MASK_32;                                          \
+        (dst) = ((in) <= idxlim32) ? (byteswap_32(rdram[(in)])) : 0;    \
+    }
 
-#define RWRITEADDR8(in, val) {(in) &= RDRAM_MASK; if ((in) <= plim) rdram_8[(in)] = (val);}
-#define RWRITEIDX16(in, val) {(in) &= (RDRAM_MASK >> 1); if ((in) <= idxlim16) rdram_16[(in)] = byteswap_16(val);}
-#define RWRITEIDX32(in, val) {(in) &= (RDRAM_MASK >> 2); if ((in) <= idxlim32) rdram[(in)] = byteswap_32(val);}
+#define RWRITEADDR8(in, val)                                            \
+    {                                                                   \
+        (in) &= RDRAM_MASK_8;                                           \
+        if ((in) <= plim)  rdram_8[addrswap_8(in)] = (val);             \
+    }
+#define RWRITEIDX16(in, val)                                            \
+    {                                                                   \
+        (in) &= RDRAM_MASK_16;                                          \
+        if ((in) <= idxlim16) rdram_16[addrswap_16(in)] = byteswap_16(val); \
+    }
+#define RWRITEIDX32(in, val)                                            \
+    {                                                                   \
+        (in) &= RDRAM_MASK_32;                                          \
+        if ((in) <= idxlim32) rdram[(in)] = byteswap_32(val);           \
+    }
 
 #define PAIRREAD16(rdst, hdst, in)                                      \
     {                                                                   \
-        (in) &= (RDRAM_MASK >> 1);                                      \
-        if ((in) <= idxlim16) {(rdst) = byteswap_16(rdram_16[(in)]); (hdst) = hidden_bits[(in)];} \
+        (in) &= RDRAM_MASK_16;                                          \
+        if ((in) <= idxlim16) {                                         \
+            (rdst) = byteswap_16(rdram_16[addrswap_16(in)]);            \
+            (hdst) = hidden_bits[(in)];                                 \
+        }                                                               \
         else {(rdst) = (hdst) = 0;}                                     \
     }
 
 #define PAIRWRITE16(in, rval, hval)                                     \
     {                                                                   \
-        (in) &= (RDRAM_MASK >> 1);                                      \
-        if ((in) <= idxlim16) {rdram_16[(in)] = byteswap_16(rval); hidden_bits[(in)] = (hval);} \
+        (in) &= RDRAM_MASK_16;                                          \
+        if ((in) <= idxlim16) {                                         \
+            rdram_16[addrswap_16(in)] = byteswap_16(rval);              \
+            hidden_bits[(in)] = (hval);                                 \
+        }                                                               \
     }
 
 #define PAIRWRITE32(in, rval, hval0, hval1)                             \
     {                                                                   \
-        (in) &= (RDRAM_MASK >> 2);                                      \
-        if ((in) <= idxlim32) {rdram[(in)] = byteswap_32(rval); hidden_bits[(in) << 1] = (hval0); hidden_bits[((in) << 1) + 1] = (hval1);} \
+        (in) &= RDRAM_MASK_32;                                          \
+        if ((in) <= idxlim32) {                                         \
+            rdram[(in)] = byteswap_32(rval);                            \
+            hidden_bits[(in) << 1] = (hval0);                           \
+            hidden_bits[((in) << 1) + 1] = (hval1);                     \
+        }                                                               \
     }
 
 #define PAIRWRITE8(in, rval, hval)                                      \
     {                                                                   \
-        (in) &= RDRAM_MASK;                                             \
-        if ((in) <= plim) {rdram_8[(in)] = (rval); if ((in) & 1) hidden_bits[(in) >> 1] = (hval);} \
+        (in) &= RDRAM_MASK_8;                                           \
+        if ((in) <= plim) {                                             \
+            rdram_8[addrswap_8(in)] = (rval);                           \
+            if ((in) & 1) hidden_bits[(in) >> 1] = (hval);              \
+        }                                                               \
     }
 
 uint32_t z64gl_command = 0;
