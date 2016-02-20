@@ -506,8 +506,8 @@ impl fmt::Debug for Instruction {
             (vt)    => { VEC_REG_NAMES[self.vt()] };
             (vd)    => { VEC_REG_NAMES[self.vd()] };
             (vel)   => { VEC_EL_SPEC[self.vel()] };
-            (vdel)  => { VEC_EL_SPEC[self.vdel()] };
-            (voff)  => { self.voff() };
+            (vdel)  => { self.vdel() };
+            (voff)  => { self.voff() as i64 };
         }
         /// N-argument instruction with special formats.
         macro_rules! ins1 {
@@ -816,7 +816,7 @@ impl fmt::Debug for Instruction {
                 VLF_U => vinsm!("luv", vt, vdel, voff, base),
                 VLF_H => vinsm!("lhv", vt, vdel, voff, base),
                 VLF_F => vinsm!("lfv", vt, vdel, voff, base),
-                VLF_W => vinsm!("lwv", vt, vdel, voff, base),
+                // lwv doesn't exist
                 VLF_T => vinsm!("ltv", vt, vdel, voff, base),
                 _     => unknown!(),
             },

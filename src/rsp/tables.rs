@@ -1,4 +1,5 @@
 use simd::u8x16;
+use simd::x86::ssse3::Ssse3U8x16;
 
 #[derive(Debug)]
 pub struct SimdTables {
@@ -9,7 +10,13 @@ pub struct SimdTables {
     pub keep_l:   [u8x16; 16],  // and: keep n bytes on the right
     pub keep_r:   [u8x16; 16],  // and: keep n bytes on the left
     pub el_shuf:  [u8x16; 16],  // shuffle: for "elements" spec in instrs
-    pub bswap:    u8x16,         // shuffle: byte-swap 16-bit units
+    pub bswap:    u8x16,        // shuffle: byte-swap 16-bit units
+    pub shift_swap_l: [u8x16; 16],
+    pub shift_swap_r: [u8x16; 16],   // as above, but pre-byte-swapped
+    pub rot_swap_l:   [u8x16; 16],
+    pub rot_swap_r:   [u8x16; 16],
+    pub keep_swap_l:  [u8x16; 16],
+    pub keep_swap_r:  [u8x16; 16],
 }
 
 impl SimdTables {
@@ -24,6 +31,12 @@ impl SimdTables {
             el_shuf:  SimdTables::el_shuf(),
             bswap:    u8x16::new(0x1, 0x0, 0x3, 0x2, 0x5, 0x4, 0x7, 0x6,
                                  0x9, 0x8, 0xb, 0xa, 0xd, 0xc, 0xf, 0xe),
+            shift_swap_l: [u8x16::splat(0); 16],
+            shift_swap_r: [u8x16::splat(0); 16],
+            rot_swap_l:   [u8x16::splat(0); 16],
+            rot_swap_r:   [u8x16::splat(0); 16],
+            keep_swap_l:  [u8x16::splat(0); 16],
+            keep_swap_r:  [u8x16::splat(0); 16],
         };
         for i in 0..16 {
             for j in 0..16 {
@@ -31,13 +44,21 @@ impl SimdTables {
                     if $cond { tables.$tbl[i] = tables.$tbl[i].replace(j as u32, $repl as u8); }
                 }};
 
-                set!(shift_l,  if j >= i,       j - i);
-                set!(shift_r,  if j <  16 - i,  j + i);
+                set!(shift_l,  if j <  16 - i,  j + i);
+                set!(shift_r,  if j >= i,       j - i);
                 set!(rot_l,    if true,         (j + i) % 16);
                 set!(rot_r,    if true,         (j + (16 - i)) % 16);
                 set!(keep_l,   if j <  i,       0xff);
                 set!(keep_r,   if j >= 16 - i,  0xff);
             }
+        }
+        for i in 0..16 {
+            tables.shift_swap_l[i] = tables.shift_l[i].shuffle_bytes(tables.bswap);
+            tables.shift_swap_r[i] = tables.shift_r[i].shuffle_bytes(tables.bswap);
+            tables.rot_swap_l[i]   = tables.bswap.shuffle_bytes(tables.rot_l[i]);
+            tables.rot_swap_r[i]   = tables.bswap.shuffle_bytes(tables.rot_r[i]);
+            tables.keep_swap_l[i]  = tables.keep_l[i].shuffle_bytes(tables.bswap);
+            tables.keep_swap_r[i]  = tables.keep_r[i].shuffle_bytes(tables.bswap);
         }
         tables
     }
