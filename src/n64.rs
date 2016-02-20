@@ -21,11 +21,11 @@ pub struct N64 {
 }
 
 impl N64 {
-    pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>,
+    pub fn new(ui_opts: ui::Options, pif_rom: Box<[u8]>, cart_rom: Box<[u8]>,
                debug_cpu: DebugSpecList, debug_rsp: DebugSpecList) -> N64 {
         let rsp_sync = Arc::new(AtomicBool::new(false));
         N64 {
-            ui: ui::init_ui::<ui::minifb::MinifbInterface>(),
+            ui: ui::init_ui::<ui::minifb::MinifbInterface>(ui_opts),
             cpu: cpu::Cpu::new(debug_cpu),
             rsp: rsp::Rsp::new(debug_rsp, rsp_sync.clone()),
             ifs: bus::BusInterfaces::new(pif_rom, cart_rom, rsp_sync),

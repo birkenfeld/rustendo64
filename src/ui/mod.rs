@@ -36,17 +36,21 @@ impl UiChannel {
     }
 }
 
+pub struct Options {
+    pub mute_audio: bool,
+}
+
 pub trait Interface {
-    fn new(mpsc::Receiver<UiOutput>, Arc<AtomicUsize>, Arc<AtomicUsize>) -> Self;
+    fn new(Options, mpsc::Receiver<UiOutput>, Arc<AtomicUsize>, Arc<AtomicUsize>) -> Self;
     fn run(&mut self);
 }
 
-pub fn init_ui<T: Interface>() -> UiChannel {
+pub fn init_ui<T: Interface>(opts: Options) -> UiChannel {
     let input = Arc::new(AtomicUsize::new(0));
     let pending_audio = Arc::new(AtomicUsize::new(0));
     let (outsend, outrecv) = mpsc::channel();
     let input_clone = input.clone();
     let pa_clone = pending_audio.clone();
-    thread::spawn(move || T::new(outrecv, input_clone, pa_clone).run());
+    thread::spawn(move || T::new(opts, outrecv, input_clone, pa_clone).run());
     UiChannel { sender: outsend, input: input, pending_audio: pending_audio }
 }

@@ -41,10 +41,13 @@ fn main() {
 
     let pif_data = util::read_bin(pif_file_name);
     let rom_data = util::read_bin(rom_file_name);
+    let options = ui::Options {
+        mute_audio: arguments.is_present("mute")
+    };
 
     setup_signal_handler();
 
-    let mut n64 = n64::N64::new(pif_data, rom_data, debug_cpu, debug_rsp);
+    let mut n64 = n64::N64::new(options, pif_data, rom_data, debug_cpu, debug_rsp);
     n64.power_on_reset();
     n64.run();
 }
@@ -75,6 +78,10 @@ fn get_arguments<'a>() -> ArgMatches<'a> {
                  .help("Sets the ROM to run")
                  .takes_value(true)
                  .required(true))
+        .arg(Arg::with_name("mute")
+                 .short("m")
+                 .long("mute")
+                 .help("Mute audio initially"))
         .get_matches()
 }
 

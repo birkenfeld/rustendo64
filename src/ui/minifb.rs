@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use minifb::{Window, WindowOptions, Scale, Key};
 use cpal;
 
-use ui::{Interface, UiOutput};
+use ui::{Interface, UiOutput, Options};
 
 pub struct MinifbInterface {
     receiver: mpsc::Receiver<UiOutput>,
@@ -13,6 +13,7 @@ pub struct MinifbInterface {
     mode: usize,
     window: Option<Window>,
     input: Arc<AtomicUsize>,
+    audio_mute: bool,
     audio_dev: Option<cpal::Endpoint>,
     audio_src: Option<cpal::Voice>,
     audio_rate: u32,
@@ -21,14 +22,15 @@ pub struct MinifbInterface {
 }
 
 impl Interface for MinifbInterface {
-    fn new(outrecv: mpsc::Receiver<UiOutput>, input: Arc<AtomicUsize>,
-           pending_audio: Arc<AtomicUsize>) -> Self {
+    fn new(opts: Options, outrecv: mpsc::Receiver<UiOutput>,
+           input: Arc<AtomicUsize>, pending_audio: Arc<AtomicUsize>) -> Self {
         MinifbInterface {
             receiver: outrecv,
             size: (0, 0),
             mode: 0,
             window: None,
             input: input,
+            audio_mute: opts.mute_audio,
             audio_dev: cpal::get_default_endpoint(),
             audio_src: None,
             audio_rate: 0,
@@ -90,6 +92,8 @@ impl MinifbInterface {
         }
 
         let mut quit = false;
+        let mut mute = self.audio_mute;
+
         if let Some(ref mut win) = self.window {
             if self.mode == 4 {
                 if buffer.len() == self.size.0 * self.size.1 {
@@ -143,7 +147,12 @@ impl MinifbInterface {
                     Key::Up         => { a_y += 127; 0 },
                     Key::RightShift => { a_throttle += 1; 0 },
                     Key::RightCtrl  => { a_throttle += 2; 0 },
+                    // Non-controller functions
                     Key::Escape     => { quit = true; 0 },
+                    // TODO: only register on first press.
+                    Key::M          => { mute = !mute;
+                                         println!("Audio: {}.", if mute { "muted" } else { "unmuted" });
+                                         0 },
                     _ => 0
                 });
                 match a_throttle {
@@ -157,6 +166,7 @@ impl MinifbInterface {
                 self.input.store(cstate as usize, Ordering::Relaxed);
             }
         }
+        self.audio_mute = mute;
         quit
     }
 
@@ -190,9 +200,11 @@ impl MinifbInterface {
                     cpal::UnknownTypeBuffer::F32(_) |
                     cpal::UnknownTypeBuffer::U16(_) => { },
                     cpal::UnknownTypeBuffer::I16(mut buf) => {
-                        for (i, p) in data.iter().enumerate() {
-                            buf[2*i] = (p >> 16) as i16;
-                            buf[2*i+1] = *p as i16;
+                        if !self.audio_mute {
+                            for (i, p) in data.iter().enumerate() {
+                                buf[2*i] = (p >> 16) as i16;
+                                buf[2*i+1] = *p as i16;
+                            }
                         }
                     }
                 }
