@@ -705,31 +705,23 @@ impl<'c> R4300<'c> for Rsp {
                         cpu.write_acc(ACC_LO, result);
                         result
                     }),
-
-                    // UNOPS: refactor TODO
-                    VMOV  => self.vec_binop(instr, |_, vt, cpu| {
+                    VMOV  => self.vec_elop(instr, |vt, vt_el, cpu| {
                         cpu.write_acc(ACC_LO, vt);
-                        // XXX: we should not extract from the shuffled vt!
-                        let data_el = vt.extract(instr.vs() as u32 & 0x7);
-                        let reg = cpu.read_vec(instr.vd());
-                        reg.replace(instr.vel() as u32 & 0x7, data_el)
+                        vt_el
                     }),
-                    VRCPH | VRSQH => self.vec_binop(instr, |_, vt, cpu| {
+                    VRCPH | VRSQH => self.vec_elop(instr, |vt, vt_el, cpu| {
                         cpu.write_acc(ACC_LO, vt);
                         cpu.cp2.dp_flag = 1;
-                        cpu.cp2.div_in = vt.extract(instr.vs() as u32 & 0x7);
-                        let reg = cpu.read_vec(instr.vd());
-                        reg.replace(instr.vel() as u32 & 0x7, cpu.cp2.div_out)
+                        cpu.cp2.div_in = vt_el;
+                        cpu.cp2.div_out
                     }),
-                    VRCP | VRCPL | VRSQ | VRSQL => self.vec_binop(instr, |_, vt, cpu| {
+                    VRCP | VRCPL | VRSQ | VRSQL => self.vec_elop(instr, |vt, vt_el, cpu| {
                         cpu.write_acc(ACC_LO, vt);
                         let dp = instr.0 as u8 & cpu.cp2.dp_flag;
                         cpu.cp2.dp_flag = 0;
 
-                        let vt_el = vt.extract(instr.vs() as u32 & 0x7) as u32;
-
                         let dp_input = (cpu.cp2.div_in as u32) << 16 | (vt_el as u16 as u32);
-                        let sp_input = vt_el;
+                        let sp_input = vt_el as u32;
 
                         let input = (if dp != 0 { dp_input } else { sp_input }) as i32;
                         let input_mask = input >> 31;
@@ -756,8 +748,7 @@ impl<'c> R4300<'c> for Rsp {
                             result ^ input_mask
                         };
                         cpu.cp2.div_out = (result >> 16) as i16;
-                        let reg = cpu.read_vec(instr.vd());
-                        reg.replace(instr.vel() as u32 & 0x7, result as i16)
+                        result as i16
                     }),
                     _     => self.bug(format!("#UD CP2: I {:#b} -- {:?}", instr.0, instr))
                 }
@@ -835,7 +826,7 @@ impl Rsp {
     }
 
     pub fn wait_for_start(&self) {
-        if !self.run_bit.load(Ordering::SeqCst) {
+        while !self.run_bit.load(Ordering::SeqCst) {
             let mutex = Mutex::new(());
             let _ = self.run_cond.wait(mutex.lock().unwrap()).unwrap();
         }
@@ -1012,20 +1003,30 @@ impl Rsp {
     fn vec_binop<F>(&mut self, instr: &Instruction, func: F)
         where F: Fn(i16x8, i16x8, &mut Self) -> i16x8
     {
-        let res: u8x16 = unsafe {
-            let s1 = self.read_vec(instr.vs());
-            let s2 = u8x16::load(&self.cp2.vec[instr.vt()], 0);
-            let s2 = mem::transmute(s2.shuffle_bytes(self.tables.el_shuf[instr.vel()]));
-            let res = func(s1, s2, self);
-            mem::transmute(res)
-        };
-        res.store(&mut self.cp2.vec[instr.vd()], 0);
+        let s1 = self.read_vec(instr.vs());
+        let s2 = self.read_and_shuffle_vec(instr.vt(), instr.vel());
+        let res = func(s1, s2, self);
+        self.write_vec(instr.vd(), res);
+    }
+
+    fn vec_elop<F>(&mut self, instr: &Instruction, func: F)
+        where F: Fn(i16x8, i16, &mut Self) -> i16
+    {
+        let vt_el = self.read_vec(instr.vt()).extract(instr.vs() as u32 & 0x7);
+        let vt = self.read_and_shuffle_vec(instr.vt(), instr.vel());
+        let vd = self.read_vec(instr.vd());
+        let res_el = func(vt, vt_el, self);
+        self.write_vec(instr.vd(), vd.replace(instr.vel() as u32 & 0x7, res_el));
     }
 
     fn read_vec(&self, index: usize) -> i16x8 {
-        unsafe {
-            mem::transmute(u8x16::load(&self.cp2.vec[index], 0))
-        }
+        unsafe { mem::transmute(u8x16::load(&self.cp2.vec[index], 0)) }
+    }
+
+    fn read_and_shuffle_vec(&self, index: usize, elements: usize) -> i16x8 {
+        let vec = u8x16::load(&self.cp2.vec[index], 0);
+        let vec = vec.shuffle_bytes(self.tables.el_shuf[elements]);
+        unsafe { mem::transmute(vec) }
     }
 
     fn write_vec(&mut self, index: usize, value: i16x8) {
@@ -1034,9 +1035,7 @@ impl Rsp {
     }
 
     fn read_acc(&self, index: usize) -> i16x8 {
-        unsafe {
-            mem::transmute(u8x16::load(&self.cp2.acc[index], 0))
-        }
+        unsafe { mem::transmute(u8x16::load(&self.cp2.acc[index], 0)) }
     }
 
     fn write_acc(&mut self, index: usize, value: i16x8) {
@@ -1045,9 +1044,7 @@ impl Rsp {
     }
 
     fn read_flags(&self, index: usize, offset: usize) -> i16x8 {
-        unsafe {
-            mem::transmute(u8x16::load(&self.cp2.flags[index], offset))
-        }
+        unsafe { mem::transmute(u8x16::load(&self.cp2.flags[index], offset)) }
     }
 
     fn write_flags(&mut self, index: usize, offset: usize, value: i16x8) {
