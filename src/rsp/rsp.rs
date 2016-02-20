@@ -935,6 +935,36 @@ impl Rsp {
                 }
                 reg.store(&mut self.cp2.vec[instr.vt()], 0);
             }
+            VLF_P | VLF_U => {
+                // Load packed 8-bit signed/unsigned into 16-bit vectors.
+                let addr = self.aligned_shift_addr(instr, 3, 1);
+                self.restricted_vdel(instr, 16);  // ensure zero
+                let dword: u64 = self.load_mem(bus, addr);
+                let result = if vf == VLF_P {
+                    i16x8::new(
+                        ((dword >> 48) & 0xff00) as i16,
+                        ((dword >> 40) & 0xff00) as i16,
+                        ((dword >> 32) & 0xff00) as i16,
+                        ((dword >> 24) & 0xff00) as i16,
+                        ((dword >> 16) & 0xff00) as i16,
+                        ((dword >> 8)  & 0xff00) as i16,
+                        ( dword        & 0xff00) as i16,
+                        ((dword << 8)  & 0xff00) as i16,
+                    )
+                } else {
+                    i16x8::new(
+                        ((dword >> 47) & 0x7f80) as i16,
+                        ((dword >> 39) & 0x7f80) as i16,
+                        ((dword >> 31) & 0x7f80) as i16,
+                        ((dword >> 23) & 0x7f80) as i16,
+                        ((dword >> 15) & 0x7f80) as i16,
+                        ((dword >> 7)  & 0x7f80) as i16,
+                        ((dword << 1)  & 0x7f80) as i16,
+                        ((dword << 9)  & 0x7f80) as i16,
+                    )
+                };
+                self.write_vec(instr.vt(), result);
+            }
             _ => self.bug(format!("Unimplemented vector load format: {}", vf))
         }
     }
@@ -994,8 +1024,34 @@ impl Rsp {
                 val.store(&mut buffer, 0);
                 self.store_mem(bus, aligned_addr, BigEndian::read_u64(&buffer[0..]));
                 self.store_mem(bus, aligned_addr + 8, BigEndian::read_u64(&buffer[8..]));
+            },
+            VLF_P | VLF_U => {
+                // Store packed 8-bit signed/unsigned from 16-bit vectors.
+                let addr = self.aligned_shift_addr(instr, 3, 1);
+                self.restricted_vdel(instr, 16);  // ensure zero
+                let vec = self.read_vec(instr.vt());
+                let dword = if vf == VLF_P {
+                    ((vec.extract(0) as u64) & 0xff00) << 48 |
+                    ((vec.extract(1) as u64) & 0xff00) << 40 |
+                    ((vec.extract(2) as u64) & 0xff00) << 32 |
+                    ((vec.extract(3) as u64) & 0xff00) << 24 |
+                    ((vec.extract(4) as u64) & 0xff00) << 16 |
+                    ((vec.extract(5) as u64) & 0xff00) << 8  |
+                    ((vec.extract(6) as u64) & 0xff00)       |
+                    ((vec.extract(7) as u64) & 0xff00) >> 8
+                } else {
+                    ((vec.extract(0) as u64) & 0x7f80) << 47 |
+                    ((vec.extract(1) as u64) & 0x7f80) << 39 |
+                    ((vec.extract(2) as u64) & 0x7f80) << 31 |
+                    ((vec.extract(3) as u64) & 0x7f80) << 23 |
+                    ((vec.extract(4) as u64) & 0x7f80) << 15 |
+                    ((vec.extract(5) as u64) & 0x7f80) << 7  |
+                    ((vec.extract(6) as u64) & 0x7f80) >> 1  |
+                    ((vec.extract(7) as u64) & 0x7f80) >> 9
+                };
+                self.store_mem(bus, addr, dword);
             }
-            _ => self.bug(format!("Unimplemented vector load format: {}", vf))
+            _ => self.bug(format!("Unimplemented vector store format: {}", vf))
         }
     }
 
