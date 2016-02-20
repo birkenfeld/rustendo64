@@ -3,6 +3,7 @@ use std::sync::RwLock;
 /// A trait that hides access to a memory array that is either
 /// thread-locked or bare.
 pub trait RamAccess {
+    fn with_locked_mem<F, R>(&mut self, f: F) -> R where F: FnMut(&mut [u32]) -> R;
     fn read_word(&self, index: usize) -> u32;
     fn write_word(&mut self, index: usize, word: u32);
     fn read_range(&self, start: usize, length: usize) -> Vec<u32>;
@@ -10,6 +11,9 @@ pub trait RamAccess {
 }
 
 impl<'a> RamAccess for &'a mut [u32] {
+    fn with_locked_mem<F, R>(&mut self, mut f: F) -> R where F: FnMut(&mut [u32]) -> R {
+        f(self)
+    }
     fn read_word(&self, index: usize) -> u32 {
         self[index]
     }
@@ -27,6 +31,10 @@ impl<'a> RamAccess for &'a mut [u32] {
 }
 
 impl<'a> RamAccess for &'a RwLock<Box<[u32]>> {
+    fn with_locked_mem<F, R>(&mut self, mut f: F) -> R where F: FnMut(&mut [u32]) -> R {
+        let mut guard = self.write().unwrap();
+        f(&mut guard)
+    }
     fn read_word(&self, index: usize) -> u32 {
         self.read().unwrap()[index]
     }

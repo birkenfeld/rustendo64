@@ -6,6 +6,7 @@ use crossbeam;
 
 use ui;
 use cpu;
+use rdp;
 use rsp;
 use bus::{self, Bus};
 use bus::mem_map::*;
@@ -36,6 +37,7 @@ impl N64 {
     }
 
     pub fn power_on_reset(&mut self) {
+        rdp::power_on_reset();
         self.cpu.power_on_reset();
         self.ifs.power_on_reset();
         // write memory size into ram

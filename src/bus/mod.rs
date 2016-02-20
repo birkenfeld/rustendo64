@@ -135,7 +135,8 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
                 lw!(self.ifs.sp).write_reg(addr, word, &self.ifs.mi, &mut self.ram,
                                            &mut self.spram),
             DP_REG_START    ... DP_REG_END    =>
-                lw!(self.ifs.dp).write_reg(addr, word),
+                lw!(self.ifs.dp).write_reg(addr, word, &self.ifs.mi, &mut self.ram,
+                                           &mut self.spram),
             SI_REG_START    ... SI_REG_END    =>
                 lw!(self.ifs.si).write_reg(addr, word, &self.ifs.mi, &mut self.ram,
                                            &self.ui),

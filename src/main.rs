@@ -10,6 +10,7 @@ extern crate chan_signal;
 extern crate crossbeam;
 extern crate cpal;
 extern crate simd;
+extern crate rustendo64_rdp as rdp;
 
 #[macro_use] mod vr4k;
 mod n64;

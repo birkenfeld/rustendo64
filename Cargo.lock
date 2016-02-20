@@ -12,6 +12,7 @@ dependencies = [
  "minifb 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "nom 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "num 0.1.30 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rustendo64-rdp 0.1.0",
  "rustyline 0.2.0 (git+http://github.com/birkenfeld/rustyline)",
  "simd 0.1.0 (git+https://github.com/huonw/simd)",
 ]
@@ -249,6 +250,13 @@ dependencies = [
 name = "rustc-serialize"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "rustendo64-rdp"
+version = "0.1.0"
+dependencies = [
+ "gcc 0.3.24 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
 [[package]]
 name = "rustyline"

@@ -1,0 +1,17 @@
+[package]
+name = "rustendo64-rdp"
+version = "0.1.0"
+authors = ["MAME developers", "angrylion", "Georg Brandl <georg@python.org>"]
+license = "Custom"
+build = "build.rs"
+
+[lib]
+path = "lib.rs"
+
+[profile.dev]
+opt-level = 1
+debug = true
+codegen-units = 2
+
+[build-dependencies]
+gcc = "0.3"

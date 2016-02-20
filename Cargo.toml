@@ -27,3 +27,6 @@ features = [ "suggestions", "color" ]
 
 [dependencies.rustyline]
 git = "https://github.com/birkenfeld/rustyline"
+
+[dependencies.rustendo64-rdp]
+path = "src/rdp"

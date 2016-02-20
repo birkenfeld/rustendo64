@@ -1,6 +1,7 @@
 use std::sync::{Arc, Condvar};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use rdp;
 use bus::mi;
 use bus::mem_map::*;
 use bus::{IoResult, RamAccess};
@@ -173,13 +174,41 @@ impl DpRegs {
         })
     }
 
-    pub fn write_reg(&mut self, addr: u32, word: u32) -> IoResult<()> {
+
+     pub fn write_reg<R, S>(&mut self, addr: u32, word: u32, mi: &mi::Mi,
+                           ram: &mut R, spram: &mut S) -> IoResult<()>
+        where R: RamAccess, S: RamAccess
+    {
         Ok(match addr {
-            DPC_REG_DMA_START      => self.reg_start = word & 0xff_ffff,
-            DPC_REG_DMA_END        => self.reg_end = word & 0xff_ffff,
+            DPC_REG_DMA_START      => {
+                self.reg_start = word & 0xff_ffff;
+                self.reg_current = self.reg_start;
+            },
+            DPC_REG_DMA_END        => {
+                self.reg_end = word & 0xff_ffff;
+                let synced = ram.with_locked_mem(|raw_ram| {
+                    spram.with_locked_mem(|raw_spram| {
+                        /* TODO: RDP is stop the world! */
+                        rdp::process_list(
+                            &mut self.reg_start,
+                            &mut self.reg_current,
+                            &mut self.reg_end,
+                            &mut self.reg_status,
+                            raw_spram,
+                            raw_ram,
+                        )
+                    })
+                });
+                if synced {
+                    mi.set_interrupt(mi::Intr::DP);
+                }
+            },
             DPC_REG_STATUS         => {
+                // XBUS_DMEM_DMA
                 clear_or_set_bit(&mut self.reg_status, 0, word, 0, 1);
+                // freeze
                 clear_or_set_bit(&mut self.reg_status, 1, word, 2, 3);
+                // flush
                 clear_or_set_bit(&mut self.reg_status, 2, word, 4, 5);
                 if bit_set(word, 6) {
                     self.reg_tmem = 0;
