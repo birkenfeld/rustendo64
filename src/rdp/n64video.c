@@ -1803,7 +1803,8 @@ static void fetch_texel(COLOR *color, int s, int t, uint32_t tilenum) {
     }
         break;
     default:
-        debug("fetch_texel: unknown texture format %d, size %d, tilenum %d\n", tile[tilenum].format, tile[tilenum].size, tilenum);
+        debug("RDP: fetch_texel: unknown texture format %d, size %d, tilenum %d\n",
+	      tile[tilenum].format, tile[tilenum].size, tilenum);
         break;
     }
 }
@@ -1877,7 +1878,8 @@ static void fetch_texel_entlut(COLOR *color, int s, int t, uint32_t tilenum) {
     }
         break;
     default:
-        debug("fetch_texel_entlut: unknown texture format %d, size %d, tilenum %d\n", tile[tilenum].format, tile[tilenum].size, tilenum);
+        debug("RDP: fetch_texel_entlut: unknown texture format %d, size %d, tilenum %d\n",
+	      tile[tilenum].format, tile[tilenum].size, tilenum);
         break;
     }
 
@@ -2681,13 +2683,13 @@ static void fetch_texel_quadro(COLOR *color0, COLOR *color1, COLOR *color2, COLO
         color3->g = c3 & 0xff;
         color3->b = c3 >> 8;
         color3->a = (c3 & 1) ? 0xff : 0;
-                }
-                break;
-        default:
-                debug("fetch_texel_quadro: unknown texture format %d, size %d, tilenum %d\n",
-                      tile[tilenum].format, tile[tilenum].size, tilenum);
-                break;
-        }
+    }
+	break;
+    default:
+	debug("RDP: fetch_texel_quadro: unknown texture format %d, size %d, tilenum %d\n",
+	      tile[tilenum].format, tile[tilenum].size, tilenum);
+	break;
+    }
 }
 
 static void fetch_texel_entlut_quadro(COLOR *color0, COLOR *color1, COLOR *color2, COLOR *color3,
@@ -2881,7 +2883,8 @@ static void fetch_texel_entlut_quadro(COLOR *color0, COLOR *color1, COLOR *color
     }
         break;
     default:
-        debug("fetch_texel_entlut_quadro: unknown texture format %d, size %d, tilenum %d\n", tile[tilenum].format, tile[tilenum].size, tilenum);
+        debug("RDP: fetch_texel_entlut_quadro: unknown texture format %d, size %d, tilenum %d\n",
+	      tile[tilenum].format, tile[tilenum].size, tilenum);
         break;
     }
 
@@ -4481,7 +4484,7 @@ void render_spans_fill(int start, int end, int flip) {
         if (span[i].validline) {
             if (unlikely(fastkillbits && length >= 0)) {
                 if (!onetimewarnings.fillmbitcrashes)
-                    debug("render_spans_fill: image_read_en %x z_update_en %x z_compare_en %x. RDP crashed",
+                    debug("RDP: render_spans_fill: image_read_en %x z_update_en %x z_compare_en %x\n",
                           other_modes.image_read_en, other_modes.z_update_en, other_modes.z_compare_en);
                 onetimewarnings.fillmbitcrashes = 1;
                 rdp_pipeline_crashed = 1;
@@ -4496,7 +4499,7 @@ void render_spans_fill(int start, int end, int flip) {
 
             if (unlikely(slowkillbits && length >= 0)) {
                 if (!onetimewarnings.fillmbitcrashes)
-                    debug("render_spans_fill: image_read_en %x z_update_en %x z_compare_en %x z_source_sel %x. RDP crashed",
+                    debug("RDP: render_spans_fill: image_read_en %x z_update_en %x z_compare_en %x z_source_sel %x\n",
                           other_modes.image_read_en, other_modes.z_update_en, other_modes.z_compare_en, other_modes.z_source_sel);
                 onetimewarnings.fillmbitcrashes = 1;
                 rdp_pipeline_crashed = 1;
@@ -5240,7 +5243,7 @@ static void edgewalker_for_prims(int32_t* ewdata) {
     case CYCLE_TYPE_2: render_spans_2cycle_ptr(yhlimit >> 2, yllimit >> 2, tilenum, flip); break;
     case CYCLE_TYPE_COPY: render_spans_copy(yhlimit >> 2, yllimit >> 2, tilenum, flip); break;
     case CYCLE_TYPE_FILL: render_spans_fill(yhlimit >> 2, yllimit >> 2, flip); break;
-    default: debug("cycle_type %d", other_modes.cycle_type); break;
+    default: debug("RDP: cycle_type %d\n", other_modes.cycle_type); break;
     }
 }
 
@@ -7039,7 +7042,7 @@ static void z_build_com_table(void) {
             altmem = ((z << 2) & 0x1ffc) | 0xe000;
             break;
         default:
-            debug("z_build_com_table failed");
+            debug("RDP: z_build_com_table failed\n");
             break;
         }
         z_com_table[z] = altmem;
@@ -7278,7 +7281,7 @@ static inline int32_t normalize_dzpix(int32_t sum) {
         if (sum & count)
             return(count << 1);
     }
-    debug("normalize_dzpix: invalid codepath taken");
+    debug("RDP: normalize_dzpix: invalid codepath taken\n");
     return 0;
 }
 
