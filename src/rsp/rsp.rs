@@ -10,7 +10,7 @@ use byteorder::{ByteOrder, BigEndian, LittleEndian};
 use ansi_term;
 
 use cp2::Cp2;
-use tables::SimdTables;
+use tables::{SimdTables, RECIPROCAL_ROM};
 use bus::{Bus, RamAccess};
 use bus::mem_map::*;
 use r4k::{R4300, R4300Common, MemFmt};
@@ -471,12 +471,6 @@ impl<'c> R4300<'c> for Rsp {
                         cpu.write_acc(ACC_LO, vd - sign_lt);
                         vd.subs(sign_lt)
                     }),
-                    VMOV  => self.vec_binop(instr, |_, vt, cpu| {
-                        cpu.write_acc(ACC_LO, vt);
-                        let data_el = vt.extract(instr.vs() as u32 & 0x7);
-                        let reg = cpu.read_vec(instr.vd());
-                        reg.replace(instr.vel() as u32 & 0x7, data_el)
-                    }),
                     VAND  => self.vec_binop(instr, |vs, vt, cpu| {
                         let result = vs & vt;
                         cpu.write_acc(ACC_LO, result);
@@ -510,6 +504,231 @@ impl<'c> R4300<'c> for Rsp {
                     VNOP | VNULL => self.vec_binop(instr, |vs, _, _| {
                         vs
                     }),
+                    VCH   => self.vec_binop(instr, |vs, vt, cpu| {
+                        let sign = vs ^ vt;
+                        let sign_bool = sign.lt(zero());
+                        let sign = frombool(sign_bool);
+
+                        let sign_negvt = vt ^ sign;
+                        let sign_negvt = sign_negvt - sign;
+
+                        let diff = vs - sign_negvt;
+                        let diff_zero = diff.eq(zero());
+
+                        let vt_neg = frombool(vt.lt(zero()));
+                        let diff_lez = diff.gt(zero());
+                        let diff_gez = diff_lez | diff_zero;
+                        let diff_lez = !diff_lez;
+
+                        let ge = sign_bool.select(vt_neg, frombool(diff_gez));
+                        let le = sign_bool.select(frombool(diff_lez), vt_neg);
+
+                        let vce_bool = diff.eq(sign);
+                        let vce = frombool(vce_bool) & sign;
+
+                        let eq = diff_zero | vce_bool;
+                        let eq = frombool(!eq);
+
+                        let diff_sel_mask = sign_bool.select(le, ge);
+                        let diff_lez = diff_sel_mask & sign_negvt;
+                        let diff_gez = !diff_sel_mask & vs;
+                        let result = diff_lez | diff_gez;
+
+                        cpu.write_flags(VCC, HI, ge);
+                        cpu.write_flags(VCC, LO, le);
+                        cpu.write_flags(VCO, HI, eq);
+                        cpu.write_flags(VCO, LO, sign);
+                        cpu.write_flags(VCE, LO, vce);
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VCL   => self.vec_binop(instr, |vs, vt, cpu| {
+                        let ge = cpu.read_flags(VCC, HI);
+                        let le = cpu.read_flags(VCC, LO);
+                        let eq = cpu.read_flags(VCO, HI);
+                        let sign = cpu.read_flags(VCO, LO);
+                        let vce = cpu.read_flags(VCE, LO);
+
+                        let sign_negvt = vt ^ sign;
+                        let sign_negvt = sign_negvt - sign;
+
+                        let diff = vs - sign_negvt;
+                        let ncarry = vs.to_u16().adds(vt.to_u16()).to_i16();
+                        let ncarry = frombool(diff.eq(ncarry));
+                        let nvce = frombool(vce.eq(zero()));
+                        let diff_zero = frombool(diff.eq(zero()));
+
+                        let le_case1 = (diff_zero & ncarry) & nvce;
+                        let le_case2 = (diff_zero | ncarry) & vce;
+                        let le_eq = le_case1 | le_case2;
+
+                        let ge_eq = vt.to_u16().subs(vs.to_u16()).to_i16();
+                        let ge_eq = frombool(ge_eq.eq(zero()));
+
+                        let do_le = !eq & sign;
+                        let le_eq = do_le & le_eq;
+                        let le = !do_le & le;
+                        let le = le_eq | le;
+
+                        let do_ge = eq | sign;
+                        let ge = do_ge & ge;
+                        let ge_eq = !do_ge & ge_eq;
+                        let ge = ge_eq | ge;
+
+                        let do_le = sign & le;
+                        let do_ge = !sign & ge;
+                        let mux_mask = do_le | do_ge;
+
+                        let sign_negvt = mux_mask & sign_negvt;
+                        let vs = !mux_mask & vs;
+                        let result = sign_negvt | vs;
+
+                        cpu.write_flags(VCC, HI, ge);
+                        cpu.write_flags(VCC, LO, le);
+                        cpu.write_flags(VCO, HI, zero());
+                        cpu.write_flags(VCO, LO, zero());
+                        cpu.write_flags(VCE, LO, zero());
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VCR   => self.vec_binop(instr, |vs, vt, cpu| {
+                        let sign = vs ^ vt;
+                        let sign = sign >> 15;
+
+                        let diff_lez = vs & sign;
+                        let diff_lez = diff_lez + vt;
+                        let le = diff_lez >> 15;
+
+                        let diff_gez = vs | sign;
+                        let diff_gez = diff_gez.min(vt);
+                        let ge = frombool(diff_gez.eq(vt));
+
+                        let sign_notvt = vt ^ sign;
+
+                        let diff_sel_mask = le - ge;
+                        let diff_sel_mask = diff_sel_mask & sign;
+                        let diff_sel_mask = diff_sel_mask + ge;
+
+                        let zzero = sign_notvt - vs;
+                        let zzero = zzero & diff_sel_mask;
+                        let result = zzero + vs;
+
+                        cpu.write_flags(VCC, HI, ge);
+                        cpu.write_flags(VCC, LO, le);
+                        cpu.write_flags(VCO, HI, zero());
+                        cpu.write_flags(VCO, LO, zero());
+                        cpu.write_flags(VCE, LO, zero());
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VMRG  => self.vec_binop(instr, |vs, vt, cpu| {
+                        let le = cpu.read_flags(VCC, LO);
+
+                        let vs = le & vs;
+                        let vt = !le & vt;
+                        let result = vs | vt;
+
+                        cpu.write_flags(VCO, HI, zero());
+                        cpu.write_flags(VCO, LO, zero());
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+                    VEQ | VGE | VLT | VNE => self.vec_binop(instr, |vs, vt, cpu| {
+                        let eq = cpu.read_flags(VCO, HI);
+                        let sign = cpu.read_flags(VCO, LO);
+
+                        let equal = frombool(vs.eq(vt));
+
+                        let mut le;
+                        match op {
+                            VGE => {
+                                let gt = frombool(vs.gt(vt));
+                                let equalsign = eq & sign;
+                                let equal = !equalsign & equal;
+                                le = gt | equal;
+                            }
+                            VNE => {
+                                let nequal = !equal;
+                                le = eq & equal;
+                                le = le | nequal;
+                            }
+                            VEQ => {
+                                le = !eq & equal;
+                            }
+                            VLT => {
+                                let lt = frombool(vs.lt(vt));
+                                let equal = eq & equal;
+                                let equal = sign & equal;
+                                le = lt | equal;
+                            }
+                            _   => unreachable!()
+                        }
+
+                        let vs = le & vs;
+                        let vt = !le & vt;
+                        let result = vs | vt;
+
+                        cpu.write_flags(VCC, HI, zero());
+                        cpu.write_flags(VCC, LO, le);
+                        cpu.write_flags(VCO, HI, zero());
+                        cpu.write_flags(VCO, LO, zero());
+                        cpu.write_acc(ACC_LO, result);
+                        result
+                    }),
+
+                    // UNOPS: refactor TODO
+                    VMOV  => self.vec_binop(instr, |_, vt, cpu| {
+                        cpu.write_acc(ACC_LO, vt);
+                        // XXX: we should not extract from the shuffled vt!
+                        let data_el = vt.extract(instr.vs() as u32 & 0x7);
+                        let reg = cpu.read_vec(instr.vd());
+                        reg.replace(instr.vel() as u32 & 0x7, data_el)
+                    }),
+                    VRCPH | VRSQH => self.vec_binop(instr, |_, vt, cpu| {
+                        cpu.write_acc(ACC_LO, vt);
+                        cpu.cp2.dp_flag = 1;
+                        cpu.cp2.div_in = vt.extract(instr.vs() as u32 & 0x7);
+                        let reg = cpu.read_vec(instr.vd());
+                        reg.replace(instr.vel() as u32 & 0x7, cpu.cp2.div_out)
+                    }),
+                    VRCP | VRCPL | VRSQ | VRSQL => self.vec_binop(instr, |_, vt, cpu| {
+                        cpu.write_acc(ACC_LO, vt);
+                        let dp = instr.0 as u8 & cpu.cp2.dp_flag;
+                        cpu.cp2.dp_flag = 0;
+
+                        let vt_el = vt.extract(instr.vs() as u32 & 0x7) as u32;
+
+                        let dp_input = (cpu.cp2.div_in as u32) << 16 | (vt_el as u16 as u32);
+                        let sp_input = vt_el;
+
+                        let input = (if dp != 0 { dp_input } else { sp_input }) as i32;
+                        let input_mask = input >> 31;
+                        let mut data = input ^ input_mask;
+
+                        if input > -32768 {
+                            data -= input_mask;
+                        }
+                        let result = if data == 0 {
+                            0x7fff_ffff
+                        } else if input == -32768 {
+                            0xffff_0000_u32 as i32
+                        } else {
+                            let shift = data.leading_zeros();
+                            let idx = (((data as u64) << shift) & 0x7fc0_0000) >> 22;
+                            let result = if op == VRSQ || op == VRSQL {
+                                let idx = (idx | 0x200) & 0x3fe | (shift % 2) as u64;
+                                let tableres = RECIPROCAL_ROM[idx as usize] as i32;
+                                ((0x10000 | tableres) << 14) >> ((31 - shift) >> 1)
+                            } else {
+                                let tableres = RECIPROCAL_ROM[idx as usize] as i32;
+                                ((0x10000 | tableres) << 14) >> (31 - shift)
+                            };
+                            result ^ input_mask
+                        };
+                        cpu.cp2.div_out = (result >> 16) as i16;
+                        let reg = cpu.read_vec(instr.vd());
+                        reg.replace(instr.vel() as u32 & 0x7, result as i16)
+                    }),
                     _     => self.bug(format!("#UD CP2: I {:#b} -- {:?}", instr.0, instr))
                 }
             }
@@ -533,26 +752,23 @@ fn sclamp_acc_tomd(acc_md: i16x8, acc_hi: i16x8) -> i16x8 {
 }
 
 fn uclamp_acc(val: i16x8, acc_md: i16x8, acc_hi: i16x8) -> i16x8 {
-    p128("val", val);
-    p128("md", acc_md);
-    p128("hi", acc_hi);
     let hi_negative: i16x8 = acc_hi >> 15;
     let md_negative = acc_md >> 15;
     let hi_sign_check = hi_negative.eq(acc_hi);
     let md_sign_check = hi_negative.eq(md_negative);
     let clamp_mask = hi_sign_check & md_sign_check;
-    p128("cm", frombool(clamp_mask));
 
     let clamped_val = frombool(hi_negative.eq(zero()));
+    // Note, this is a 8x16 select while the C code uses a 16x8 blendv.  Still
+    // works as intended since simd booleans have all bits set to 1 when true.
     let res = clamp_mask.select(val, clamped_val);
-    p128("uclamp res", res);
     res
 }
 
 
 pub const VCO: usize = 0;
-//pub const VCC: usize = 1;
-//pub const VCE: usize = 2;
+pub const VCC: usize = 1;
+pub const VCE: usize = 2;
 pub const HI:  usize = 0;
 pub const LO:  usize = 16;
 
@@ -768,10 +984,7 @@ impl Rsp {
             let s1 = self.read_vec(instr.vs());
             let s2 = u8x16::load(&self.cp2.vec[instr.vt()], 0);
             let s2 = mem::transmute(s2.shuffle_bytes(self.tables.el_shuf[instr.vel()]));
-            p128("vs", s1);
-            p128("vt", s2);
             let res = func(s1, s2, self);
-            p128("vres", res);
             mem::transmute(res)
         };
         res.store(&mut self.cp2.vec[instr.vd()], 0);
@@ -816,12 +1029,12 @@ fn frombool(x: bool16ix8) -> i16x8 {
     x.select(i16x8::splat(-1), i16x8::splat(0))
 }
 
-fn p128(s: &'static str, v: i16x8) {
-    println!("{}: {:04x} {:04x} {:04x} {:04x} {:04x} {:04x} {:04x} {:04x}",
-             s,
-             v.extract(0), v.extract(1), v.extract(2), v.extract(3),
-             v.extract(4), v.extract(5), v.extract(6), v.extract(7));
-}
+// fn p128(s: &'static str, v: i16x8) {
+//     println!("{}: {:04x} {:04x} {:04x} {:04x} {:04x} {:04x} {:04x} {:04x}",
+//              s,
+//              v.extract(0), v.extract(1), v.extract(2), v.extract(3),
+//              v.extract(4), v.extract(5), v.extract(6), v.extract(7));
+// }
 
 // fn pu8(s: &'static str, v: u8x16) {
 //     println!("{}: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} \

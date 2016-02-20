@@ -9,9 +9,9 @@ pub struct Cp2 {
     pub flags:   [[u8; 32]; 3],
     pub acc:     [[u8; 16]; 3],
 
-    div_out: i16,
-    div_in:  i16,
-    dp_flag: u8,
+    pub div_out: i16,
+    pub div_in:  i16,
+    pub dp_flag: u8,
 }
 
 impl Default for Cp2 {
