@@ -1,3 +1,4 @@
+use std::cmp::min;
 use std::fmt;
 use std::mem;
 use std::sync::{Arc, Condvar, Mutex, RwLock};
@@ -860,7 +861,7 @@ impl Rsp {
 
     // Load/store implementations
 
-    fn aligned_shift_addr(&self, instr: Instruction, shift: u64, align: u64) -> u64 {
+    fn aligned_offset_shift(&self, instr: Instruction, shift: u64, align: u64) -> u64 {
         let addr = self.read_gpr(instr.base()).wrapping_add(instr.voff() << shift);
         if addr & (align - 1) != 0 {
             self.bug(format!("Address not aligned to {} bytes: {:#x}", align, addr));
@@ -887,7 +888,7 @@ impl Rsp {
                 // Load byte/hword/word/dword into part of the vector
                 // indexed by element.  Other parts are unaffected.
                 let shift = vf as u64 & 0b11;
-                let addr = self.aligned_shift_addr(instr, shift, 1);
+                let addr = self.aligned_offset_shift(instr, shift, 1);
                 let index = self.restricted_vdel(instr, 1 << shift);
                 match vf {
                     VLF_B => {
@@ -911,7 +912,7 @@ impl Rsp {
             },
             VLF_Q | VLF_R => {
                 // Load left/right part of quadword into part of the vector.
-                let addr = self.aligned_shift_addr(instr, 4, 1);
+                let addr = self.aligned_offset_shift(instr, 4, 1);
                 self.restricted_vdel(instr, 16);  // ensure zero
                 let offset = addr & 0b1111;
                 let aligned_addr = addr & !0b1111;
@@ -920,24 +921,23 @@ impl Rsp {
                 BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, aligned_addr));
                 BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, aligned_addr + 8));
                 let val = u8x16::load(&buffer, 0);
-                let mut reg = u8x16::load(&self.cp2.vec[instr.vt()], 0);
-                if vf == VLF_Q {
+                let reg = u8x16::load(&self.cp2.vec[instr.vt()], 0);
+                let result = if vf == VLF_Q {
                     // XXX: precombine tables
                     let mask = self.tables.keep_r[offset as usize].shuffle_bytes(self.tables.bswap);
                     let shift = self.tables.shift_l[offset as usize].shuffle_bytes(self.tables.bswap);
-                    reg = reg & mask;
-                    reg = reg | val.shuffle_bytes(shift);
+                    (reg & mask) | val.shuffle_bytes(shift)
                 } else {
                     // XXX: bug when offset == 0
-                    // XXX: bswap
-                    reg = reg & self.tables.keep_l[16 - offset as usize];
-                    reg = reg | val.shuffle_bytes(self.tables.shift_r[16 - offset as usize]);
-                }
-                reg.store(&mut self.cp2.vec[instr.vt()], 0);
-            }
+                    let mask = self.tables.keep_l[16 - offset as usize].shuffle_bytes(self.tables.bswap);
+                    let shift = self.tables.shift_r[16 - offset as usize].shuffle_bytes(self.tables.bswap);
+                    (reg & mask) | val.shuffle_bytes(shift)
+                };
+                result.store(&mut self.cp2.vec[instr.vt()], 0);
+            },
             VLF_P | VLF_U => {
                 // Load packed 8-bit signed/unsigned into 16-bit vectors.
-                let addr = self.aligned_shift_addr(instr, 3, 1);
+                let addr = self.aligned_offset_shift(instr, 3, 1);
                 self.restricted_vdel(instr, 16);  // ensure zero
                 let dword: u64 = self.load_mem(bus, addr);
                 let result = if vf == VLF_P {
@@ -964,6 +964,111 @@ impl Rsp {
                     )
                 };
                 self.write_vec(instr.vt(), result);
+            },
+            VLF_H => {
+                // Load bytes from 2 dwords with 2-byte stride into 16-bit vectors.
+                let addr = self.aligned_offset_shift(instr, 4, 1);
+                // unaligned is allowed, but we load from aligned
+                let aligned_addr = addr & !16;
+                self.restricted_vdel(instr, 16);  // ensure zero
+                let dw1: u64 = self.load_mem(bus, aligned_addr);
+                let dw2: u64 = self.load_mem(bus, aligned_addr + 8);
+                let result = if addr & 1 == 0 {
+                    i16x8::new(
+                        ((dw1 >> 47) & 0x7f80) as i16,
+                        ((dw1 >> 31) & 0x7f80) as i16,
+                        ((dw1 >> 15) & 0x7f80) as i16,
+                        ((dw1 << 1)  & 0x7f80) as i16,
+                        ((dw2 >> 47) & 0x7f80) as i16,
+                        ((dw2 >> 31) & 0x7f80) as i16,
+                        ((dw2 >> 15) & 0x7f80) as i16,
+                        ((dw2 << 1)  & 0x7f80) as i16
+                    )
+                } else {
+                    i16x8::new(
+                        ((dw1 >> 39) & 0x7f80) as i16,
+                        ((dw1 >> 23) & 0x7f80) as i16,
+                        ((dw1 >> 7)  & 0x7f80) as i16,
+                        ((dw1 << 9)  & 0x7f80) as i16,
+                        ((dw2 >> 39) & 0x7f80) as i16,
+                        ((dw2 >> 23) & 0x7f80) as i16,
+                        ((dw2 >> 7)  & 0x7f80) as i16,
+                        ((dw2 << 9)  & 0x7f80) as i16
+                    )
+                };
+                self.write_vec(instr.vt(), result);
+            },
+            VLF_F => {
+                // Load bytes from 2 dwords with 4-byte stride into 16-bit vectors.
+                let addr = self.aligned_offset_shift(instr, 4, 1);
+                let aligned_addr = addr & !16;
+                let el = self.restricted_vdel(instr, 8);  // ensure 0 or 8
+                let dw1: u64 = self.load_mem(bus, aligned_addr);
+                let dw2: u64 = self.load_mem(bus, aligned_addr + 8);
+                let v1;
+                let v2;
+                let v3;
+                let v4;
+                match addr & 3 {
+                    0 => {
+                        v1 = ((dw1 >> 47) & 0x7f80) as i16;
+                        v2 = ((dw1 >> 15) & 0x7f80) as i16;
+                        v3 = ((dw2 >> 47) & 0x7f80) as i16;
+                        v4 = ((dw2 >> 15) & 0x7f80) as i16;
+                    },
+                    1 => {
+                        v1 = ((dw1 >> 39) & 0x7f80) as i16;
+                        v2 = ((dw1 >> 7)  & 0x7f80) as i16;
+                        v3 = ((dw2 >> 39) & 0x7f80) as i16;
+                        v4 = ((dw2 >> 7)  & 0x7f80) as i16;
+                    },
+                    2 => {
+                        v1 = ((dw1 >> 31) & 0x7f80) as i16;
+                        v2 = ((dw1 << 1)  & 0x7f80) as i16;
+                        v3 = ((dw2 >> 31) & 0x7f80) as i16;
+                        v4 = ((dw2 << 1)  & 0x7f80) as i16;
+                    },
+                    _ => {
+                        v1 = ((dw1 >> 23) & 0x7f80) as i16;
+                        v2 = ((dw1 << 9)  & 0x7f80) as i16;
+                        v3 = ((dw2 >> 23) & 0x7f80) as i16;
+                        v4 = ((dw2 << 9)  & 0x7f80) as i16;
+                    }
+                }
+                let result = if el == 0 {
+                    i16x8::new(0, 0, 0, 0, v1, v2, v3, v4)
+                } else {
+                    i16x8::new(v1, v2, v3, v4, 0, 0, 0, 0)
+                };
+                self.write_vec(instr.vt(), result);
+            },
+            VLF_W => {
+                // Load bytes into vector, starting at element and wrapping around.
+                let addr = self.aligned_offset_shift(instr, 4, 1);
+                let el = self.restricted_vdel(instr, 1);  // any value allowed
+                let mut buffer = [0_u8; 16];
+                BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, addr));
+                BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, addr + 8));
+                let result = u8x16::load(&buffer, 0);
+                // XXX: do we need byteswap here?
+                let result = result.shuffle_bytes(self.tables.rot_r[el]);
+                result.store(&mut self.cp2.vec[instr.vt()], 0);
+            },
+            VLF_T => {
+                // Load 16-bit elements into up to 8 different vectors
+                let addr = self.aligned_offset_shift(instr, 4, 1);
+                let el = self.restricted_vdel(instr, 1);  // any value allowed
+                let mut vel = el as u32 >> 1;  // element in the vector (0..7)
+                let mut buffer = [0_u8; 16];
+                BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, addr));
+                BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, addr + 8));
+                // if the first vector is e.g. 30, we only do two elements
+                for vi in 0..min(8, 32 - instr.vt()) {
+                    let vec = self.read_vec(instr.vt() + vi);
+                    self.write_vec(instr.vt() + vi,
+                                   vec.replace(vel, LittleEndian::read_i16(&buffer[vi*2..])));
+                    vel = (vel + 1) % 8;
+                }
             }
             _ => self.bug(format!("Unimplemented vector load format: {}", vf))
         }
@@ -976,7 +1081,7 @@ impl Rsp {
                 // Store byte/hword/word/dword part of the vector
                 // indexed by element.  Other parts are unaffected.
                 let shift = vf as u64 & 0b11;
-                let addr = self.aligned_shift_addr(instr, shift, 1);
+                let addr = self.aligned_offset_shift(instr, shift, 1);
                 let index = self.restricted_vdel(instr, 1 << shift);
                 match vf {
                     VLF_B => {
@@ -1000,7 +1105,7 @@ impl Rsp {
             },
             VLF_Q | VLF_R => {
                 // Store part of the vector into left/right part of quadword.
-                let addr = self.aligned_shift_addr(instr, 4, 1);
+                let addr = self.aligned_offset_shift(instr, 4, 1);
                 self.restricted_vdel(instr, 16);  // ensure zero
                 let offset = addr & 0b1111;
                 let aligned_addr = addr & !0b1111;
@@ -1027,7 +1132,7 @@ impl Rsp {
             },
             VLF_P | VLF_U => {
                 // Store packed 8-bit signed/unsigned from 16-bit vectors.
-                let addr = self.aligned_shift_addr(instr, 3, 1);
+                let addr = self.aligned_offset_shift(instr, 3, 1);
                 self.restricted_vdel(instr, 16);  // ensure zero
                 let vec = self.read_vec(instr.vt());
                 let dword = if vf == VLF_P {
@@ -1050,6 +1155,128 @@ impl Rsp {
                     ((vec.extract(7) as u64) & 0x7f80) >> 9
                 };
                 self.store_mem(bus, addr, dword);
+            },
+            VLF_H => {
+                // Strore bytes to 2 dwords with 2-byte stride from 16-bit vectors.
+                let addr = self.aligned_offset_shift(instr, 4, 1);
+                // unaligned is allowed, but we load from aligned
+                let aligned_addr = addr & !16;
+                self.restricted_vdel(instr, 16);  // ensure zero
+                let vec = self.read_vec(instr.vt());
+                let (dw1, dw2) = if addr & 1 == 0 {
+                    (
+                        ((vec.extract(0) as u64) & 0x7f80) << 47 |
+                        ((vec.extract(1) as u64) & 0x7f80) << 31 |
+                        ((vec.extract(2) as u64) & 0x7f80) << 15 |
+                        ((vec.extract(3) as u64) & 0x7f80) >> 1,
+                        ((vec.extract(4) as u64) & 0x7f80) << 47 |
+                        ((vec.extract(5) as u64) & 0x7f80) << 31 |
+                        ((vec.extract(6) as u64) & 0x7f80) << 15 |
+                        ((vec.extract(7) as u64) & 0x7f80) >> 1
+                    )
+                } else {
+                    (
+                        ((vec.extract(0) as u64) & 0x7f80) << 39 |
+                        ((vec.extract(1) as u64) & 0x7f80) << 23 |
+                        ((vec.extract(2) as u64) & 0x7f80) << 7  |
+                        ((vec.extract(3) as u64) & 0x7f80) >> 9,
+                        ((vec.extract(4) as u64) & 0x7f80) << 39 |
+                        ((vec.extract(5) as u64) & 0x7f80) << 23 |
+                        ((vec.extract(6) as u64) & 0x7f80) << 7  |
+                        ((vec.extract(7) as u64) & 0x7f80) >> 9
+                    )
+                };
+                self.store_mem(bus, aligned_addr, dw1);
+                self.store_mem(bus, aligned_addr + 8, dw2);
+            },
+            VLF_F => {
+                // Store bytes to 2 dwords with 4-byte stride from 16-bit vectors.
+                let addr = self.aligned_offset_shift(instr, 4, 1);
+                let aligned_addr = addr & !16;
+                let el = self.restricted_vdel(instr, 8);  // ensure 0 or 8
+                let vec = self.read_vec(instr.vt());
+                let mut dw1: u64 = self.load_mem(bus, aligned_addr);
+                let mut dw2: u64 = self.load_mem(bus, aligned_addr + 8);
+                let v1;
+                let v2;
+                let v3;
+                let v4;
+                if el == 0 {
+                    v1 = vec.extract(4);
+                    v2 = vec.extract(5);
+                    v3 = vec.extract(6);
+                    v4 = vec.extract(7);
+                } else {
+                    v1 = vec.extract(0);
+                    v2 = vec.extract(1);
+                    v3 = vec.extract(2);
+                    v4 = vec.extract(3);
+                }
+                match addr & 3 {
+                    0 => {
+                        dw1 = (dw1 & 0x00ffffff_00ffffff) |
+                              (((v1 as u64) & 0x7f80) << 47) |
+                              (((v2 as u64) & 0x7f80) << 15);
+                        dw2 = (dw2 & 0x00ffffff_00ffffff) |
+                              (((v3 as u64) & 0x7f80) << 47) |
+                              (((v4 as u64) & 0x7f80) << 15);
+                    },
+                    1 => {
+                        dw1 = (dw1 & 0xff00ffff_ff00ffff) |
+                              (((v1 as u64) & 0x7f80) << 39) |
+                              (((v2 as u64) & 0x7f80) << 7);
+                        dw2 = (dw2 & 0xff00ffff_ff00ffff) |
+                              (((v3 as u64) & 0x7f80) << 39) |
+                              (((v4 as u64) & 0x7f80) << 7);
+                    },
+                    2 => {
+                        dw1 = (dw1 & 0xffff00ff_ffff00ff) |
+                              (((v1 as u64) & 0x7f80) << 31) |
+                              (((v2 as u64) & 0x7f80) >> 1);
+                        dw2 = (dw2 & 0xffff00ff_ffff00ff) |
+                              (((v3 as u64) & 0x7f80) << 31) |
+                              (((v4 as u64) & 0x7f80) >> 1);
+                    },
+                    _ => {
+                        dw1 = (dw1 & 0xffffff00_ffffff00) |
+                              (((v1 as u64) & 0x7f80) << 23) |
+                              (((v2 as u64) & 0x7f80) >> 9);
+                        dw2 = (dw2 & 0xffffff00_ffffff00) |
+                              (((v3 as u64) & 0x7f80) << 23) |
+                              (((v4 as u64) & 0x7f80) >> 9);
+                    }
+                }
+                self.store_mem(bus, aligned_addr, dw1);
+                self.store_mem(bus, aligned_addr + 8, dw2);
+            },
+            VLF_W => {
+                // Store bytes from vector, starting at element and wrapping around.
+                let addr = self.aligned_offset_shift(instr, 4, 1);
+                let el = self.restricted_vdel(instr, 1);  // any value allowed
+                let vec = u8x16::load(&self.cp2.vec[instr.vt()], 0);
+                let vec = vec.shuffle_bytes(self.tables.rot_l[el]);
+                let mut buffer = [0_u8; 16];
+                vec.store(&mut buffer, 0);
+                // XXX: do we need byteswap here?
+                self.store_mem(bus, addr, BigEndian::read_u64(&buffer[0..]));
+                self.store_mem(bus, addr + 8, BigEndian::read_u64(&buffer[8..]));
+            },
+            VLF_T => {
+                // Store 16-bit elements from up to 8 different vectors
+                let addr = self.aligned_offset_shift(instr, 4, 1);
+                let el = self.restricted_vdel(instr, 1);  // any value allowed
+                let mut vel = el as u32 >> 1;  // element in the vector (0..7)
+                let mut buffer = [0_u8; 16];
+                BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, addr));
+                BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, addr + 8));
+                // if the first vector is e.g. 30, we only do two elements
+                for vi in 0..min(8, 32 - instr.vt()) {
+                    let vec = self.read_vec(instr.vt() + vi);
+                    LittleEndian::write_i16(&mut buffer[vi*2..], vec.extract(vel));
+                    vel = (vel + 1) % 8;
+                }
+                self.store_mem(bus, addr, BigEndian::read_u64(&buffer[0..]));
+                self.store_mem(bus, addr + 8, BigEndian::read_u64(&buffer[8..]));
             }
             _ => self.bug(format!("Unimplemented vector store format: {}", vf))
         }

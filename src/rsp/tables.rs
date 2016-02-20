@@ -4,6 +4,8 @@ use simd::u8x16;
 pub struct SimdTables {
     pub shift_l:  [u8x16; 16],  // shuffle: shift n bytes to the left
     pub shift_r:  [u8x16; 16],  // shuffle: shift n bytes to the right
+    pub rot_l:    [u8x16; 16],  // shuffle: rotate n bytes to the left
+    pub rot_r:    [u8x16; 16],  // shuffle: rotate n bytes to the right
     pub keep_l:   [u8x16; 16],  // and: keep n bytes on the right
     pub keep_r:   [u8x16; 16],  // and: keep n bytes on the left
     pub el_shuf:  [u8x16; 16],  // shuffle: for "elements" spec in instrs
@@ -15,11 +17,13 @@ impl SimdTables {
         let mut tables = SimdTables {
             shift_l:  [u8x16::splat(0x80); 16],
             shift_r:  [u8x16::splat(0x80); 16],
+            rot_l:    [u8x16::splat(0); 16],
+            rot_r:    [u8x16::splat(0); 16],
             keep_l:   [u8x16::splat(0); 16],
             keep_r:   [u8x16::splat(0); 16],
             el_shuf:  SimdTables::el_shuf(),
-            bswap:    u8x16::new(1, 0, 3, 2, 5, 4, 7, 6,
-                                 9, 8, 11, 10, 13, 12, 15, 14),
+            bswap:    u8x16::new(0x1, 0x0, 0x3, 0x2, 0x5, 0x4, 0x7, 0x6,
+                                 0x9, 0x8, 0xb, 0xa, 0xd, 0xc, 0xf, 0xe),
         };
         for i in 0..16 {
             for j in 0..16 {
@@ -29,6 +33,8 @@ impl SimdTables {
 
                 set!(shift_l,  if j >= i,       j - i);
                 set!(shift_r,  if j <  16 - i,  j + i);
+                set!(rot_l,    if true,         (j + i) % 16);
+                set!(rot_r,    if true,         (j + (16 - i)) % 16);
                 set!(keep_l,   if j <  i,       0xff);
                 set!(keep_r,   if j >= 16 - i,  0xff);
             }
