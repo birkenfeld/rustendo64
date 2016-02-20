@@ -8,6 +8,7 @@ extern "C" {
         dp_status: *mut u32,
         rsp_dmem: *const u32,
         rdram: *mut u32,
+        crashed: *mut u32,
     ) -> u32;
 }
 
@@ -22,15 +23,18 @@ pub fn process_list(dp_start: &mut u32,
                     dp_end: &mut u32,
                     dp_status: &mut u32,
                     rsp_dmem: &[u32],
-                    rdram: &mut [u32]) -> bool {
-    unsafe {
+                    rdram: &mut [u32]) -> (bool, bool) {
+    let mut crashed: u32 = 0;
+    let full_synced = unsafe {
         rdp_process_list(
-            dp_start as *mut u32,
-            dp_current as *mut u32,
-            dp_end as *mut u32,
-            dp_status as *mut u32,
+            dp_start,
+            dp_current,
+            dp_end,
+            dp_status,
             rsp_dmem.as_ptr(),
             rdram.as_mut_ptr(),
-        ) != 0
-    }
+            &mut crashed,
+        )
+    };
+    (full_synced != 0, crashed != 0)
 }

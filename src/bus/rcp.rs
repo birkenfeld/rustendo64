@@ -190,8 +190,9 @@ impl DpRegs {
             },
             DPC_REG_DMA_END        => {
                 self.reg_end = word & 0xff_ffff;
-                let synced = ram.with_locked_mem(|raw_ram| {
+                let (synced, crashed) = ram.with_locked_mem(|raw_ram| {
                     spram.with_locked_mem(|raw_spram| {
+                        println!("RDP starting processing...");
                         /* TODO: RDP is stop the world! */
                         rdp::process_list(
                             &mut self.reg_start,
@@ -205,6 +206,9 @@ impl DpRegs {
                 });
                 if synced {
                     mi.set_interrupt(mi::Intr::DP);
+                }
+                if crashed {
+                    println!("Warning: RDP processing crashed");
                 }
             },
             DPC_REG_STATUS         => {

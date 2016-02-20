@@ -6337,7 +6337,7 @@ static void (*const rdp_command_table[64])(uint32_t w1, uint32_t w2) =
 };
 
 int32_t rdp_process_list(uint32_t *dp_start, uint32_t *dp_current, uint32_t *dp_end, uint32_t *dp_status,
-                         const uint32_t *rsp_dmem, uint32_t *rdram_ptr)
+                         const uint32_t *rsp_dmem, uint32_t *rdram_ptr, uint32_t *crashed)
 {
     int i, length;
     uint32_t cmd, cmd_length;
@@ -6351,6 +6351,7 @@ int32_t rdp_process_list(uint32_t *dp_start, uint32_t *dp_current, uint32_t *dp_
     *dp_status &= ~DP_STATUS_FREEZE;
 
     if (dp_end_al <= dp_current_al) {
+        *crashed = 0;
         return 0;
     }
 
@@ -6386,6 +6387,7 @@ int32_t rdp_process_list(uint32_t *dp_start, uint32_t *dp_current, uint32_t *dp_
             if (rdp_cmd_ptr - rdp_cmd_cur < cmd_length) {
                 if (!remaining_length) {
                     *dp_start = *dp_current = *dp_end;
+                    *crashed = rdp_pipeline_crashed;
                     return full_synced;
                 } else {
                     dp_current_al -= (rdp_cmd_ptr - rdp_cmd_cur);
@@ -6412,6 +6414,7 @@ int32_t rdp_process_list(uint32_t *dp_start, uint32_t *dp_current, uint32_t *dp_
         rdp_cmd_cur = 0;
     }
     *dp_start = *dp_current = *dp_end;
+    *crashed = rdp_pipeline_crashed;
     return full_synced;
 }
 

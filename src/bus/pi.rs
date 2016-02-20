@@ -115,6 +115,7 @@ impl Pi {
         let rom_start = self.reg_cart_addr as usize - 0x1000_0000;
         let length = (self.reg_wr_len + 1) as usize;
         // Some ROMs read past the end of the file...
+        if rom_start >= self.cart_rom.len() { return; }
         let length = min(length, self.cart_rom.len() - rom_start);
         println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
                  length, rom_start, ram_start);
