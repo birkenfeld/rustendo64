@@ -71,16 +71,18 @@ impl SpRegs {
             SP_REG_RD_LEN     => {
                 // DRAM -> SPRAM
                 self.reg_rd_len = word;
-                println!("RSP: DMA {:#x} bytes from RAM {:#x} to SPRAM {:#x}",
-                         word, self.reg_dram_addr, self.reg_mem_addr);
-                self.dma(ram, spram, word as usize);
+                let from = self.reg_dram_addr;
+                let to = self.reg_mem_addr;
+                println!("RSP: DMA {:#x} bytes from RAM {:#x} to SPRAM {:#x}", word, from, to);
+                self.dma(ram, spram, word as usize, from, to);
             },
             SP_REG_WR_LEN     => {
                 // SPRAM -> DRAM
                 self.reg_wr_len = word;
-                println!("RSP: DMA {:#x} bytes from SPRAM {:#x} to RAM {:#x}",
-                         word, self.reg_mem_addr, self.reg_dram_addr);
-                self.dma(spram, ram, word as usize);
+                let from = self.reg_mem_addr;
+                let to = self.reg_dram_addr;
+                println!("RSP: DMA {:#x} bytes from SPRAM {:#x} to RAM {:#x}", word, from, to);
+                self.dma(spram, ram, word as usize, from, to);
             },
             SP_REG_STATUS     => {
                 if bit_set(word, 0) {
@@ -120,12 +122,13 @@ impl SpRegs {
         })
     }
 
-    fn dma<R: RamAccess, S: RamAccess>(&mut self, from: &mut R, to: &mut S, spec: usize) {
+    fn dma<R: RamAccess, S: RamAccess>(&mut self, from: &mut R, to: &mut S, spec: usize,
+                                       from_addr: u32, to_addr: u32) {
         let length = ((spec & 0xfff) + 1) / 4;
         let count = ((spec >> 12) & 0xff) + 1;
         let skip = ((spec >> 20) & 0xfff) / 4;
-        let mut from_index = self.reg_dram_addr as usize / 4;
-        let mut to_index = self.reg_mem_addr as usize / 4;
+        let mut from_index = from_addr as usize / 4;
+        let mut to_index = to_addr as usize / 4;
         // Transfer count blocks of length, skipping skip on the spmem side
         for _ in 0..count {
             let data = from.read_range(from_index, length);

@@ -69,7 +69,7 @@ impl<'c> R4300<'c> for Rsp {
     type Bus = RspBus<'c>;
 
     fn read_instr(&self, bus: &RspBus, virt_addr: u64) -> u32 {
-        let phys_addr = self.translate_addr(virt_addr + 0x1000);
+        let phys_addr = self.translate_addr(virt_addr) + 0x1000;
         self.read_word_raw(bus, phys_addr as u32)
     }
 
@@ -86,10 +86,11 @@ impl<'c> R4300<'c> for Rsp {
     }
 
     fn translate_addr(&self, virt_addr: u64) -> u64 {
-        if virt_addr >= 0x2000 {
-            self.bug(format!("Cannot access memory at {:#x} from RSP", virt_addr));
-        }
-        virt_addr + 0x0400_0000
+        // if virt_addr >= 0x2000 {
+        //     self.bug(format!("Cannot access memory at {:#x} from RSP", virt_addr));
+        // }
+        // XXX: Really?
+        (virt_addr & 0xfff) + 0x0400_0000
     }
 
     fn check_interrupts(&mut self, _: &mut RspBus) { }
@@ -166,7 +167,7 @@ impl<'c> R4300<'c> for Rsp {
                 let data = self.read_gpr(instr.rt()) as u32;
                 self.write_word_raw(bus, reg_addr, data);
             }
-            _  => self.bug(format!("#CU CP0: I {:#b} -- {:?}", instr.0, instr))
+            _  => self.bug(format!("#UD CP0: I {:#b} -- {:?}", instr.0, instr))
         }
     }
 
@@ -187,7 +188,7 @@ impl<'c> R4300<'c> for Rsp {
             },
             c  => {
                 if c & 0b10000 == 0 {
-                    self.bug(format!("#CU CP2: I {:#b} -- {:?}", instr.0, instr));
+                    self.bug(format!("#UD CP2: I {:#b} -- {:?}", instr.0, instr));
                 }
                 let op = instr.special_op();
                 // These operations are basically just translated from CEN64's
@@ -339,6 +340,122 @@ impl<'c> R4300<'c> for Rsp {
                         };
                         sclamp_acc_tomd(acc_md, acc_hi)
                     }),
+                    VMADL | VMUDL => self.vec_binop(instr, |vs, vt, cpu| {
+                        let hi = vs.to_u16().mulhi(vt.to_u16()).to_i16();
+
+                        if op == VMADL {
+                            let acc_lo = cpu.read_acc(ACC_LO);
+                            let acc_md = cpu.read_acc(ACC_MD);
+                            let acc_hi = cpu.read_acc(ACC_HI);
+
+                            let overflow_mask = acc_lo.to_u16().adds(hi.to_u16()).to_i16();
+                            let acc_lo = acc_lo + hi;
+
+                            let overflow_mask = frombool(acc_lo.ne(overflow_mask));
+                            let hi = zero() - overflow_mask;
+
+                            let overflow_mask = acc_md.to_u16().adds(hi.to_u16()).to_i16();
+                            let acc_md = acc_md + hi;
+
+                            let overflow_mask = frombool(acc_md.ne(overflow_mask));
+                            let acc_hi = acc_hi - overflow_mask;
+
+                            cpu.write_acc(ACC_LO, acc_lo);
+                            cpu.write_acc(ACC_MD, acc_md);
+                            cpu.write_acc(ACC_HI, acc_hi);
+                            uclamp_acc(acc_lo, acc_md, acc_hi)
+                        } else {
+                            cpu.write_acc(ACC_LO, hi);
+                            cpu.write_acc(ACC_MD, zero());
+                            cpu.write_acc(ACC_HI, zero());
+                            hi
+                        }
+                    }),
+                    VMADM | VMUDM => self.vec_binop(instr, |vs, vt, cpu| {
+                        let lo = vs * vt;
+                        let hi = vs.to_u16().mulhi(vt.to_u16()).to_i16();
+                        let sign = vs >> 15;
+                        let vt = vt & sign;
+                        let hi = hi - vt;
+
+                        if op == VMADM {
+                            let acc_lo = cpu.read_acc(ACC_LO);
+                            let acc_md = cpu.read_acc(ACC_MD);
+                            let acc_hi = cpu.read_acc(ACC_HI);
+
+                            let overflow_mask = acc_lo.to_u16().adds(lo.to_u16()).to_i16();
+                            let acc_lo = acc_lo + lo;
+
+                            let overflow_mask = frombool(acc_lo.ne(overflow_mask));
+
+                            let hi = hi - overflow_mask;
+
+                            let overflow_mask = acc_md.to_u16().adds(hi.to_u16()).to_i16();
+                            let acc_md = acc_md + hi;
+
+                            let overflow_mask = frombool(acc_md.ne(overflow_mask));
+
+                            let acc_hi = acc_hi + (hi >> 15);
+                            let acc_hi = acc_hi - overflow_mask;
+
+                            cpu.write_acc(ACC_LO, acc_lo);
+                            cpu.write_acc(ACC_MD, acc_md);
+                            cpu.write_acc(ACC_HI, acc_hi);
+                            sclamp_acc_tomd(acc_md, acc_hi)
+                        } else {
+                            cpu.write_acc(ACC_LO, lo);
+                            cpu.write_acc(ACC_MD, hi);
+                            cpu.write_acc(ACC_HI, hi >> 15);
+                            hi
+                        }
+                    }),
+                    VMACU | VMACF => self.vec_binop(instr, |vs, vt, cpu| {
+                        let acc_lo = cpu.read_acc(ACC_LO);
+                        let acc_md = cpu.read_acc(ACC_MD);
+                        let acc_hi = cpu.read_acc(ACC_HI);
+
+                        let lo = vs * vt;
+                        let hi = vs.mulhi(vt);
+
+                        let md = hi << 1;
+                        let carry = ((lo.to_u16() >> 15) as u16x8).to_i16();
+                        let hi = hi >> 15;
+                        let md = md | carry;
+                        let lo: i16x8 = lo << 1;
+
+                        let overflow_mask = acc_lo.to_u16().adds(lo.to_u16()).to_i16();
+                        let acc_lo = acc_lo + lo;
+
+                        let overflow_mask = frombool(acc_lo.ne(overflow_mask));
+
+                        let md: i16x8 = md - overflow_mask;
+                        let carry = frombool(md.eq(zero()));
+                        let carry = carry & overflow_mask;
+                        let hi = hi - carry;
+
+                        let overflow_mask = acc_md.to_u16().adds(md.to_u16()).to_i16();
+                        let acc_md = acc_md + md;
+
+                        let overflow_mask = frombool(acc_md.ne(overflow_mask));
+
+                        let acc_hi = acc_hi + hi;
+                        let acc_hi = acc_hi - overflow_mask;
+
+                        let result = if op == VMACU {
+                            let overflow_hi_mask: i16x8 = acc_hi >> 15;
+                            let overflow_md_mask = acc_md >> 15;
+                            let md = overflow_md_mask | acc_md;
+                            let overflow_mask = frombool(acc_hi.gt(zero()));
+                            let md = !overflow_hi_mask & md;
+                            overflow_mask | md
+                        } else {
+                            sclamp_acc_tomd(acc_md, acc_hi)
+                        };
+                        cpu.write_acc(ACC_LO, acc_lo);
+                        cpu.write_acc(ACC_MD, acc_md);
+                        cpu.write_acc(ACC_HI, acc_hi);
+                        result
+                    }),
                     VABS  => self.vec_binop(instr, |vs, vt, cpu| {
                         let vs_zero = frombool(vs.eq(zero()));
                         let sign_lt = vs >> 15;
@@ -386,7 +503,7 @@ impl<'c> R4300<'c> for Rsp {
                     VNOP | VNULL => self.vec_binop(instr, |vs, _, _| {
                         vs
                     }),
-                    _     => self.bug(format!("#CU CP2: I {:#b} -- {:?}", instr.0, instr))
+                    _     => self.bug(format!("#UD CP2: I {:#b} -- {:?}", instr.0, instr))
                 }
             }
         }
