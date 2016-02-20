@@ -69,28 +69,22 @@ impl<'c> R4300<'c> for Rsp {
     type Bus = RspBus<'c>;
 
     fn read_instr(&self, bus: &RspBus, virt_addr: u64) -> u32 {
-        let phys_addr = self.translate_addr(virt_addr) + 0x1000;
+        let phys_addr = (virt_addr & 0xfff) | 0x0400_1000;
         self.read_word_raw(bus, phys_addr as u32)
     }
 
     fn read_word(&self, bus: &RspBus, virt_addr: u64) -> u32 {
-        let phys_addr = self.translate_addr(virt_addr);
+        // Memory wraps around: all addresses are allowed.
+        // XXX: Check this.
+        let phys_addr = (virt_addr & 0xfff) | 0x0400_0000;
         let res = self.read_word_raw(bus, phys_addr as u32);
         self.debug_read(phys_addr, res);
         res
     }
 
     fn write_word(&mut self, bus: &mut RspBus, virt_addr: u64, word: u32) {
-        let phys_addr = self.translate_addr(virt_addr);
+        let phys_addr = (virt_addr & 0xfff) | 0x0400_0000;
         self.write_word_raw(bus, phys_addr as u32, word);
-    }
-
-    fn translate_addr(&self, virt_addr: u64) -> u64 {
-        // if virt_addr >= 0x2000 {
-        //     self.bug(format!("Cannot access memory at {:#x} from RSP", virt_addr));
-        // }
-        // XXX: Really?
-        (virt_addr & 0xfff) + 0x0400_0000
     }
 
     fn check_interrupts(&mut self, _: &mut RspBus) { }

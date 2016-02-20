@@ -91,22 +91,6 @@ impl<'c> R4300<'c> for Cpu {
         }
     }
 
-    fn translate_addr(&self, virt_addr: u64) -> u64 {
-        // See Table 5-3 in the VR4300 User's Manual
-        let addr_bit_values = (virt_addr >> 29) & 0b111;
-
-        if addr_bit_values == 0b101 {
-            // kseg1
-            virt_addr - KSEG1_START
-        } else if addr_bit_values == 0b100 {
-            // kseg0 (cached)
-            virt_addr - KSEG0_START
-        } else {
-            // TODO
-            self.bug(format!("Unrecognized virtual address: {:#x}", virt_addr));
-        }
-    }
-
     fn check_interrupts(&mut self, bus: &mut CpuBus) {
         // Process interrupts from interconnect.
         if bus.has_interrupt() {
@@ -402,6 +386,18 @@ impl Cpu {
         /* TODO: tweak this */
         for _ in 0..n {
             self.run_instruction(bus);
+        }
+    }
+
+    fn translate_addr(&self, virt_addr: u64) -> u64 {
+        // See Table 5-3 in the VR4300 User's Manual
+        match (virt_addr >> 29) & 0b111 {
+            // kseg0 (cached)
+            0b100 => virt_addr - KSEG0_START,
+            // kseg1 (uncached)
+            0b101 => virt_addr - KSEG1_START,
+            // TODO
+            _     => self.bug(format!("Unrecognized virtual address: {:#x}", virt_addr))
         }
     }
 

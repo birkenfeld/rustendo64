@@ -77,8 +77,6 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
     fn read_word(&self, &Self::Bus, u64) -> u32;
     /// Write a word to memory.
     fn write_word(&mut self, &mut Self::Bus, u64, u32);
-    /// Translate address.
-    fn translate_addr(&self, virt_addr: u64) -> u64;
 
     /// Interrupt handling before an instruction.
     fn check_interrupts(&mut self, &mut Self::Bus);
