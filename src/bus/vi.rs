@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use mi;
 use bus::IoResult;
 use mem_map::*;
-use ui::{UiSender, UiMessage};
+use ui::{UiSender, UiMessage, VideoMode, Depth};
 
 #[derive(Default, Debug)]
 pub struct Vi {
@@ -126,9 +126,14 @@ impl Vi {
         //          self.frame_hskip, self.frame_width, self.frame_height,
         //          self.vram_pixelsize * 8);
         // TODO: dont show skip
-        ui.send(UiMessage::SetMode(
-            self.frame_width + self.frame_hskip, self.frame_height,
-            self.vram_pixelsize));
+        let depth = match self.vram_pixelsize {
+            2 => Depth::Rgb16, 4 => Depth::Rgb32, _ => Depth::Blank
+        };
+        ui.send(UiMessage::VideoMode(
+            VideoMode {
+                width: self.frame_width + self.frame_hskip,
+                height: self.frame_height,
+                depth: depth }));
     }
 
     pub fn update_vram(&mut self) {

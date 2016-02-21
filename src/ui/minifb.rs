@@ -1,34 +1,39 @@
 use std::ops::DerefMut;
+use std::thread;
+use std::time;
 
-use minifb_crate::{Window, WindowOptions, Scale, Key};
+use minifb_crate::{Window, WindowOptions, Scale, Key, KeyRepeat};
 use cpal;
 
-use {Interface, UiMessage, UiReceiver, Options};
+use {Interface, UiMessage, UiReceiver, UiSender, Options, VideoMode, Depth};
 
 pub struct MinifbInterface {
     receiver: UiReceiver,
     title: String,
-    size: (usize, usize),
-    mode: usize,
-    window: Option<Window>,
-    audio_mute: bool,
+    video: Option<Window>,
+    video_mode: VideoMode,
+    video_reopen: bool,
     audio_dev: Option<cpal::Endpoint>,
     audio_src: Option<cpal::Voice>,
+    audio_mute: bool,
+    audio_mute_key: bool,
     audio_rate: u32,
     audio_underflowed: bool,
 }
 
 impl Interface for MinifbInterface {
-    fn new(opts: Options, receiver: UiReceiver) -> Self {
+    fn new(opts: Options, receiver: UiReceiver, sender: UiSender) -> Self {
+        thread::spawn(move || MinifbInterface::ping_thread(sender));
         MinifbInterface {
             receiver: receiver,
             title: format!("Rustendo64_gb: {}", opts.win_title),
-            size: (0, 0),
-            mode: 0,
-            window: None,
-            audio_mute: opts.mute_audio,
+            video: None,
+            video_mode: VideoMode::default(),
+            video_reopen: false,
             audio_dev: cpal::get_default_endpoint(),
             audio_src: None,
+            audio_mute: opts.mute_audio,
+            audio_mute_key: false,
             audio_rate: 0,
             audio_underflowed: false,
         }
@@ -37,45 +42,27 @@ impl Interface for MinifbInterface {
     fn run(&mut self) {
         while let Ok(msg) = self.receiver.recv() {
             match msg {
-                UiMessage::Update(v) => if self.update(v) { break; },
-                UiMessage::SetMode(w, h, m) => self.set_mode(w, h, m),
+                UiMessage::Update => if self.update() { break; },
+                UiMessage::VideoMode(vm) => self.set_mode(vm),
+                UiMessage::Video(v) => self.display(v),
                 UiMessage::Audio(f, v) => self.play(f, v),
             }
         }
         println!("Interface closed.");
     }
-
 }
 
 impl MinifbInterface {
-    fn set_mode(&mut self, w: usize, h: usize, mode: usize) {
-        if (w, h) == self.size && mode == self.mode {
-            return;
-        }
-        drop(self.window.take());
-        if mode == 0 || w == 0 || h == 0 {
-            return;
-        }
-        let opts = WindowOptions {
-            scale: if w < 640 { Scale::X2 } else { Scale::X1 },
-            ..WindowOptions::default()
-        };
-        match Window::new(&self.title, w, h, opts) {
-            Ok(win) => {
-                println!("Video: new window with resolution {}x{}, {} bits",
-                         w, h, 8 * mode);
-                self.size = (w, h);
-                self.mode = mode;
-                self.window = Some(win);
-            }
-            Err(err) => {
-                println!("Unable to create window: {}", err);
-                return;
-            }
+    fn ping_thread(sender: UiSender) {
+        // Just ping the UI every now and then to update the input state.
+        loop {
+            thread::sleep(time::Duration::from_millis(10));
+            // This will exit when the channel is broken.
+            sender.send(UiMessage::Update);
         }
     }
 
-    fn update(&mut self, mut buffer: Vec<u32>) -> bool {
+    fn update(&mut self) -> bool {
         // Update pending audio samples.
         if let Some(ref voice) = self.audio_src {
             let samples = voice.get_pending_samples();
@@ -87,36 +74,22 @@ impl MinifbInterface {
         }
 
         let mut quit = false;
-        let mut mute = self.audio_mute;
 
-        if let Some(ref mut win) = self.window {
-            if self.mode == 4 {
-                if buffer.len() == self.size.0 * self.size.1 {
-                    for w in &mut buffer {
-                        *w >>= 8;
-                    }
-                    win.update_with_buffer(&buffer);
-                } else {
-                    println!("Video: strange buffer size?");
+        // Update controller button state.
+        if let Some(ref mut win) = self.video {
+            if win.is_key_pressed(Key::Escape, KeyRepeat::No) {
+                quit = true;
+            }
+            if win.is_key_pressed(Key::M, KeyRepeat::No) {
+                if !self.audio_mute_key {
+                    self.audio_mute = !self.audio_mute;
+                    println!("Audio: now {}.",
+                             if self.audio_mute { "muted" } else { "unmuted" });
+                    self.audio_mute_key = true;
                 }
-            } else if self.mode == 2 {
-                if buffer.len() == self.size.0 * self.size.1 / 2 {
-                    let mut buf32 = vec![0; buffer.len() * 2];
-                    for i in 0..buffer.len() {
-                        let pixel = buffer[i];
-                        // convert 2 * 5-5-5-1 into 8-8-8
-                        buf32[2*i]     = ((pixel >> 27) & 0b11111) << 19 |
-                                         ((pixel >> 22) & 0b11111) << 11 |
-                                         ((pixel >> 17) & 0b11111) << 3;
-                        buf32[2*i + 1] = ((pixel >> 11) & 0b11111) << 19 |
-                                         ((pixel >>  6) & 0b11111) << 11 |
-                                         ((pixel >>  1) & 0b11111) << 3;
-                    }
-                    win.update_with_buffer(&buf32);
-                }
-            } // else it's blank
-
-            // Update controller button state.
+            } else {
+                self.audio_mute_key = false;
+            }
             if let Some(cstate) = win.get_keys().map(|keys| {
                 let mut a_x = 0_i8;
                 let mut a_y = 0_i8;
@@ -142,12 +115,6 @@ impl MinifbInterface {
                     Key::Up         => { a_y += 127; 0 },
                     Key::RightShift => { a_throttle += 1; 0 },
                     Key::RightCtrl  => { a_throttle += 2; 0 },
-                    // Non-controller functions
-                    Key::Escape     => { quit = true; 0 },
-                    // TODO: only register on first press.
-                    Key::M          => { mute = !mute;
-                                         println!("Audio: {}.", if mute { "muted" } else { "unmuted" });
-                                         0 },
                     _ => 0
                 });
                 match a_throttle {
@@ -161,8 +128,72 @@ impl MinifbInterface {
                 self.receiver.set_input_state(cstate);
             }
         }
-        self.audio_mute = mute;
         quit
+    }
+
+    fn set_mode(&mut self, mode: VideoMode) {
+        if mode == self.video_mode {
+            return;
+        }
+        drop(self.video.take());
+        if mode.width == 0 || mode.height == 0 || mode.depth == Depth::Blank {
+            self.video_reopen = false;
+        } else {
+            self.video_reopen = true;
+        }
+        self.video_mode = mode;
+    }
+
+    fn display(&mut self, mut buffer: Vec<u32>) {
+        if self.video_reopen {
+            self.video_reopen = false;
+            let mode = &self.video_mode;
+            let opts = WindowOptions {
+                scale: if mode.width < 640 { Scale::X2 } else { Scale::X1 },
+                ..WindowOptions::default()
+            };
+            match Window::new(&self.title, mode.width, mode.height, opts) {
+                Ok(win) => {
+                    println!("Video: new window with resolution {}x{}, {:?}",
+                             mode.width, mode.height, mode.depth);
+                    self.video = Some(win);
+                }
+                Err(err) => {
+                    println!("Unable to create window: {}", err);
+                    return;
+                }
+            }
+        }
+
+        if let Some(ref mut win) = self.video {
+            if self.video_mode.depth == Depth::Rgb32 {
+                if buffer.len() == self.video_mode.width * self.video_mode.height {
+                    for w in &mut buffer {
+                        *w >>= 8;
+                    }
+                    win.update_with_buffer(&buffer);
+                } else {
+                    println!("Video: frame buffer size != screen size.");
+                }
+            } else if self.video_mode.depth == Depth::Rgb16 {
+                if buffer.len() == self.video_mode.width * self.video_mode.height / 2 {
+                    let mut buf32 = vec![0; buffer.len() * 2];
+                    for i in 0..buffer.len() {
+                        let pixel = buffer[i];
+                        // convert 2 * 5-5-5-1 into 8-8-8
+                        buf32[2*i]     = ((pixel >> 27) & 0b11111) << 19 |
+                                         ((pixel >> 22) & 0b11111) << 11 |
+                                         ((pixel >> 17) & 0b11111) << 3;
+                        buf32[2*i + 1] = ((pixel >> 11) & 0b11111) << 19 |
+                                         ((pixel >>  6) & 0b11111) << 11 |
+                                         ((pixel >>  1) & 0b11111) << 3;
+                    }
+                    win.update_with_buffer(&buf32);
+                } else {
+                    println!("Video: frame buffer size != screen size.");
+                }
+            } // else it's blank
+        }
     }
 
     fn play(&mut self, rate: u32, data: Vec<u32>) {

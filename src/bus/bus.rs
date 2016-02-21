@@ -163,7 +163,7 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
             let vi = lr!(self.ifs.vi);
             (vi.vram_start, vi.vram_end - vi.vram_start)
         };
-        self.ui.send(UiMessage::Update(self.ram.read_range(s, l)));
+        self.ui.send(UiMessage::Video(self.ram.read_range(s, l)));
         self.ifs.mi.set_interrupt(mi::Intr::VI);
     }
 

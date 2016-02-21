@@ -10,10 +10,29 @@ use std::thread;
 // Lives in this crate for now.
 pub mod minifb;
 
+#[derive(PartialEq, Eq, Debug)]
+pub enum Depth {
+    Blank = 0,
+    Rgb16 = 2,
+    Rgb32 = 4,
+}
+
+impl Default for Depth {
+    fn default() -> Depth { Depth::Blank }
+}
+
+#[derive(PartialEq, Eq, Default, Debug)]
+pub struct VideoMode {
+    pub width: usize,
+    pub height: usize,
+    pub depth: Depth
+}
+
 /// Events sent to the user interface from the emulator threads.
 pub enum UiMessage {
-    SetMode(usize, usize, usize),  // width, height, pixelsize
-    Update(Vec<u32>),
+    Update,
+    VideoMode(VideoMode),
+    Video(Vec<u32>),
     Audio(u32, Vec<u32>),
 }
 
@@ -47,7 +66,7 @@ pub struct Options {
 
 /// Trait for user interface plugins.
 pub trait Interface {
-    fn new(Options, UiReceiver) -> Self;
+    fn new(Options, UiReceiver, UiSender) -> Self;
     fn run(&mut self);
 }
 
@@ -58,7 +77,7 @@ pub struct NullInterface {
 }
 
 impl Interface for NullInterface {
-    fn new(_: Options, receiver: UiReceiver) -> Self {
+    fn new(_: Options, receiver: UiReceiver, _: UiSender) -> Self {
         NullInterface { recv: receiver.receiver }
     }
 
@@ -71,15 +90,23 @@ impl Interface for NullInterface {
 /// Initialize the selected UI and return the opened channel for communication.
 pub fn init_ui<T: Interface>(opts: Options) -> UiSender {
     let input = Arc::new(AtomicUsize::new(0));
-    let pend_audio = Arc::new(AtomicUsize::new(usize::max_value()));
+    let pending_audio = Arc::new(AtomicUsize::new(usize::max_value()));
     let (outsend, outrecv) = mpsc::channel();
+
+    let sender = UiSender {
+        sender: outsend,
+        input: input.clone(),
+        pending_audio: pending_audio.clone()
+    };
     let receiver = UiReceiver {
         receiver: outrecv,
-        input: input.clone(),
-        pending_audio: pend_audio.clone(),
+        input: input,
+        pending_audio: pending_audio
     };
-    thread::spawn(move || T::new(opts, receiver).run());
-    UiSender { sender: outsend, input: input, pending_audio: pend_audio }
+    // Clone the sender so that the UI can send messages to itself.
+    let ui_sender = sender.clone();
+    thread::spawn(move || T::new(opts, receiver, ui_sender).run());
+    sender
 }
 
 /// This is the "producer" part for the UI; UiChannels are used by the emulator
