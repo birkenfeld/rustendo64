@@ -2,7 +2,7 @@ use mi;
 use bus::IoResult;
 use mem::RamAccess;
 use mem_map::*;
-use ui::{UiChannel, UiOutput};
+use ui::{UiSender, UiMessage};
 
 #[derive(Default)]
 pub struct Ai {
@@ -31,7 +31,7 @@ impl Ai {
     }
 
     pub fn write_reg<R: RamAccess>(&mut self, addr: u32, word: u32, mi: &mi::Mi,
-                                   ram: &mut R, ui: &UiChannel) -> IoResult<()> {
+                                   ram: &mut R, ui: &UiSender) -> IoResult<()> {
         Ok(match addr {
             AI_REG_DRAM_ADDR  => self.reg_dram_addr = word & 0xff_ffff,
             AI_REG_LEN        => {
@@ -48,7 +48,7 @@ impl Ai {
         })
     }
 
-    pub fn dma_write<R: RamAccess>(&mut self, ram: &mut R, ui: &UiChannel) {
+    pub fn dma_write<R: RamAccess>(&mut self, ram: &mut R, ui: &UiSender) {
         let length = self.reg_len as usize / 4;
         if length == 0 {
             return;
@@ -60,7 +60,7 @@ impl Ai {
         //          length, self.reg_dram_addr, freq);
         self.reg_status = 0x8000_0001;
         self.dma_pending += 1;
-        ui.send(UiOutput::Audio(freq, data));
+        ui.send(UiMessage::Audio(freq, data));
     }
 
     pub fn buffer_empty(&mut self, mi: &mi::Mi) {

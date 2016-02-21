@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use mi;
 use bus::IoResult;
 use mem_map::*;
-use ui::{UiChannel, UiOutput};
+use ui::{UiSender, UiMessage};
 
 #[derive(Default, Debug)]
 pub struct Vi {
@@ -55,7 +55,7 @@ impl Vi {
     }
 
     pub fn write_reg(&mut self, addr: u32, word: u32, mi: &mi::Mi,
-                     ui: &UiChannel) -> IoResult<()> {
+                     ui: &UiSender) -> IoResult<()> {
         Ok(match addr {
             VI_REG_STATUS   => {
                 self.reg_status = word & 0xffff;
@@ -99,7 +99,7 @@ impl Vi {
         })
     }
 
-    pub fn update(&mut self, ui: &UiChannel) {
+    pub fn update(&mut self, ui: &UiSender) {
         let hstart = (self.reg_h_start >> 16) & 0x3ff;
         let vstart = (self.reg_v_start >> 16) & 0x3ff;
         let hend   = self.reg_h_start & 0x3ff;
@@ -126,7 +126,7 @@ impl Vi {
         //          self.frame_hskip, self.frame_width, self.frame_height,
         //          self.vram_pixelsize * 8);
         // TODO: dont show skip
-        ui.send(UiOutput::SetMode(
+        ui.send(UiMessage::SetMode(
             self.frame_width + self.frame_hskip, self.frame_height,
             self.vram_pixelsize));
     }

@@ -11,7 +11,7 @@ use mi::Mi;
 use ai::Ai;
 use ri::Ri;
 use rcp::{SpRegs, DpRegs};
-use ui::{UiOutput, UiChannel};
+use ui::{UiSender, UiMessage};
 
 macro_rules! lr {
     ($what:expr) => { $what.read().unwrap() };
@@ -72,14 +72,14 @@ impl BusInterfaces {
 
 #[derive(Clone)]
 pub struct Bus<'i, R, S> where R: RamAccess, S: RamAccess {
-    ui: UiChannel,
+    ui: UiSender,
     ifs: &'i BusInterfaces,
     ram: R,
     spram: S,
 }
 
 impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
-    pub fn new(ui: UiChannel, ifs: &'i BusInterfaces, ram: R, spram: S) -> Bus<'i, R, S> {
+    pub fn new(ui: UiSender, ifs: &'i BusInterfaces, ram: R, spram: S) -> Bus<'i, R, S> {
         Bus {
             ui: ui,
             ifs: ifs,
@@ -163,7 +163,7 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
             let vi = lr!(self.ifs.vi);
             (vi.vram_start, vi.vram_end - vi.vram_start)
         };
-        self.ui.send(UiOutput::Update(self.ram.read_range(s, l)));
+        self.ui.send(UiMessage::Update(self.ram.read_range(s, l)));
         self.ifs.mi.set_interrupt(mi::Intr::VI);
     }
 
@@ -179,7 +179,7 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
         self.ifs.mi.has_interrupt.load(Ordering::SeqCst)
     }
 
-    pub fn into_ui(self) -> UiChannel {
+    pub fn into_ui(self) -> UiSender {
         self.ui
     }
 }

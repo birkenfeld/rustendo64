@@ -13,7 +13,7 @@ use bus::mem_map::*;
 use r4k::debug::DebugSpecList;
 
 pub struct N64 {
-    ui: ui::UiChannel,
+    ui: ui::UiSender,
     cpu: cpu::Cpu,
     rsp: rsp::Rsp,
     ifs: bus::BusInterfaces,
@@ -22,12 +22,21 @@ pub struct N64 {
 }
 
 impl N64 {
-    pub fn new(ui_opts: ui::Options, pif_rom: Box<[u8]>, cart_rom: Box<[u8]>,
-               debug_cpu: DebugSpecList, debug_rsp: DebugSpecList) -> N64 {
+    pub fn new(ui_opts: ui::Options,
+               pif_rom: Box<[u8]>,
+               cart_rom: Box<[u8]>,
+               debug_cpu: DebugSpecList,
+               debug_rsp: DebugSpecList) -> N64
+    {
         let rsp_sync_bit = Arc::new(AtomicBool::new(false));
         let rsp_sync_cond = Arc::new(Condvar::new());
+        let ui = if ui_opts.no_ui {
+            ui::init_ui::<ui::NullInterface>(ui_opts)
+        } else {
+            ui::init_ui::<ui::minifb::MinifbInterface>(ui_opts)
+        };
         N64 {
-            ui: ui::init_ui::<ui::minifb::MinifbInterface>(ui_opts),
+            ui: ui,
             cpu: cpu::Cpu::new(debug_cpu),
             rsp: rsp::Rsp::new(debug_rsp, rsp_sync_bit.clone(), rsp_sync_cond.clone()),
             ifs: bus::BusInterfaces::new(pif_rom, cart_rom, rsp_sync_bit, rsp_sync_cond),

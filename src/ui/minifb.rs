@@ -1,54 +1,45 @@
 use std::ops::DerefMut;
-use std::sync::Arc;
-use std::sync::mpsc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use minifb_crate::{Window, WindowOptions, Scale, Key};
 use cpal;
 
-use {Interface, UiOutput, Options};
+use {Interface, UiMessage, UiReceiver, Options};
 
 pub struct MinifbInterface {
-    receiver: mpsc::Receiver<UiOutput>,
+    receiver: UiReceiver,
     title: String,
     size: (usize, usize),
     mode: usize,
     window: Option<Window>,
-    input: Arc<AtomicUsize>,
     audio_mute: bool,
     audio_dev: Option<cpal::Endpoint>,
     audio_src: Option<cpal::Voice>,
     audio_rate: u32,
     audio_underflowed: bool,
-    pending_audio: Arc<AtomicUsize>,
 }
 
 impl Interface for MinifbInterface {
-    fn new(opts: Options, outrecv: mpsc::Receiver<UiOutput>,
-           input: Arc<AtomicUsize>, pending_audio: Arc<AtomicUsize>) -> Self {
+    fn new(opts: Options, receiver: UiReceiver) -> Self {
         MinifbInterface {
-            receiver: outrecv,
+            receiver: receiver,
             title: format!("Rustendo64_gb: {}", opts.win_title),
             size: (0, 0),
             mode: 0,
             window: None,
-            input: input,
             audio_mute: opts.mute_audio,
             audio_dev: cpal::get_default_endpoint(),
             audio_src: None,
             audio_rate: 0,
             audio_underflowed: false,
-            pending_audio: pending_audio,
         }
     }
 
     fn run(&mut self) {
-        self.pending_audio.store(usize::max_value(), Ordering::Relaxed);
         while let Ok(msg) = self.receiver.recv() {
             match msg {
-                UiOutput::Update(v) => if self.update(v) { break; },
-                UiOutput::SetMode(w, h, m) => self.set_mode(w, h, m),
-                UiOutput::Audio(f, v) => self.play(f, v),
+                UiMessage::Update(v) => if self.update(v) { break; },
+                UiMessage::SetMode(w, h, m) => self.set_mode(w, h, m),
+                UiMessage::Audio(f, v) => self.play(f, v),
             }
         }
         println!("Interface closed.");
@@ -88,7 +79,7 @@ impl MinifbInterface {
         // Update pending audio samples.
         if let Some(ref voice) = self.audio_src {
             let samples = voice.get_pending_samples();
-            self.pending_audio.store(samples, Ordering::Relaxed);
+            self.receiver.set_pending_audio(samples);
             if voice.underflowed() && !self.audio_underflowed {
                 println!("Audio: underflow detected!");
                 self.audio_underflowed = true;
@@ -167,7 +158,7 @@ impl MinifbInterface {
                 }
                 state | ((a_x as u8 as u32) << 8) | (a_y as u8 as u32)
             }) {
-                self.input.store(cstate as usize, Ordering::Relaxed);
+                self.receiver.set_input_state(cstate);
             }
         }
         self.audio_mute = mute;

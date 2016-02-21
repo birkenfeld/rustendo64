@@ -34,8 +34,9 @@ fn main() {
     let pif_data = util::read_bin(pif_file_name);
     let rom_data = util::read_bin(rom_file_name);
     let options = ui::Options {
+        no_ui: arguments.is_present("noui"),
         win_title: util::get_rom_name(&rom_data, rom_file_name),
-        mute_audio: arguments.is_present("mute")
+        mute_audio: arguments.is_present("mute"),
     };
 
     setup_signal_handler();
@@ -75,6 +76,10 @@ fn get_arguments<'a>() -> ArgMatches<'a> {
                  .short("m")
                  .long("mute")
                  .help("Mute audio initially"))
+        .arg(Arg::with_name("noui")
+                 .short("n")
+                 .long("no-ui")
+                 .help("No user interface (for debugging)"))
         .get_matches()
 }
 

@@ -5,7 +5,7 @@ use mi;
 use bus::IoResult;
 use mem::RamAccess;
 use mem_map::*;
-use ui::UiChannel;
+use ui::UiSender;
 
 #[derive(Default, Debug)]
 pub struct Si {
@@ -32,7 +32,7 @@ impl Si {
     }
 
     pub fn write_reg<R>(&mut self, addr: u32, word: u32, mi: &mi::Mi,
-                        ram: &mut R, ui: &UiChannel) -> IoResult<()>
+                        ram: &mut R, ui: &UiSender) -> IoResult<()>
         where R: RamAccess
     {
         Ok(match addr {
