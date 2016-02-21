@@ -202,7 +202,7 @@ impl DebugSpecList {
         &mut self.0
     }
 
-    pub fn check_instr(&mut self, pc: u64, instr: &Instruction, gprs: &[u64])
+    pub fn check_instr(&mut self, pc: u64, instr: Instruction, gprs: &[u64])
                        -> (u64, bool, bool) {
         let mut debug_for = 0;
         let mut dump = false;

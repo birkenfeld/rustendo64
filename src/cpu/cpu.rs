@@ -91,7 +91,7 @@ impl<'c> R4300<'c> for Cpu {
         }
     }
 
-    fn aligned_offset(&self, instr: &Instruction, align: u64) -> u64 {
+    fn aligned_offset(&self, instr: Instruction, align: u64) -> u64 {
         let addr = self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_ext());
         if addr & (align - 1) != 0 {
             self.bug(format!("Address not aligned to {} bytes: {:#x}", align, addr));
@@ -125,7 +125,7 @@ impl<'c> R4300<'c> for Cpu {
         self.reg_llbit = true;
     }
 
-    fn sc_handler<T: MemFmt<'c, Self>>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction,
+    fn sc_handler<T: MemFmt<'c, Self>>(&mut self, bus: &mut CpuBus<'c>, instr: Instruction,
                                        virt_addr: u64, data: T) {
         let llbit = self.reg_llbit;
         if llbit {
@@ -168,7 +168,7 @@ impl<'c> R4300<'c> for Cpu {
     fn cp2_dump(&self) {
     }
 
-    fn dispatch_op(&mut self, bus: &mut CpuBus, instr: &Instruction) {
+    fn dispatch_op(&mut self, bus: &mut CpuBus, instr: Instruction) {
         match instr.opcode() {
             DADDI  => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_ext())),
             DADDIU => self.binary_imm(instr, |rs| rs.wrapping_add(instr.imm_sign_ext())),
@@ -199,7 +199,7 @@ impl<'c> R4300<'c> for Cpu {
         }
     }
 
-    fn dispatch_special_op(&mut self, _: &mut CpuBus, instr: &Instruction) {
+    fn dispatch_special_op(&mut self, _: &mut CpuBus, instr: Instruction) {
         match instr.special_op() {
             // TODO: Overflow exception
             DADD   => self.binary(instr, |rs, rt| rs.wrapping_add(rt)),
@@ -242,7 +242,7 @@ impl<'c> R4300<'c> for Cpu {
         }
     }
 
-    fn dispatch_cop0_op(&mut self, _: &mut CpuBus, instr: &Instruction) {
+    fn dispatch_cop0_op(&mut self, _: &mut CpuBus, instr: Instruction) {
         match instr.cop_op() {
             // TODO: do these really transfer 64 bits?
             MF => {
@@ -285,7 +285,7 @@ impl<'c> R4300<'c> for Cpu {
         }
     }
 
-    fn dispatch_cop1_op(&mut self, bus: &mut CpuBus, instr: &Instruction) {
+    fn dispatch_cop1_op(&mut self, bus: &mut CpuBus, instr: Instruction) {
         match instr.cop_op() {
             MF  => self.reg_store_fp(instr, |v: i32| v as u64),
             DMF => self.reg_store_fp(instr, |v: u64| v),
@@ -375,7 +375,7 @@ impl<'c> R4300<'c> for Cpu {
         }
     }
 
-    fn dispatch_cop2_op(&mut self, _: &mut CpuBus, instr: &Instruction) {
+    fn dispatch_cop2_op(&mut self, _: &mut CpuBus, instr: Instruction) {
         self.bug(format!("#CU CP2: I {:#b} -- {:?}", instr.0, instr))
     }
 }
@@ -438,7 +438,7 @@ impl Cpu {
 
     // MULT/DIV OPERATIONS
 
-    fn binary_hilo<F>(&mut self, instr: &Instruction, func: F)
+    fn binary_hilo<F>(&mut self, instr: Instruction, func: F)
         where F: Fn(u64, u64) -> (u64, u64)
     {
         let a = self.read_gpr(instr.rs());
@@ -454,11 +454,11 @@ impl Cpu {
 
     // LEFT/RIGHT LOADS/STORES
 
-    fn mem_load_leftright<'c, T, F>(&mut self, bus: &CpuBus<'c>, instr: &Instruction,
+    fn mem_load_leftright<'c, T, F>(&mut self, bus: &CpuBus<'c>, instr: Instruction,
                                     right: bool, func: F)
         where T: MemFmt<'c, Self>, F: Fn(T) -> u64
     {
-        let addr = self.aligned_offset(&instr, 1);
+        let addr = self.aligned_offset(instr, 1);
         let align = T::get_align();
         let amask = align - 1;
         let aligned_addr = addr & !amask;
@@ -479,11 +479,11 @@ impl Cpu {
         self.write_gpr(instr.rt(), reg);
     }
 
-    fn mem_store_leftright<'c, T, F>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction,
+    fn mem_store_leftright<'c, T, F>(&mut self, bus: &mut CpuBus<'c>, instr: Instruction,
                                      right: bool, func: F)
         where T: MemFmt<'c, Self>, F: Fn(u64, T, u64) -> T
     {
-        let addr = self.aligned_offset(&instr, 1);
+        let addr = self.aligned_offset(instr, 1);
         let align = T::get_align();
         let amask = align - 1;
         let aligned_addr = addr & !amask;
@@ -502,7 +502,7 @@ impl Cpu {
 
     // FLOATING-POINT OPS
 
-    fn fp_unary<T: FpFmt, F>(&mut self, instr: &Instruction, f: F)
+    fn fp_unary<T: FpFmt, F>(&mut self, instr: Instruction, f: F)
         where F: Fn(T) -> T
     {
         let a = T::read_fpr(&self.reg_fpr[instr.fs()]);
@@ -512,17 +512,17 @@ impl Cpu {
         T::write_fpr(&mut self.reg_fpr[instr.fd()], res);
     }
 
-    fn fp_unary_2way<F, G>(&mut self, instr: &Instruction, f: F, g: G)
+    fn fp_unary_2way<F, G>(&mut self, instr: Instruction, f: F, g: G)
         where F: Fn(f32) -> f32, G: Fn(f64) -> f64
     {
         match instr.fp_fmt() {
-            FMT_S => self.fp_unary(&instr, f),
-            FMT_D => self.fp_unary(&instr, g),
+            FMT_S => self.fp_unary(instr, f),
+            FMT_D => self.fp_unary(instr, g),
             _     => self.bug(format!("invalid FP format: {:?}", instr)),
         }
     }
 
-    fn fp_binary<T: FpFmt, F>(&mut self, instr: &Instruction, f: F)
+    fn fp_binary<T: FpFmt, F>(&mut self, instr: Instruction, f: F)
         where F: Fn(T, T) -> T
     {
         let a = T::read_fpr(&self.reg_fpr[instr.fs()]);
@@ -534,17 +534,17 @@ impl Cpu {
         T::write_fpr(&mut self.reg_fpr[instr.fd()], res);
     }
 
-    fn fp_binary_2way<F, G>(&mut self, instr: &Instruction, f: F, g: G)
+    fn fp_binary_2way<F, G>(&mut self, instr: Instruction, f: F, g: G)
         where F: Fn(f32, f32) -> f32, G: Fn(f64, f64) -> f64
     {
         match instr.fp_fmt() {
-            FMT_S => self.fp_binary(&instr, f),
-            FMT_D => self.fp_binary(&instr, g),
+            FMT_S => self.fp_binary(instr, f),
+            FMT_D => self.fp_binary(instr, g),
             _     => self.bug(format!("invalid FP format: {:?}", instr)),
         }
     }
 
-    fn fp_convert<T: FpFmt, U: FpFmt, F>(&mut self, instr: &Instruction, f: F)
+    fn fp_convert<T: FpFmt, U: FpFmt, F>(&mut self, instr: Instruction, f: F)
         where F: Fn(T) -> U
     {
         let value = T::read_fpr(&self.reg_fpr[instr.fs()]);
@@ -554,17 +554,17 @@ impl Cpu {
         U::write_fpr(&mut self.reg_fpr[instr.fd()], res);
     }
 
-    fn fp_convert_2way<U: FpFmt, F, G>(&mut self, instr: &Instruction, f: F, g: G)
+    fn fp_convert_2way<U: FpFmt, F, G>(&mut self, instr: Instruction, f: F, g: G)
         where F: Fn(f32) -> U, G: Fn(f64) -> U
     {
         match instr.fp_fmt() {
-            FMT_S => self.fp_convert(&instr, f),
-            FMT_D => self.fp_convert(&instr, g),
+            FMT_S => self.fp_convert(instr, f),
+            FMT_D => self.fp_convert(instr, g),
             _     => self.bug(format!("invalid FP format: {:?}", instr)),
         }
     }
 
-    fn fp_compare<T: FpFmt, F>(&mut self, instr: &Instruction, signal: bool, f: F)
+    fn fp_compare<T: FpFmt, F>(&mut self, instr: Instruction, signal: bool, f: F)
         where F: Fn(FpOrd) -> bool
     {
         let a = T::read_fpr(&self.reg_fpr[instr.fs()]);
@@ -581,18 +581,18 @@ impl Cpu {
         self.reg_fcr31 = (self.reg_fcr31 & 0xff7f_ffff) | ((cond as u32) << 23);
     }
 
-    fn fp_compare_2way<F>(&mut self, instr: &Instruction, signal: bool, f: F)
+    fn fp_compare_2way<F>(&mut self, instr: Instruction, signal: bool, f: F)
         where F: Fn(FpOrd) -> bool
     {
         match instr.fp_fmt() {
-            FMT_S => self.fp_compare::<f32, _>(&instr, signal, f),
-            FMT_D => self.fp_compare::<f64, _>(&instr, signal, f),
+            FMT_S => self.fp_compare::<f32, _>(instr, signal, f),
+            FMT_D => self.fp_compare::<f64, _>(instr, signal, f),
             _     => self.bug(format!("invalid FP format: {:?}", instr)),
         }
     }
 
-    fn mem_load_fp<'c, T: FpFmt + MemFmt<'c, Self>>(&mut self, bus: &CpuBus<'c>, instr: &Instruction) {
-        let addr = self.aligned_offset(&instr, T::get_align());
+    fn mem_load_fp<'c, T: FpFmt + MemFmt<'c, Self>>(&mut self, bus: &CpuBus<'c>, instr: Instruction) {
+        let addr = self.aligned_offset(instr, T::get_align());
         let data = self.load_mem(bus, addr);
         dprintln!(self, "{} $f{:02} <- {:16.8} :  mem @ {:#x}",
                   INDENT, instr.ft(), data, addr);
@@ -609,8 +609,8 @@ impl Cpu {
         }
     }
 
-    fn mem_store_fp<'c, T: FpFmt + MemFmt<'c, Self>>(&mut self, bus: &mut CpuBus<'c>, instr: &Instruction) {
-        let addr = self.aligned_offset(&instr, T::get_align());
+    fn mem_store_fp<'c, T: FpFmt + MemFmt<'c, Self>>(&mut self, bus: &mut CpuBus<'c>, instr: Instruction) {
+        let addr = self.aligned_offset(instr, T::get_align());
         let reg = instr.ft();
         let data = if self.cp0.reg_status.additional_fp_regs {
             T::read_fpr(&self.reg_fpr[reg])
@@ -626,7 +626,7 @@ impl Cpu {
         self.store_mem(bus, addr, data);
     }
 
-    fn reg_load_fp<T: FpFmt, F>(&mut self, instr: &Instruction, func: F)
+    fn reg_load_fp<T: FpFmt, F>(&mut self, instr: Instruction, func: F)
         where F: Fn(u64) -> T
     {
         let data = func(self.read_gpr(instr.rt()));
@@ -644,7 +644,7 @@ impl Cpu {
         }
     }
 
-    fn reg_store_fp<T: FpFmt, F>(&mut self, instr: &Instruction, func: F)
+    fn reg_store_fp<T: FpFmt, F>(&mut self, instr: Instruction, func: F)
         where F: Fn(T) -> u64
     {
         let reg = instr.fs();

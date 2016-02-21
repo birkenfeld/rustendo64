@@ -52,7 +52,7 @@ pub struct R4300Common {
 impl R4300Common {
     // implemented here because we need to split-borrow self
     #[cfg(debug_assertions)]
-    fn check_debug_instr(&mut self, pc: u64, instr: &Instruction) -> (u64, bool, bool) {
+    fn check_debug_instr(&mut self, pc: u64, instr: Instruction) -> (u64, bool, bool) {
         self.debug_specs.check_instr(pc, instr, &self.gpr)
     }
 
@@ -80,7 +80,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
 
     /// Memory operations that should check and assume alignment if the
     /// processor requires aligned memory access.
-    fn aligned_offset(&self, &Instruction, u64) -> u64;
+    fn aligned_offset(&self, Instruction, u64) -> u64;
     fn load_mem<T: MemFmt<'c, Self>>(&mut self, &Self::Bus, u64) -> T;
     fn store_mem<T: MemFmt<'c, Self>>(&mut self, &mut Self::Bus, u64, T);
 
@@ -88,7 +88,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
     fn check_interrupts(&mut self, &mut Self::Bus);
     /// Linked-load/store handlers.
     fn ll_handler(&mut self, virt_addr: u64);
-    fn sc_handler<T: MemFmt<'c, Self>>(&mut self, &mut Self::Bus, &Instruction, u64, T);
+    fn sc_handler<T: MemFmt<'c, Self>>(&mut self, &mut Self::Bus, Instruction, u64, T);
 
     /// Get the color to use for debug output.
     #[cfg(debug_assertions)]
@@ -109,13 +109,13 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
     fn get_desc(&self) -> &'static str;
 
     /// Handlers for non-common ops.
-    fn dispatch_op(&mut self, &mut Self::Bus, &Instruction);
-    fn dispatch_special_op(&mut self, &mut Self::Bus, &Instruction);
+    fn dispatch_op(&mut self, &mut Self::Bus, Instruction);
+    fn dispatch_special_op(&mut self, &mut Self::Bus, Instruction);
 
     /// Handlers for coprocessor ops.
-    fn dispatch_cop0_op(&mut self, &mut Self::Bus, &Instruction);
-    fn dispatch_cop1_op(&mut self, &mut Self::Bus, &Instruction);
-    fn dispatch_cop2_op(&mut self, &mut Self::Bus, &Instruction);
+    fn dispatch_cop0_op(&mut self, &mut Self::Bus, Instruction);
+    fn dispatch_cop1_op(&mut self, &mut Self::Bus, Instruction);
+    fn dispatch_cop2_op(&mut self, &mut Self::Bus, Instruction);
 
     // MAIN FUNCTIONS
 
@@ -129,11 +129,11 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
         self.mut_regs().last_instr = instr;
 
         // Maybe process some debug stuff.
-        self.handle_debug(bus, pc, &instr);
+        self.handle_debug(bus, pc, instr);
 
         // Dispatch.
         dprintln!(self, "op: {:#10x}   {:?}", pc as u32, instr);
-        self.dispatch_instr(bus, &instr);
+        self.dispatch_instr(bus, instr);
 
         // Go to next instruction if current instruction didn't jump
         // (or set an exception vector, etc.)
@@ -154,7 +154,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
     }
 
     #[inline(always)]
-    fn dispatch_instr(&mut self, bus: &mut Self::Bus, instr: &Instruction) {
+    fn dispatch_instr(&mut self, bus: &mut Self::Bus, instr: Instruction) {
         match instr.opcode() {
             LUI   => {
                 let val = instr.imm_sign_ext() << 16;
@@ -248,9 +248,9 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
                 // TEQI, TGEI, TGEIU, TLTI, TLTIU, TNEI
                 _ => self.bug(format!("#UD: I {:#b} -- {:?}", instr.0, instr))
             },
-            COP0 => self.dispatch_cop0_op(bus, &instr),
-            COP1 => self.dispatch_cop1_op(bus, &instr),
-            COP2 => self.dispatch_cop2_op(bus, &instr),
+            COP0 => self.dispatch_cop0_op(bus, instr),
+            COP1 => self.dispatch_cop1_op(bus, instr),
+            COP2 => self.dispatch_cop2_op(bus, instr),
             _    => self.dispatch_op(bus, instr),
         }
     }
@@ -288,7 +288,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
 
     // IMPLEMENTATIONS FOR INSTRUCTIONS
 
-    fn mem_load<T: MemFmt<'c, Self>, F>(&mut self, bus: &Self::Bus, instr: &Instruction,
+    fn mem_load<T: MemFmt<'c, Self>, F>(&mut self, bus: &Self::Bus, instr: Instruction,
                                         linked: bool, func: F) where F: Fn(T) -> u64
     {
         let addr = self.aligned_offset(instr, T::get_align());
@@ -302,7 +302,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
         self.write_gpr(instr.rt(), data);
     }
 
-    fn mem_store<T: MemFmt<'c, Self>, F>(&mut self, bus: &mut Self::Bus, instr: &Instruction,
+    fn mem_store<T: MemFmt<'c, Self>, F>(&mut self, bus: &mut Self::Bus, instr: Instruction,
                                           linked: bool, func: F) where F: Fn(u64) -> T
     {
         let addr = self.aligned_offset(instr, T::get_align());
@@ -316,7 +316,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
         }
     }
 
-    fn binary_imm<F>(&mut self, instr: &Instruction, func: F)
+    fn binary_imm<F>(&mut self, instr: Instruction, func: F)
         where F: Fn(u64) -> u64
     {
         let res = func(self.read_gpr(instr.rs()));
@@ -326,7 +326,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
         self.write_gpr(instr.rt(), res);
     }
 
-    fn binary<F>(&mut self, instr: &Instruction, func: F)
+    fn binary<F>(&mut self, instr: Instruction, func: F)
         where F: Fn(u64, u64) -> u64
     {
         let res = func(self.read_gpr(instr.rs()), self.read_gpr(instr.rt()));
@@ -336,7 +336,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
         self.write_gpr(instr.rd(), res);
     }
 
-    fn unary<F>(&mut self, instr: &Instruction, func: F)
+    fn unary<F>(&mut self, instr: Instruction, func: F)
         where F: Fn(u64) -> u64
     {
         let res = func(self.read_gpr(instr.rt()));
@@ -360,7 +360,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
         self.run_branch_delay_slot(bus, addr);
     }
 
-    fn branch<P>(&mut self, bus: &mut Self::Bus, instr: &Instruction, likely: bool,
+    fn branch<P>(&mut self, bus: &mut Self::Bus, instr: Instruction, likely: bool,
                  link: bool, mut predicate: P) where P: FnMut(&mut Self) -> bool
     {
         // Offset is relative to the delay slot.
@@ -391,7 +391,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
     }
 
     #[cfg(debug_assertions)]
-    fn handle_debug(&mut self, bus: &mut Self::Bus, pc: u64, instr: &Instruction) {
+    fn handle_debug(&mut self, bus: &mut Self::Bus, pc: u64, instr: Instruction) {
         use std::u64;
         use ansi_term::Colour;
         use debug::Debugger;
@@ -449,7 +449,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
     // NON-DEBUG STUBS
 
     #[cfg(not(debug_assertions))]
-    fn handle_debug(&mut self, _: &mut Self::Bus, _: u64, _: &Instruction) { }
+    fn handle_debug(&mut self, _: &mut Self::Bus, _: u64, _: Instruction) { }
 
     #[cfg(not(debug_assertions))]
     fn debug_read(&self, _: u64, _: u32) { }

@@ -87,7 +87,7 @@ impl<'c> R4300<'c> for Rsp {
         self.write_word_raw(bus, phys_addr as u32, word);
     }
 
-    fn aligned_offset(&self, instr: &Instruction, _: u64) -> u64 {
+    fn aligned_offset(&self, instr: Instruction, _: u64) -> u64 {
         // No alignment is enforced or necessary.
         self.read_gpr(instr.base()).wrapping_add(instr.imm_sign_ext())
     }
@@ -106,7 +106,7 @@ impl<'c> R4300<'c> for Rsp {
         self.bug(format!("#UD: LL operation undefined for RSP"))
     }
 
-    fn sc_handler<T: MemFmt<'c, Self>>(&mut self, _: &mut RspBus, _: &Instruction, _: u64, _: T) {
+    fn sc_handler<T: MemFmt<'c, Self>>(&mut self, _: &mut RspBus, _: Instruction, _: u64, _: T) {
         self.bug(format!("#UD: SC operation undefined for RSP"))
     }
 
@@ -132,7 +132,7 @@ impl<'c> R4300<'c> for Rsp {
     fn cp2_dump(&self) {
     }
 
-    fn dispatch_op(&mut self, bus: &mut RspBus, instr: &Instruction) {
+    fn dispatch_op(&mut self, bus: &mut RspBus, instr: Instruction) {
         match instr.opcode() {
             LWC2   => self.mem_load_vec(bus, instr),
             SWC2   => self.mem_store_vec(bus, instr),
@@ -140,7 +140,7 @@ impl<'c> R4300<'c> for Rsp {
         }
     }
 
-    fn dispatch_special_op(&mut self, bus: &mut RspBus, instr: &Instruction) {
+    fn dispatch_special_op(&mut self, bus: &mut RspBus, instr: Instruction) {
         match instr.special_op() {
             BREAK => {
                 let cur_status = bus.read_word(SP_REG_STATUS).unwrap();
@@ -161,7 +161,7 @@ impl<'c> R4300<'c> for Rsp {
         }
     }
 
-    fn dispatch_cop0_op(&mut self, bus: &mut RspBus, instr: &Instruction) {
+    fn dispatch_cop0_op(&mut self, bus: &mut RspBus, instr: Instruction) {
         match instr.cop_op() {
             MF => {
                 let reg_addr = COP0_REG_MAP[instr.rd()];
@@ -178,11 +178,11 @@ impl<'c> R4300<'c> for Rsp {
         }
     }
 
-    fn dispatch_cop1_op(&mut self, _: &mut RspBus, instr: &Instruction) {
+    fn dispatch_cop1_op(&mut self, _: &mut RspBus, instr: Instruction) {
         self.bug(format!("#CU CP1: I {:#b} -- {:?}", instr.0, instr))
     }
 
-    fn dispatch_cop2_op(&mut self, _: &mut RspBus, instr: &Instruction) {
+    fn dispatch_cop2_op(&mut self, _: &mut RspBus, instr: Instruction) {
         // println!("{:?}", instr);
         match instr.cop_op() {
             CF => {
@@ -860,7 +860,7 @@ impl Rsp {
 
     // Load/store implementations
 
-    fn aligned_shift_addr(&self, instr: &Instruction, shift: u64, align: u64) -> u64 {
+    fn aligned_shift_addr(&self, instr: Instruction, shift: u64, align: u64) -> u64 {
         let addr = self.read_gpr(instr.base()).wrapping_add(instr.voff() << shift);
         if addr & (align - 1) != 0 {
             self.bug(format!("Address not aligned to {} bytes: {:#x}", align, addr));
@@ -868,7 +868,7 @@ impl Rsp {
         addr
     }
 
-    fn restricted_vdel(&self, instr: &Instruction, modulus: usize) -> usize {
+    fn restricted_vdel(&self, instr: Instruction, modulus: usize) -> usize {
         let vdel = instr.vdel();
         if vdel % modulus != 0 {
             self.bug(format!("Element spec not divisible by {}: {}", modulus, vdel));
@@ -880,7 +880,7 @@ impl Rsp {
     //     self.cp2.regs[index]
     // }
 
-    fn mem_load_vec(&mut self, bus: &RspBus, instr: &Instruction) {
+    fn mem_load_vec(&mut self, bus: &RspBus, instr: Instruction) {
         let vf = instr.vec_fmt();
         match vf {
             VLF_B | VLF_S | VLF_L | VLF_D => {
@@ -939,7 +939,7 @@ impl Rsp {
         }
     }
 
-    fn mem_store_vec(&mut self, bus: &mut RspBus, instr: &Instruction) {
+    fn mem_store_vec(&mut self, bus: &mut RspBus, instr: Instruction) {
         let vf = instr.vec_fmt();
         match vf {
             VLF_B | VLF_S | VLF_L | VLF_D => {
@@ -999,7 +999,7 @@ impl Rsp {
         }
     }
 
-    fn vec_binop<F>(&mut self, instr: &Instruction, func: F)
+    fn vec_binop<F>(&mut self, instr: Instruction, func: F)
         where F: Fn(i16x8, i16x8, &mut Self) -> i16x8
     {
         let s1 = self.read_vec(instr.vs());
@@ -1008,7 +1008,7 @@ impl Rsp {
         self.write_vec(instr.vd(), res);
     }
 
-    fn vec_elop<F>(&mut self, instr: &Instruction, func: F)
+    fn vec_elop<F>(&mut self, instr: Instruction, func: F)
         where F: Fn(i16x8, i16, &mut Self) -> i16
     {
         let vt_el = self.read_vec(instr.vt()).extract(instr.vs() as u32 & 0x7);
