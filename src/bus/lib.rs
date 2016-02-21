@@ -123,8 +123,13 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
             PI_REG_START    ... PI_REG_END    => lr!(self.ifs.pi).read_reg(addr),
             RI_REG_START    ... RI_REG_END    |
             RDRAM_REG_START ... RDRAM_REG_END => lr!(self.ifs.ri).read_reg(addr),
+            // Just some empty areas that nobody knows exactly what
+            // could be there, but ROMs try to read from them.
             DD_ROM_START    ... DD_ROM_END    => Ok(0),
             DD_REG_START    ... DD_REG_END    => Ok(0),
+            CART_SRAM_START ... CART_SRAM_END => Ok(0),
+            CART_DOM2_START ... CART_DOM2_END => Ok(0),
+            CART_DOM3_START ... CART_DOM3_END => Ok(0),
             _ => Err("Unsupported read memory area")
         }
     }
@@ -162,6 +167,7 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
             RI_REG_START    ... RI_REG_END    |
             RDRAM_REG_START ... RDRAM_REG_END =>
                 lw!(self.ifs.ri).write_reg(addr, word),
+            CART_SRAM_START ... CART_SRAM_END => Ok(()),
             _ => Err("Unsupported memory write area")
         }
     }

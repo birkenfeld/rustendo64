@@ -206,10 +206,16 @@ define_registers!(
 // Cartridge and disk drive ----------------------------------------------------
 
 define_consts!(
-    CART_ROM_START = 0x1000_0000,
-    CART_ROM_END   = 0x1fbf_ffff,
-    DD_REG_START   = 0x0500_0500,
-    DD_REG_END     = 0x0500_054b,
-    DD_ROM_START   = 0x0600_0000,
-    DD_ROM_END     = 0x063f_ffff
+    CART_ROM_START    = 0x1000_0000,
+    CART_ROM_END      = 0x1fbf_ffff,
+    DD_REG_START      = 0x0500_0500,
+    DD_REG_END        = 0x0500_054b,
+    DD_ROM_START      = 0x0600_0000,
+    DD_ROM_END        = 0x063f_ffff,
+    CART_DOM2_START   = 0x0500_0000,
+    CART_DOM2_END     = 0x05ff_ffff,
+    CART_SRAM_START   = 0x0800_0000,
+    CART_SRAM_END     = 0x0fff_ffff,
+    CART_DOM3_START   = 0x1fd0_0000,
+    CART_DOM3_END     = 0x1fff_ffff
 );
