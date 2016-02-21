@@ -49,6 +49,8 @@ pub struct BusInterfaces {
     ri: RwLock<Ri>,  // includes RDRAM regs
     pi: RwLock<Pi>,
     si: RwLock<Si>,
+    // This can be unlocked.
+    sp_semaphore: AtomicBool,
 }
 
 impl BusInterfaces {
@@ -65,6 +67,7 @@ impl BusInterfaces {
             ri: RwLock::new(Ri::default()),
             pi: RwLock::new(Pi::new(cart_rom)),
             si: RwLock::new(Si::new(pif_rom)),
+            sp_semaphore: AtomicBool::new(false),
         }
     }
 
@@ -110,6 +113,7 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
             PIF_RAM_START   ... PIF_RAM_END   => lr!(self.ifs.si).read_pif_ram(addr),
             SP_DMEM_START   ... SP_IMEM_END   =>
                 Ok(self.spram.read_word((addr - SP_DMEM_START) as usize / 4)),
+            SP_REG_SEMAPHORE  => Ok(self.ifs.sp_semaphore.swap(true, Ordering::SeqCst) as u32),
             SP_REG_START    ... SP_REG_END    => lr!(self.ifs.sp).read_reg(addr),
             DP_REG_START    ... DP_REG_END    => lr!(self.ifs.dp).read_reg(addr),
             SI_REG_START    ... SI_REG_END    => lr!(self.ifs.si).read_reg(addr),
@@ -136,6 +140,7 @@ impl<'i, R: RamAccess, S: RamAccess> Bus<'i, R, S> {
                 lw!(self.ifs.si).write_pif_ram(addr, word, &self.ifs.mi),
             SP_DMEM_START   ... SP_IMEM_END   =>
                 Ok(self.spram.write_word((addr - SP_DMEM_START) as usize / 4, word)),
+            SP_REG_SEMAPHORE  => Ok(self.ifs.sp_semaphore.store(false, Ordering::SeqCst)),
             SP_REG_START    ... SP_REG_END    =>
                 lw!(self.ifs.sp).write_reg(addr, word, &self.ifs.mi, &mut self.ram,
                                            &mut self.spram),

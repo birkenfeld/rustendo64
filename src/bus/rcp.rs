@@ -16,8 +16,7 @@ pub struct SpRegs {
     reg_status:    u32,
     reg_dma_full:  u32,
     reg_dma_busy:  u32,
-    reg_semaphore: AtomicBool,
-    reg_pc:        AtomicUsize,
+    reg_pc:        u32,
     reg_ibist:     u32,
 
     run_bit:       Arc<AtomicBool>,
@@ -34,8 +33,7 @@ impl SpRegs {
             reg_status:    0,
             reg_dma_full:  0,
             reg_dma_busy:  0,
-            reg_semaphore: AtomicBool::new(false),
-            reg_pc:        AtomicUsize::new(0),
+            reg_pc:        0,
             reg_ibist:     0,
             run_bit:       run_bit,
             run_cond:      run_cond,
@@ -55,8 +53,7 @@ impl SpRegs {
             SP_REG_STATUS     => self.reg_status,
             SP_REG_DMA_FULL   => self.reg_dma_full,
             SP_REG_DMA_BUSY   => self.reg_dma_busy,
-            SP_REG_SEMAPHORE  => self.reg_semaphore.swap(true, Ordering::SeqCst) as u32,
-            SP_REG_PC         => self.reg_pc.load(Ordering::SeqCst) as u32,
+            SP_REG_PC         => self.reg_pc,
             SP_REG_IBIST      => self.reg_ibist,
             _ => return Err("Unsupported RSP register")
         })
@@ -116,8 +113,7 @@ impl SpRegs {
                                      2*i - 5, 2*i - 4);
                 }
             }
-            SP_REG_SEMAPHORE  => self.reg_semaphore.store(false, Ordering::SeqCst),
-            SP_REG_PC         => self.reg_pc.store(word as usize & 0xfff, Ordering::SeqCst),
+            SP_REG_PC         => self.reg_pc = word & 0xfff,
             SP_REG_IBIST      => self.reg_ibist = word & 0x7,
             _ => return Err("Unsupported RSP register")
         })

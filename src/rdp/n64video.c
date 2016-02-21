@@ -1804,7 +1804,7 @@ static void fetch_texel(COLOR *color, int s, int t, uint32_t tilenum) {
         break;
     default:
         debug("RDP: fetch_texel: unknown texture format %d, size %d, tilenum %d\n",
-	      tile[tilenum].format, tile[tilenum].size, tilenum);
+              tile[tilenum].format, tile[tilenum].size, tilenum);
         break;
     }
 }
@@ -1879,7 +1879,7 @@ static void fetch_texel_entlut(COLOR *color, int s, int t, uint32_t tilenum) {
         break;
     default:
         debug("RDP: fetch_texel_entlut: unknown texture format %d, size %d, tilenum %d\n",
-	      tile[tilenum].format, tile[tilenum].size, tilenum);
+              tile[tilenum].format, tile[tilenum].size, tilenum);
         break;
     }
 
@@ -2684,11 +2684,11 @@ static void fetch_texel_quadro(COLOR *color0, COLOR *color1, COLOR *color2, COLO
         color3->b = c3 >> 8;
         color3->a = (c3 & 1) ? 0xff : 0;
     }
-	break;
+        break;
     default:
-	debug("RDP: fetch_texel_quadro: unknown texture format %d, size %d, tilenum %d\n",
-	      tile[tilenum].format, tile[tilenum].size, tilenum);
-	break;
+        debug("RDP: fetch_texel_quadro: unknown texture format %d, size %d, tilenum %d\n",
+              tile[tilenum].format, tile[tilenum].size, tilenum);
+        break;
     }
 }
 
@@ -2884,7 +2884,7 @@ static void fetch_texel_entlut_quadro(COLOR *color0, COLOR *color1, COLOR *color
         break;
     default:
         debug("RDP: fetch_texel_entlut_quadro: unknown texture format %d, size %d, tilenum %d\n",
-	      tile[tilenum].format, tile[tilenum].size, tilenum);
+              tile[tilenum].format, tile[tilenum].size, tilenum);
         break;
     }
 
