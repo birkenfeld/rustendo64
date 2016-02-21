@@ -5463,7 +5463,7 @@ static int rdp_dasm(char *buffer)
     char dsde[32], dtde[32], dwde[32];
     char yl[32], yh[32], ym[32], xl[32], xh[32], xm[32];
     char dxldy[32], dxhdy[32], dxmdy[32];
-    char rt[32], gt[32], bt[32], at[32];
+    char rt[32], gt[32], bt[32], at[32], w[32];
     char drdx[32], dgdx[32], dbdx[32], dadx[32];
     char drdy[32], dgdy[32], dbdy[32], dady[32];
     char drde[32], dgde[32], dbde[32], dade[32];
@@ -5501,6 +5501,7 @@ static int rdp_dasm(char *buffer)
     switch (command) {
     case 0x00:
         sprintf(buffer, "No Op"); break;
+#if !DETAILED_LOGGING
     case 0x08:
         sprintf(buffer, "Tri_NoShade (%08X %08X)", cmd[0], cmd[1]); break;
     case 0x0a:
@@ -5509,6 +5510,7 @@ static int rdp_dasm(char *buffer)
         sprintf(buffer, "Tri_Shade (%08X %08X)", cmd[0], cmd[1]); break;
     case 0x0e:
         sprintf(buffer, "Tri_TexShade (%08X %08X)", cmd[0], cmd[1]); break;
+#endif
     case 0x09:
         sprintf(buffer, "TriZ_NoShade (%08X %08X)", cmd[0], cmd[1]); break;
     case 0x0b:
@@ -5543,7 +5545,8 @@ static int rdp_dasm(char *buffer)
         sprintf(xm,     "%4.4f", (float)(cmd[6] / 65536.0f));
         sprintf(dxmdy,  "%4.4f", (float)(cmd[7] / 65536.0f));
 
-        sprintf(buffer, "Tri_NoShade            %d, XL: %s, XM: %s, XH: %s, YL: %s, YM: %s, YH: %s\n", lft, xl,xm,xh,yl,ym,yh);
+        sprintf(buffer, "Tri_NoShade            %d, XL: %s, XM: %s, XH: %s, YL: %s, YM: %s, YH: %s\n",
+                lft, xl, xm, xh, yl, ym, yh);
         break;
     }
     case 0x0a: {
@@ -6417,6 +6420,7 @@ int32_t rdp_process_list(uint32_t *dp_start, uint32_t *dp_current, uint32_t *dp_
             for (i = 0; i < toload; i ++) {
                 rdp_cmd_data[rdp_cmd_ptr] = byteswap_32(rsp_dmem[dp_current_al & 0x3ff]);
                 //printf("RDP: read from DMEM %#x -> %#x\n", 4*dp_current_al, rdp_cmd_data[rdp_cmd_ptr]);
+                //fflush(stdout);
                 rdp_cmd_ptr++;
                 dp_current_al++;
             }
@@ -6424,6 +6428,7 @@ int32_t rdp_process_list(uint32_t *dp_start, uint32_t *dp_current, uint32_t *dp_
             for (i = 0; i < toload; i ++) {
                 RREADIDX32(rdp_cmd_data[rdp_cmd_ptr], dp_current_al);
                 //printf("RDP: read from DRAM %#x -> %#x\n", 4*dp_current_al, rdp_cmd_data[rdp_cmd_ptr]);
+                //fflush(stdout);
                 rdp_cmd_ptr++;
                 dp_current_al++;
             }
@@ -6456,6 +6461,7 @@ int32_t rdp_process_list(uint32_t *dp_start, uint32_t *dp_current, uint32_t *dp_
                             rdp_cmd_data[rdp_cmd_cur+1], string);
                     //printf("%08X: %08X %08X   %s\n", command_counter, rdp_cmd_data[rdp_cmd_cur+0],
                     //       rdp_cmd_data[rdp_cmd_cur+1], string);
+                    //fflush(stdout);
                 }
                 command_counter++;
             }

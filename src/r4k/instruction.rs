@@ -397,6 +397,12 @@ impl Instruction {
         (self.0 as usize >> 11) & 0b11111
     }
 
+    /// Vector destination element -- present in RSP single-element instrs.
+    #[inline(always)]
+    pub fn vdel(self) -> usize {
+        (self.0 as usize >> 11) & 0b1111
+    }
+
     // Accessors for the bits 6-10
 
     /// Shift amount -- present in immediate shift instrs.
@@ -417,9 +423,9 @@ impl Instruction {
         (self.0 as usize >> 6) & 0b11111
     }
 
-    /// Vector dest elements -- present in vector load/store instrs.
+    /// Vector load/store element index -- present in vector l/s instrs.
     #[inline(always)]
-    pub fn vdel(self) -> usize {
+    pub fn vel_ls(self) -> usize {
         (self.0 as usize >> 7) & 0b1111
     }
 
@@ -441,8 +447,8 @@ impl Instruction {
     #[inline(always)]
     pub fn voff(self) -> u64 {
         // 6 bits, have to sign-extend
-        let v = (self.0 & 0b111111) as i8;
-        ((v << 2) >> 2) as u64
+        let v = self.0 as i64;
+        ((v << 57) >> 57) as u64
     }
 
     // Accessors for the bits 0-15
@@ -505,8 +511,10 @@ impl fmt::Debug for Instruction {
             (vs)    => { VEC_REG_NAMES[self.vs()] };
             (vt)    => { VEC_REG_NAMES[self.vt()] };
             (vd)    => { VEC_REG_NAMES[self.vd()] };
-            (vel)   => { VEC_EL_SPEC[self.vel()] };
+            (vshuf) => { VEC_EL_SPEC[self.vel()] };
+            (vel)   => { self.vel() };
             (vdel)  => { self.vdel() };
+            (vel_ls)=> { self.vel_ls() };
             (voff)  => { self.voff() as i64 };
         }
         /// N-argument instruction with special formats.
@@ -539,15 +547,24 @@ impl fmt::Debug for Instruction {
                        aexp!($a1), aexp!($a2), aexp!($a3)) }
         }
         /// RSP vector instructions.
-        macro_rules! vins {
+        macro_rules! vinsb {
             ($name:expr, $a1:tt, $a2:tt, $a3:tt, $a4:tt) => {
                 write!(f, "{:7} {}, {}, {}{}", $name, aexp!($a1), aexp!($a2),
+                       aexp!($a3), aexp!($a4)) }
+        }
+        macro_rules! vinse {
+            ($name:expr, $a1:tt, $a2:tt, $a3:tt, $a4:tt) => {
+                write!(f, "{:7} {}[{}], {}[{}]", $name, aexp!($a1), aexp!($a2),
                        aexp!($a3), aexp!($a4)) }
         }
         macro_rules! vinsm {
             ($name:expr, $a1:tt, $a2:tt, $a3:tt, $a4:tt) => {
                 write!(f, "{:7} {}[{}], {}({})", $name, aexp!($a1), aexp!($a2),
                        aexp!($a3), aexp!($a4)) }
+        }
+        macro_rules! vinsx {
+            ($name:expr, $a1:tt, $a2:tt, $a3:tt) => {
+                write!(f, "{:7} {}, {}[{}]", $name, aexp!($a1), aexp!($a2), aexp!($a3)) }
         }
         /// For unknown opcodes, write the full word in hex.
         macro_rules! unknown {
@@ -752,87 +769,87 @@ impl fmt::Debug for Instruction {
             SDC1    => insm!("sdc1", ft, ims, base),
             SWC1    => insm!("swc1", ft, ims, base),
             COP2    => match self.cop_op() {
-                MF => ins2!("mfc2", rt, cpreg),
-                MT => ins2!("mtc2", rt, cpreg),
-                CF => ins2!("cfc2", rt, cpreg),
-                CT => ins2!("ctc2", rt, cpreg),
+                MF => vinsx!("mfc2", rt, vs, vel_ls),
+                MT => vinsx!("mtc2", rt, vs, vel_ls),
+                CF => ins2! ("cfc2", rt, cpreg),
+                CT => ins2! ("ctc2", rt, cpreg),
                 _  => match self.special_op() {
-                    VMULF => vins!("vmulf", vd, vs, vt, vel),
-                    VMULU => vins!("vmulu", vd, vs, vt, vel),
-                    VRNDP => vins!("vrndp", vd, vs, vt, vel),
-                    VMULQ => vins!("vmulq", vd, vs, vt, vel),
-                    VMUDL => vins!("vmudl", vd, vs, vt, vel),
-                    VMUDM => vins!("vmudm", vd, vs, vt, vel),
-                    VMUDN => vins!("vmudn", vd, vs, vt, vel),
-                    VMUDH => vins!("vmudh", vd, vs, vt, vel),
-                    VMACF => vins!("vmacf", vd, vs, vt, vel),
-                    VMACU => vins!("vmacu", vd, vs, vt, vel),
-                    VRNDN => vins!("vrndn", vd, vs, vt, vel),
-                    VMACQ => vins!("vmacq", vd, vs, vt, vel),
-                    VMADL => vins!("vmadl", vd, vs, vt, vel),
-                    VMADM => vins!("vmadm", vd, vs, vt, vel),
-                    VMADN => vins!("vmadn", vd, vs, vt, vel),
-                    VMADH => vins!("vmadh", vd, vs, vt, vel),
-                    VADD  => vins!("vadd",  vd, vs, vt, vel),
-                    VSUB  => vins!("vsub",  vd, vs, vt, vel),
-                    VABS  => vins!("vabs",  vd, vs, vt, vel),
-                    VADDC => vins!("vaddc", vd, vs, vt, vel),
-                    VSUBC => vins!("vsubc", vd, vs, vt, vel),
-                    VSAR  => vins!("vsar",  vd, vs, vt, vel),
-                    VLT   => vins!("vlt",   vd, vs, vt, vel),
-                    VEQ   => vins!("veq",   vd, vs, vt, vel),
-                    VNE   => vins!("vne",   vd, vs, vt, vel),
-                    VGE   => vins!("vge",   vd, vs, vt, vel),
-                    VCL   => vins!("vcl",   vd, vs, vt, vel),
-                    VCH   => vins!("vch",   vd, vs, vt, vel),
-                    VCR   => vins!("vcr",   vd, vs, vt, vel),
-                    VMRG  => vins!("vmrg",  vd, vs, vt, vel),
-                    VAND  => vins!("vand",  vd, vs, vt, vel),
-                    VNAND => vins!("vnand", vd, vs, vt, vel),
-                    VOR   => vins!("vor",   vd, vs, vt, vel),
-                    VNOR  => vins!("vnor",  vd, vs, vt, vel),
-                    VXOR  => vins!("vxor",  vd, vs, vt, vel),
-                    VNXOR => vins!("vnxor", vd, vs, vt, vel),
-                    VRCP  => vins!("vrcp",  vd, vs, vt, vel),
-                    VRCPL => vins!("vrcpl", vd, vs, vt, vel),
-                    VRCPH => vins!("vrcph", vd, vs, vt, vel),
-                    VMOV  => vins!("vmov",  vd, vs, vt, vel),
-                    VRSQ  => vins!("vrsq",  vd, vs, vt, vel),
-                    VRSQL => vins!("vrsql", vd, vs, vt, vel),
-                    VRSQH => vins!("vrsqh", vd, vs, vt, vel),
-                    VNOP  => vins!("vnop",  vd, vs, vt, vel),
-                    VNULL => vins!("vnull", vd, vs, vt, vel),
+                    VMULF => vinsb!("vmulf", vd, vs, vt, vshuf),
+                    VMULU => vinsb!("vmulu", vd, vs, vt, vshuf),
+                    VRNDP => vinsb!("vrndp", vd, vs, vt, vshuf),
+                    VMULQ => vinsb!("vmulq", vd, vs, vt, vshuf),
+                    VMUDL => vinsb!("vmudl", vd, vs, vt, vshuf),
+                    VMUDM => vinsb!("vmudm", vd, vs, vt, vshuf),
+                    VMUDN => vinsb!("vmudn", vd, vs, vt, vshuf),
+                    VMUDH => vinsb!("vmudh", vd, vs, vt, vshuf),
+                    VMACF => vinsb!("vmacf", vd, vs, vt, vshuf),
+                    VMACU => vinsb!("vmacu", vd, vs, vt, vshuf),
+                    VRNDN => vinsb!("vrndn", vd, vs, vt, vshuf),
+                    VMACQ => vinsb!("vmacq", vd, vs, vt, vshuf),
+                    VMADL => vinsb!("vmadl", vd, vs, vt, vshuf),
+                    VMADM => vinsb!("vmadm", vd, vs, vt, vshuf),
+                    VMADN => vinsb!("vmadn", vd, vs, vt, vshuf),
+                    VMADH => vinsb!("vmadh", vd, vs, vt, vshuf),
+                    VADD  => vinsb!("vadd",  vd, vs, vt, vshuf),
+                    VSUB  => vinsb!("vsub",  vd, vs, vt, vshuf),
+                    VABS  => vinsb!("vabs",  vd, vs, vt, vshuf),
+                    VADDC => vinsb!("vaddc", vd, vs, vt, vshuf),
+                    VSUBC => vinsb!("vsubc", vd, vs, vt, vshuf),
+                    VSAR  => vinsb!("vsar",  vd, vs, vt, vshuf),
+                    VLT   => vinsb!("vlt",   vd, vs, vt, vshuf),
+                    VEQ   => vinsb!("veq",   vd, vs, vt, vshuf),
+                    VNE   => vinsb!("vne",   vd, vs, vt, vshuf),
+                    VGE   => vinsb!("vge",   vd, vs, vt, vshuf),
+                    VCL   => vinsb!("vcl",   vd, vs, vt, vshuf),
+                    VCH   => vinsb!("vch",   vd, vs, vt, vshuf),
+                    VCR   => vinsb!("vcr",   vd, vs, vt, vshuf),
+                    VMRG  => vinsb!("vmrg",  vd, vs, vt, vshuf),
+                    VAND  => vinsb!("vand",  vd, vs, vt, vshuf),
+                    VNAND => vinsb!("vnand", vd, vs, vt, vshuf),
+                    VOR   => vinsb!("vor",   vd, vs, vt, vshuf),
+                    VNOR  => vinsb!("vnor",  vd, vs, vt, vshuf),
+                    VXOR  => vinsb!("vxor",  vd, vs, vt, vshuf),
+                    VNXOR => vinsb!("vnxor", vd, vs, vt, vshuf),
+                    VRCP  => vinse!("vrcp",  vd, vdel, vt, vel),
+                    VRCPL => vinse!("vrcpl", vd, vdel, vt, vel),
+                    VRCPH => vinse!("vrcph", vd, vdel, vt, vel),
+                    VMOV  => vinse!("vmov",  vd, vdel, vt, vel),
+                    VRSQ  => vinse!("vrsq",  vd, vdel, vt, vel),
+                    VRSQL => vinse!("vrsql", vd, vdel, vt, vel),
+                    VRSQH => vinse!("vrsqh", vd, vdel, vt, vel),
+                    VNOP  => write!(f, "vnop"),
+                    VNULL => write!(f, "vnull"),
                     _     => unknown!(),
                 },
             },
             LWC2    => match self.vec_fmt() {
-                VLF_B => vinsm!("lbv", vt, vdel, voff, base),
-                VLF_S => vinsm!("lsv", vt, vdel, voff, base),
-                VLF_L => vinsm!("llv", vt, vdel, voff, base),
-                VLF_D => vinsm!("ldv", vt, vdel, voff, base),
-                VLF_Q => vinsm!("lqv", vt, vdel, voff, base),
-                VLF_R => vinsm!("lrv", vt, vdel, voff, base),
-                VLF_P => vinsm!("lpv", vt, vdel, voff, base),
-                VLF_U => vinsm!("luv", vt, vdel, voff, base),
-                VLF_H => vinsm!("lhv", vt, vdel, voff, base),
-                VLF_F => vinsm!("lfv", vt, vdel, voff, base),
+                VLF_B => vinsm!("lbv", vt, vel_ls, voff, base),
+                VLF_S => vinsm!("lsv", vt, vel_ls, voff, base),
+                VLF_L => vinsm!("llv", vt, vel_ls, voff, base),
+                VLF_D => vinsm!("ldv", vt, vel_ls, voff, base),
+                VLF_Q => vinsm!("lqv", vt, vel_ls, voff, base),
+                VLF_R => vinsm!("lrv", vt, vel_ls, voff, base),
+                VLF_P => vinsm!("lpv", vt, vel_ls, voff, base),
+                VLF_U => vinsm!("luv", vt, vel_ls, voff, base),
+                VLF_H => vinsm!("lhv", vt, vel_ls, voff, base),
+                VLF_F => vinsm!("lfv", vt, vel_ls, voff, base),
+                VLF_T => vinsm!("ltv", vt, vel_ls, voff, base),
                 // lwv doesn't exist
-                VLF_T => vinsm!("ltv", vt, vdel, voff, base),
                 _     => unknown!(),
             },
             SWC2    => match self.vec_fmt() {
-                VLF_B => vinsm!("sbv", vt, vdel, voff, base),
-                VLF_S => vinsm!("ssv", vt, vdel, voff, base),
-                VLF_L => vinsm!("slv", vt, vdel, voff, base),
-                VLF_D => vinsm!("sdv", vt, vdel, voff, base),
-                VLF_Q => vinsm!("sqv", vt, vdel, voff, base),
-                VLF_R => vinsm!("srv", vt, vdel, voff, base),
-                VLF_P => vinsm!("spv", vt, vdel, voff, base),
-                VLF_U => vinsm!("suv", vt, vdel, voff, base),
-                VLF_H => vinsm!("shv", vt, vdel, voff, base),
-                VLF_F => vinsm!("sfv", vt, vdel, voff, base),
-                VLF_W => vinsm!("swv", vt, vdel, voff, base),
-                VLF_T => vinsm!("stv", vt, vdel, voff, base),
+                VLF_B => vinsm!("sbv", vt, vel_ls, voff, base),
+                VLF_S => vinsm!("ssv", vt, vel_ls, voff, base),
+                VLF_L => vinsm!("slv", vt, vel_ls, voff, base),
+                VLF_D => vinsm!("sdv", vt, vel_ls, voff, base),
+                VLF_Q => vinsm!("sqv", vt, vel_ls, voff, base),
+                VLF_R => vinsm!("srv", vt, vel_ls, voff, base),
+                VLF_P => vinsm!("spv", vt, vel_ls, voff, base),
+                VLF_U => vinsm!("suv", vt, vel_ls, voff, base),
+                VLF_H => vinsm!("shv", vt, vel_ls, voff, base),
+                VLF_F => vinsm!("sfv", vt, vel_ls, voff, base),
+                VLF_W => vinsm!("swv", vt, vel_ls, voff, base),
+                VLF_T => vinsm!("stv", vt, vel_ls, voff, base),
                 _     => unknown!(),
             },
             _       => unknown!(),

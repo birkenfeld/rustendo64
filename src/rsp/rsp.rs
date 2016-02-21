@@ -201,8 +201,8 @@ impl<'c> R4300<'c> for Rsp {
                 self.write_gpr(instr.rt(), res);
             },
             MF => {
-                let vec = self.read_vec(instr.rd());
-                let element = instr.vdel() as u32;
+                let vec = self.read_vec(instr.vs());
+                let element = instr.vel_ls() as u32;
                 let lo = element >> 1;
 
                 let res = if element & 1 != 0 {
@@ -213,13 +213,13 @@ impl<'c> R4300<'c> for Rsp {
                 } else {
                     vec.extract(lo) as u64
                 };
-                dprintln!(self, "{} $v{:02}[{:02}] :   {:#6x}", INDENT, instr.rd(), element, res);
+                dprintln!(self, "{} $v{:02}[{:02}] :   {:#6x}", INDENT, instr.vs(), element, res);
                 self.write_gpr(instr.rt(), res);
             },
             MT => {
                 let reg = self.read_gpr(instr.rt()) as i16;
-                let mut vec = self.read_vec(instr.rd());
-                let element = instr.vdel() as u32;
+                let mut vec = self.read_vec(instr.vs());
+                let element = instr.vel_ls() as u32;
                 let lo = element >> 1;
 
                 if element & 1 != 0 {
@@ -229,8 +229,8 @@ impl<'c> R4300<'c> for Rsp {
                 } else {
                     vec = vec.replace(lo, reg);
                 }
-                dprintln!(self, "{} $v{:02}[{:02}] <-  {:#6x}", INDENT, instr.rd(), element, reg);
-                self.write_vec(instr.rd(), vec);
+                dprintln!(self, "{} $v{:02}[{:02}] <-  {:#6x}", INDENT, instr.vs(), element, reg);
+                self.write_vec(instr.vs(), vec);
             },
             c  => {
                 if c & 0b10000 == 0 {
@@ -877,17 +877,13 @@ impl Rsp {
         addr
     }
 
-    fn restricted_vdel(&self, instr: Instruction, modulus: usize) -> usize {
-        let vdel = instr.vdel();
-        if vdel % modulus != 0 {
-            self.bug(format!("Element spec not divisible by {}: {}", modulus, vdel));
+    fn restricted_vel_ls(&self, instr: Instruction, modulus: usize) -> usize {
+        let vel_ls = instr.vel_ls();
+        if vel_ls % modulus != 0 {
+            self.bug(format!("Element spec not divisible by {}: {}", modulus, vel_ls));
         }
-        vdel
+        vel_ls
     }
-
-    // fn read_vec(&self, index: usize) -> i16x8 {
-    //     self.cp2.regs[index]
-    // }
 
     fn mem_load_vec(&mut self, bus: &RspBus, instr: Instruction) {
         let vf = instr.vec_fmt();
@@ -897,7 +893,9 @@ impl Rsp {
                 // indexed by element.  Other parts are unaffected.
                 let shift = vf as u64 & 0b11;
                 let addr = self.aligned_offset_shift(instr, shift, 1);
-                let index = self.restricted_vdel(instr, 1 << shift);
+                // NOTE: the patent says this is restricted to 1 << shift.
+                // Games seem to use any values.
+                let index = self.restricted_vel_ls(instr, 1);
                 /* TODO: optimize these with SIMD operations! */
                 match vf {
                     VLF_B => {
@@ -934,7 +932,7 @@ impl Rsp {
             VLF_Q | VLF_R => {
                 // Load left/right part of quadword into part of the vector.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
-                self.restricted_vdel(instr, 16);  // ensure zero
+                self.restricted_vel_ls(instr, 16);  // ensure zero
                 let offset = addr & 0b1111;
                 let aligned_addr = addr & !0b1111;
                 let mut buffer = [0_u8; 16];
@@ -954,11 +952,13 @@ impl Rsp {
                     (reg & mask) | val.shuffle_bytes(shift)
                 };
                 result.store(&mut self.cp2.vec[instr.vt()], 0);
+                dprintln!(self, "{} $v{:02}     <- {} :  mem @ {:#x}",
+                          INDENT, instr.vt(), format_vec(self.read_vec(instr.vt())), addr);
             },
             VLF_P | VLF_U => {
                 // Load packed 8-bit signed/unsigned into 16-bit vectors.
                 let addr = self.aligned_offset_shift(instr, 3, 1);
-                self.restricted_vdel(instr, 16);  // ensure zero
+                self.restricted_vel_ls(instr, 16);  // ensure zero
                 let dword: u64 = self.load_mem(bus, addr);
                 let result = if vf == VLF_P {
                     i16x8::new(
@@ -990,7 +990,7 @@ impl Rsp {
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 // unaligned is allowed, but we load from aligned
                 let aligned_addr = addr & !15;
-                self.restricted_vdel(instr, 16);  // ensure zero
+                self.restricted_vel_ls(instr, 16);  // ensure zero
                 let dw1: u64 = self.load_mem(bus, aligned_addr);
                 let dw2: u64 = self.load_mem(bus, aligned_addr + 8);
                 let result = if addr & 1 == 0 {
@@ -1022,7 +1022,7 @@ impl Rsp {
                 // Load bytes from 2 dwords with 4-byte stride into 16-bit vectors.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 let aligned_addr = addr & !15;
-                let el = self.restricted_vdel(instr, 8);  // ensure 0 or 8
+                let el = self.restricted_vel_ls(instr, 8);  // ensure 0 or 8
                 let dw1: u64 = self.load_mem(bus, aligned_addr);
                 let dw2: u64 = self.load_mem(bus, aligned_addr + 8);
                 let v1;
@@ -1065,7 +1065,7 @@ impl Rsp {
             VLF_T => {
                 // Load 16-bit elements into up to 8 different vectors
                 let addr = self.aligned_offset_shift(instr, 4, 16);
-                let el = self.restricted_vdel(instr, 2);
+                let el = self.restricted_vel_ls(instr, 2);
                 let vel = el as u32 >> 1;  // element in the vector (0..7)
                 let mut buffer = [0_u8; 16];
                 BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, addr));
@@ -1092,7 +1092,9 @@ impl Rsp {
                 // indexed by element.  Other parts are unaffected.
                 let shift = vf as u64 & 0b11;
                 let addr = self.aligned_offset_shift(instr, shift, 1);
-                let index = self.restricted_vdel(instr, 1 << shift);
+                // NOTE: the patent says this is restricted to 1 << shift.
+                // Games seem to use any values.
+                let index = self.restricted_vel_ls(instr, 1);
                 match vf {
                     VLF_B => {
                         let data = self.cp2.vec[instr.vt()][index ^ 1];
@@ -1128,7 +1130,7 @@ impl Rsp {
             VLF_Q | VLF_R => {
                 // Store part of the vector into left/right part of quadword.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
-                self.restricted_vdel(instr, 16);  // ensure zero
+                self.restricted_vel_ls(instr, 16);  // ensure zero
                 let offset = addr & 0b1111;
                 let aligned_addr = addr & !0b1111;
                 let mut buffer = [0_u8; 16];
@@ -1148,13 +1150,17 @@ impl Rsp {
                     (val & mask) | reg.shuffle_bytes(self.tables.bswap).shuffle_bytes(shift)
                 };
                 result.store(&mut buffer, 0);
-                self.store_mem(bus, aligned_addr, BigEndian::read_u64(&buffer[0..]));
-                self.store_mem(bus, aligned_addr + 8, BigEndian::read_u64(&buffer[8..]));
+                let dw1 = BigEndian::read_u64(&buffer[0..]);
+                let dw2 = BigEndian::read_u64(&buffer[8..]);
+                dprintln!(self, "{} $v{:02}     :  {:#18x}{:016x} -> mem @ {:#x}",
+                          INDENT, instr.vt(), dw1, dw2, addr);
+                self.store_mem(bus, aligned_addr, dw1);
+                self.store_mem(bus, aligned_addr + 8, dw2);
             },
             VLF_P | VLF_U => {
                 // Store packed 8-bit signed/unsigned from 16-bit vectors.
                 let addr = self.aligned_offset_shift(instr, 3, 1);
-                self.restricted_vdel(instr, 16);  // ensure zero
+                self.restricted_vel_ls(instr, 16);  // ensure zero
                 let vec = self.read_vec(instr.vt());
                 let dword = if vf == VLF_P {
                     ((vec.extract(0) as u64) & 0xff00) << 48 |
@@ -1182,7 +1188,7 @@ impl Rsp {
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 // unaligned is allowed, but we load from aligned
                 let aligned_addr = addr & !15;
-                self.restricted_vdel(instr, 16);  // ensure zero
+                self.restricted_vel_ls(instr, 16);  // ensure zero
                 let vec = self.read_vec(instr.vt());
                 let (dw1, dw2) = if addr & 1 == 0 {
                     (
@@ -1214,7 +1220,7 @@ impl Rsp {
                 // Store bytes to 2 dwords with 4-byte stride from 16-bit vectors.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 let aligned_addr = addr & !15;
-                let el = self.restricted_vdel(instr, 8);  // ensure 0 or 8
+                let el = self.restricted_vel_ls(instr, 8);  // ensure 0 or 8
                 let vec = self.read_vec(instr.vt());
                 let mut dw1: u64 = self.load_mem(bus, aligned_addr);
                 let mut dw2: u64 = self.load_mem(bus, aligned_addr + 8);
@@ -1273,7 +1279,7 @@ impl Rsp {
             VLF_W => {
                 // Store bytes from vector, starting at element and wrapping around.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
-                let el = self.restricted_vdel(instr, 1);  // any value allowed
+                let el = self.restricted_vel_ls(instr, 1);  // any value allowed
                 let vec = u8x16::load(&self.cp2.vec[instr.vt()], 0);
                 let vec = vec.shuffle_bytes(self.tables.rot_swap_l[el]);
                 let mut buffer = [0_u8; 16];
@@ -1284,7 +1290,7 @@ impl Rsp {
             VLF_T => {
                 // Store 16-bit elements from up to 8 different vectors
                 let addr = self.aligned_offset_shift(instr, 4, 1);
-                let el = self.restricted_vdel(instr, 1);  // any value allowed
+                let el = self.restricted_vel_ls(instr, 1);  // any value allowed
                 let vel = el as u32 >> 1;  // element in the vector (0..7)
                 let mut buffer = [0_u8; 16];
                 BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, addr));
@@ -1318,13 +1324,13 @@ impl Rsp {
     fn vec_elop<F>(&mut self, instr: Instruction, func: F)
         where F: Fn(i16x8, i16, &mut Self) -> i16
     {
-        let vt_el = self.read_vec(instr.vt()).extract(instr.vs() as u32 & 0x7);
-        let vt = self.read_and_shuffle_vec(instr.vt(), instr.vel());
+        let vt_el = self.read_vec(instr.vt()).extract(instr.vel() as u32 & 0x7);
+        let vt = self.read_and_shuffle_vec(instr.vt(), instr.vel());  // XXX really?
         let vd = self.read_vec(instr.vd());
-        dprintln!(self, "{} $v{:02}[{:02}] :  {}", INDENT, instr.vt(), instr.vs(), vt_el);
+        dprintln!(self, "{} $v{:02}[{:02}] :  {}", INDENT, instr.vt(), instr.vel(), vt_el);
         let res_el = func(vt, vt_el, self);
-        let res = vd.replace(instr.vel() as u32 & 0x7, res_el);
-        dprintln!(self, "{} $v{:02}     <- {}", INDENT, instr.vd(), format_vec(res));
+        let res = vd.replace(instr.vdel() as u32 & 0x7, res_el);
+        dprintln!(self, "{} $v{:02}[{:02}] <- {}", INDENT, instr.vd(), instr.vdel(), res_el);
         self.write_vec(instr.vd(), res);
     }
 
@@ -1372,19 +1378,7 @@ fn frombool(x: bool16ix8) -> i16x8 {
     x.select(i16x8::splat(-1), i16x8::splat(0))
 }
 
-// fn p128(s: &'static str, v: i16x8) {
-//     println!("{}: {:04x} {:04x} {:04x} {:04x} {:04x} {:04x} {:04x} {:04x}",
-//              s,
-//              v.extract(0), v.extract(1), v.extract(2), v.extract(3),
-//              v.extract(4), v.extract(5), v.extract(6), v.extract(7));
-// }
-
-// fn pu8(s: &'static str, v: u8x16) {
-//     println!("{}: {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} \
-//               {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-//              s,
-//              v.extract(0), v.extract(1), v.extract(2), v.extract(3),
-//              v.extract(4), v.extract(5), v.extract(6), v.extract(7),
-//              v.extract(8), v.extract(9), v.extract(10), v.extract(11),
-//              v.extract(12), v.extract(13), v.extract(14), v.extract(15));
-// }
+#[allow(dead_code)]
+fn p128(s: &'static str, v: i16x8) {
+    println!("{}: {}", s, format_vec(v));
+}
