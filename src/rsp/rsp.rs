@@ -51,6 +51,9 @@ pub struct Rsp {
 
 pub type RspBus<'c> = Bus<'c, &'c RwLock<Box<[u32]>>, &'c mut [u32]>;
 
+#[cfg(debug_assertions)]
+pub const INDENT: &'static str = "                                       ";
+
 
 impl fmt::Debug for Rsp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -169,12 +172,14 @@ impl<'c> R4300<'c> for Rsp {
             MF => {
                 let reg_addr = COP0_REG_MAP[instr.rd()];
                 let data = self.read_word_raw(bus, reg_addr);
+                dprintln!(self, "{} cp0[{:2}] :  {:#18x}", INDENT, instr.rd(), data);
                 self.debug_read(reg_addr as u64, data);
                 self.write_gpr(instr.rt(), data as i32 as u64);
             }
             MT => {
                 let reg_addr = COP0_REG_MAP[instr.rd()];
                 let data = self.read_gpr(instr.rt()) as u32;
+                dprintln!(self, "{} cp0[{:2}] <- {:#18x}", INDENT, instr.rd(), data);
                 self.write_word_raw(bus, reg_addr, data);
             }
             _  => self.bug(format!("#UD CP0: I {:#b} -- {:?}", instr.0, instr))
@@ -186,7 +191,6 @@ impl<'c> R4300<'c> for Rsp {
     }
 
     fn dispatch_cop2_op(&mut self, _: &mut RspBus, instr: Instruction) {
-        // println!("{:?}", instr);
         match instr.cop_op() {
             CF => {
                 // TODO: check rd range (0-2)
@@ -209,6 +213,7 @@ impl<'c> R4300<'c> for Rsp {
                 } else {
                     vec.extract(lo) as u64
                 };
+                dprintln!(self, "{} cp2[v{:2},{}] :  {:#18x}", INDENT, instr.rd(), element, res);
                 self.write_gpr(instr.rt(), res);
             },
             MT => {
@@ -224,6 +229,7 @@ impl<'c> R4300<'c> for Rsp {
                 } else {
                     vec = vec.replace(lo, reg);
                 }
+                dprintln!(self, "{} cp2[v{:2},{}] <- {:#18x}", INDENT, instr.rd(), element, reg);
                 self.write_vec(instr.rd(), vec);
             },
             c  => {
