@@ -112,13 +112,16 @@ impl Pi {
         self.reg_wr_len = word & 0xff_ffff;
         // DMA transfer ROM -> main memory
         let ram_start = self.reg_dram_addr as usize / 4;
-        let rom_start = self.reg_cart_addr as usize - 0x1000_0000;
+        if self.reg_cart_addr < CART_ROM_START {
+            return;
+        }
+        let rom_start = (self.reg_cart_addr - CART_ROM_START) as usize;
         let length = (self.reg_wr_len + 1) as usize;
         // Some ROMs read past the end of the file...
         if rom_start >= self.cart_rom.len() { return; }
         let length = min(length, self.cart_rom.len() - rom_start);
-        println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
-                 length, rom_start, ram_start);
+        // println!("DMA transfer: {:#x} bytes from ROM {:#x} to {:#x}",
+        //          length, rom_start, ram_start);
         for i in 0..length/4 {
             ram.write_word(ram_start + i,
                            BigEndian::read_u32(&self.cart_rom[rom_start + 4*i..]));

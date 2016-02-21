@@ -1,5 +1,5 @@
 use std::sync::{Arc, Condvar};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rdp;
 
@@ -71,7 +71,7 @@ impl SpRegs {
                 self.reg_rd_len = word;
                 let from = self.reg_dram_addr & !0x7;
                 let to = self.reg_mem_addr & !0x3;
-                // println!("RSP: DMA {:#x} bytes from RAM {:#x} to SPRAM {:#x}", word, from, to);
+                //println!("RSP: DMA {:#x} bytes from RAM {:#x} to SPRAM {:#x}", word + 1, from, to);
                 self.dma(ram, spram, word as usize, from, to);
             },
             SP_REG_WR_LEN     => {
@@ -79,7 +79,7 @@ impl SpRegs {
                 self.reg_wr_len = word;
                 let from = self.reg_mem_addr & !0x3;
                 let to = self.reg_dram_addr & !0x7;
-                // println!("RSP: DMA {:#x} bytes from SPRAM {:#x} to RAM {:#x}", word, from, to);
+                // println!("RSP: DMA {:#x} bytes from SPRAM {:#x} to RAM {:#x}", word + 1, from, to);
                 self.dma(spram, ram, word as usize, from, to);
             },
             SP_REG_STATUS     => {

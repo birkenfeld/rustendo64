@@ -44,7 +44,7 @@ pub struct Rsp {
     regs:      R4300Common,
     cp2:       Cp2,
     broke:     bool,
-    #[allow(dead_code)] run_bit:   Arc<AtomicBool>,  /* TODO: remove if unneeded */
+    run_bit:   Arc<AtomicBool>,
     run_cond:  Arc<Condvar>,
     tables:    SimdTables,
 }

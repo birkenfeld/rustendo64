@@ -427,6 +427,8 @@ CVtcmaskDERIVATIVE cvarray[0x100];
 #define RDRAM_MASK_16 (0x007fffff >> 1)
 #define RDRAM_MASK_32 (0x007fffff >> 2)
 
+#define memprintf(x, y, z)
+//#define memprintf(x, y, z) printf(x, y, z)
 
 #define RREADADDR8(dst, in)                                             \
     {                                                                   \
@@ -448,16 +450,19 @@ CVtcmaskDERIVATIVE cvarray[0x100];
     {                                                                   \
         (in) &= RDRAM_MASK_8;                                           \
         if ((in) <= plim)  rdram_8[addrswap_8(in)] = (val);             \
+        memprintf("RDP: write8 to %#x = %#x\n", in, val);               \
     }
 #define RWRITEIDX16(in, val)                                            \
     {                                                                   \
         (in) &= RDRAM_MASK_16;                                          \
         if ((in) <= idxlim16) rdram_16[addrswap_16(in)] = byteswap_16(val); \
+        memprintf("RDP: write16 to %#x = %#x\n", in, val);              \
     }
 #define RWRITEIDX32(in, val)                                            \
     {                                                                   \
         (in) &= RDRAM_MASK_32;                                          \
         if ((in) <= idxlim32) rdram[(in)] = byteswap_32(val);           \
+        memprintf("RDP: write32 to %#x = %#x\n", in, val);              \
     }
 
 #define PAIRREAD16(rdst, hdst, in)                                      \
@@ -476,6 +481,7 @@ CVtcmaskDERIVATIVE cvarray[0x100];
         if ((in) <= idxlim16) {                                         \
             rdram_16[addrswap_16(in)] = byteswap_16(rval);              \
             hidden_bits[(in)] = (hval);                                 \
+            memprintf("RDP: write16 to %#x = %#x\n", in, rval);         \
         }                                                               \
     }
 
@@ -486,6 +492,7 @@ CVtcmaskDERIVATIVE cvarray[0x100];
             rdram[(in)] = byteswap_32(rval);                            \
             hidden_bits[(in) << 1] = (hval0);                           \
             hidden_bits[((in) << 1) + 1] = (hval1);                     \
+            memprintf("RDP: write32 to %#x = %#x\n", in, rval);         \
         }                                                               \
     }
 
@@ -495,6 +502,7 @@ CVtcmaskDERIVATIVE cvarray[0x100];
         if ((in) <= plim) {                                             \
             rdram_8[addrswap_8(in)] = (rval);                           \
             if ((in) & 1) hidden_bits[(in) >> 1] = (hval);              \
+            memprintf("RDP: write8 to %#x = %#x\n", in, hval);          \
         }                                                               \
     }
 
@@ -5948,7 +5956,6 @@ static void rdp_sync_tile(uint32_t w1, uint32_t w2) {
 
 static void rdp_sync_full(uint32_t w1, uint32_t w2) {
     z64gl_command = 0;
-    // printf("RDP: FULL SYNC\n");
     full_synced = 1;
 }
 
@@ -6409,12 +6416,14 @@ int32_t rdp_process_list(uint32_t *dp_start, uint32_t *dp_current, uint32_t *dp_
         if (*dp_status & DP_STATUS_XBUS_DMA) {
             for (i = 0; i < toload; i ++) {
                 rdp_cmd_data[rdp_cmd_ptr] = byteswap_32(rsp_dmem[dp_current_al & 0x3ff]);
+                //printf("RDP: read from DMEM %#x -> %#x\n", 4*dp_current_al, rdp_cmd_data[rdp_cmd_ptr]);
                 rdp_cmd_ptr++;
                 dp_current_al++;
             }
         } else {
             for (i = 0; i < toload; i ++) {
                 RREADIDX32(rdp_cmd_data[rdp_cmd_ptr], dp_current_al);
+                //printf("RDP: read from DRAM %#x -> %#x\n", 4*dp_current_al, rdp_cmd_data[rdp_cmd_ptr]);
                 rdp_cmd_ptr++;
                 dp_current_al++;
             }
@@ -6445,6 +6454,8 @@ int32_t rdp_process_list(uint32_t *dp_start, uint32_t *dp_current, uint32_t *dp_
                     rdp_dasm(string);
                     fprintf(rdp_exec, "%08X: %08X %08X   %s\n", command_counter, rdp_cmd_data[rdp_cmd_cur+0],
                             rdp_cmd_data[rdp_cmd_cur+1], string);
+                    //printf("%08X: %08X %08X   %s\n", command_counter, rdp_cmd_data[rdp_cmd_cur+0],
+                    //       rdp_cmd_data[rdp_cmd_cur+1], string);
                 }
                 command_counter++;
             }
