@@ -10,6 +10,7 @@ use {Interface, UiOutput, Options};
 
 pub struct MinifbInterface {
     receiver: mpsc::Receiver<UiOutput>,
+    title: String,
     size: (usize, usize),
     mode: usize,
     window: Option<Window>,
@@ -27,6 +28,7 @@ impl Interface for MinifbInterface {
            input: Arc<AtomicUsize>, pending_audio: Arc<AtomicUsize>) -> Self {
         MinifbInterface {
             receiver: outrecv,
+            title: format!("Rustendo64_gb: {}", opts.win_title),
             size: (0, 0),
             mode: 0,
             window: None,
@@ -63,10 +65,11 @@ impl MinifbInterface {
         if mode == 0 || w == 0 || h == 0 {
             return;
         }
-        match Window::new(
-            "Rustendo64_gb", w, h, WindowOptions {
-                scale: if w < 640 { Scale::X2 } else { Scale::X1 },
-                ..WindowOptions::default() }) {
+        let opts = WindowOptions {
+            scale: if w < 640 { Scale::X2 } else { Scale::X1 },
+            ..WindowOptions::default()
+        };
+        match Window::new(&self.title, w, h, opts) {
             Ok(win) => {
                 println!("Video: new window with resolution {}x{}, {} bits",
                          w, h, 8 * mode);

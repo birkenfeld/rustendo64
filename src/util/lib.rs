@@ -27,6 +27,12 @@ pub fn read_bin<P: AsRef<Path>>(path: P) -> Box<[u8]> {
     file_buf.into_boxed_slice()
 }
 
+pub fn get_rom_name(rom: &[u8], filename: &str) -> String {
+    let name = String::from_utf8_lossy(&rom[0x20..0x34]).to_owned();
+    let name = name.trim_matches(|c| c == '\0' || c == ' ').to_owned();
+    if name.is_empty() { filename.to_owned() } else { name }
+}
+
 pub fn mult_64_64_unsigned(a: u64, b: u64) -> (u64, u64) {
     // Extract the high and low 32-bit parts, keeping everything as u64s.
     let ah = a >> 32;

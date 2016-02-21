@@ -34,6 +34,7 @@ fn main() {
     let pif_data = util::read_bin(pif_file_name);
     let rom_data = util::read_bin(rom_file_name);
     let options = ui::Options {
+        win_title: util::get_rom_name(&rom_data, rom_file_name),
         mute_audio: arguments.is_present("mute")
     };
 

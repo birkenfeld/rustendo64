@@ -40,6 +40,7 @@ impl UiChannel {
 }
 
 pub struct Options {
+    pub win_title: String,
     pub mute_audio: bool,
 }
 
