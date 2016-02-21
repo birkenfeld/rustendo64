@@ -49,8 +49,9 @@ impl fmt::Debug for Cpu {
             try!(write!(f, "\n"));
         }
         try!(write!(f, "     pc = {:016x}", self.regs.pc));
+        try!(write!(f, "     ic = {:16}", self.regs.instr_ctr));
         try!(write!(f, "     hi = {:016x}     lo = {:016x}", self.reg_hi, self.reg_lo));
-        write!(f, "     ll = {:16}\n", self.reg_llbit)
+        write!(f, "{}", if self.reg_llbit { "  +LL" } else { "" })
     }
 }
 

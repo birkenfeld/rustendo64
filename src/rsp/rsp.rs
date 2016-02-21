@@ -64,7 +64,7 @@ impl fmt::Debug for Rsp {
             }
             try!(write!(f, "\n"));
         }
-        try!(write!(f, "     pc = {:016x}\n\n", self.regs.pc));
+        try!(write!(f, "     pc = {:016x}     ic = {:16}\n\n", self.regs.pc, self.regs.instr_ctr));
         write!(f, "{:?}", self.cp2)
     }
 }
@@ -1096,15 +1096,21 @@ impl Rsp {
                 match vf {
                     VLF_B => {
                         let data = self.cp2.vec[instr.vt()][index ^ 1];
+                        dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
+                                  INDENT, instr.vt(), index, data, addr);
                         self.store_mem(bus, addr, data);
                     }
                     VLF_S => {
                         let data = LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index..]);
+                        dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
+                                  INDENT, instr.vt(), index, data, addr);
                         self.store_mem(bus, addr, data);
                     }
                     VLF_L => {
                         let data = (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index..]) as u32) << 16 |
                                     LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+2..]) as u32;
+                        dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
+                                  INDENT, instr.vt(), index, data, addr);
                         self.store_mem(bus, addr, data);
                     }
                     VLF_D => {
@@ -1112,6 +1118,8 @@ impl Rsp {
                                    (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+2..]) as u64) << 32 |
                                    (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+4..]) as u64) << 16 |
                                     LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+6..]) as u64;
+                        dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
+                                  INDENT, instr.vt(), index, data, addr);
                         self.store_mem(bus, addr, data);
                     }
                     _    => unreachable!()

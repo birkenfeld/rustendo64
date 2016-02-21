@@ -39,7 +39,8 @@ pub enum DebugSpec {
     StateAt(u64),
     BreakAt(u64, bool),  // if true, remove breakpoint after hit
     MemBreak(MemAccess, u64),
-    BreakIn(u64),
+    BreakIn(u64, u64, bool),  // second el is number of instrs to print before
+                              // breaking, if bool is true, dump
 }
 
 /// Represents the desired access type for a memory condition.
@@ -84,6 +85,13 @@ mod parsers  {
         tag!("b:"), map!(integer, |a| DebugSpec::BreakAt(a, false))
     ));
 
+    named!(breakin<DebugSpec>, chain!(
+            tag!("bi:") ~
+        n:  integer     ~
+        ct: opt!(complete!(preceded!(tag!(":"), integer))) ,
+        || { DebugSpec::BreakIn(n, ct.unwrap_or(10), true) }
+    ));
+
     named!(stateat<DebugSpec>, preceded!(
         tag!("d:"), map!(integer, DebugSpec::StateAt)
     ));
@@ -121,7 +129,7 @@ mod parsers  {
     ));
 
     named!(pub debugspec<DebugSpec>, terminated!(
-        alt!(insn | insnfrom | insnname | memrange | breakat | membreak | stateat),
+        alt!(insn | insnfrom | insnname | memrange | breakat | breakin | membreak | stateat),
         eof));
 }
 
@@ -150,8 +158,8 @@ impl fmt::Debug for DebugSpec {
         match *self {
             DebugSpec::BreakAt(a, temp) =>
                 write!(f, "break at {:#x}{}", a, if temp {" once"} else {""}),
-            DebugSpec::BreakIn(n)       =>
-                write!(f, "break in {} instrs", n),
+            DebugSpec::BreakIn(n, p, _)    =>
+                write!(f, "break in {} instrs (print {} before)", n, p),
             DebugSpec::MemBreak(ref acc, a) =>
                 write!(f, "break at {:?} memory access at {:#x}", acc, a),
             DebugSpec::InsnFrom(a, n)   =>
@@ -234,16 +242,18 @@ impl DebugSpecList {
                     dump = true;
                     breakpt = true;
                 }
-                DebugSpec::BreakIn(ref mut n) => {
+                DebugSpec::BreakIn(ref mut n, p, do_dump) => {
                     *n -= 1;
-                    if *n < 10 {
+                    if *n < p {
                         debug_for = max(debug_for, 1);
                     }
                     if *n == 0 {
+                        dump = do_dump;
                         breakpt = true;
                     }
                 }
                 DebugSpec::MemBreak(ref acc, addr) => {
+                    /* TODO: doesn't work for all RSP instructions yet */
                     let hit = match instr.opcode() {
                         LW | LWU | LB | LBU | LH | LHU | LD |
                         LWL | LWR | LDL | LL | LLD | LDC1 | LWC1 => {
@@ -255,7 +265,7 @@ impl DebugSpecList {
                         }
                         _ => false
                     };
-                    // TODO: currently these are virtual addrs!
+                    /* TODO: currently these are virtual addrs! */
                     if hit {
                         let op_addr = gprs[instr.base()]
                             .wrapping_add(instr.imm_sign_ext()) & !0b11;
@@ -271,7 +281,7 @@ impl DebugSpecList {
         }
         self.0.retain(|v| match *v {
             DebugSpec::BreakAt(a, true) if a == pc  => false,
-            DebugSpec::BreakIn(0)                   => false,
+            DebugSpec::BreakIn(0, _, _)             => false,
             _ => true
         });
         (debug_for, dump, breakpt)
@@ -389,7 +399,8 @@ impl<'r, 'c, C: R4300<'c>> Debugger<'r, 'c, C> {
     }
 
     fn step(&mut self, n: Option<u64>) -> bool {
-        self.cpu.get_debug_specs().add_spec(DebugSpec::BreakIn(n.unwrap_or(1)));
+        self.cpu.get_debug_specs().add_spec(DebugSpec::BreakIn(n.unwrap_or(1),
+                                                               10, false));
         true
     }
 
