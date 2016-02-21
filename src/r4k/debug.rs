@@ -395,6 +395,7 @@ impl<'r, 'c, C: R4300<'c>> Debugger<'r, 'c, C> {
 
     fn read_mem(&mut self, addr: Option<u64>, n: Option<u64>) -> bool {
         if let Some(addr) = addr {
+            let addr = addr & !3;  // align it
             for i in 0..n.unwrap_or(1) {
                 // TODO: use a non-panicking version
                 let word = self.cpu.read_word(self.bus, addr + 4*i);
@@ -408,6 +409,10 @@ impl<'r, 'c, C: R4300<'c>> Debugger<'r, 'c, C> {
 
     fn write_mem(&mut self, addr: Option<u64>, word: Option<u64>) -> bool {
         if let Some(addr) = addr {
+            if addr & 3 != 0 {
+                println!("Address is not aligned.");
+                return false;
+            }
             if let Some(word) = word {
                 // TODO: use a non-panicking version
                 self.cpu.write_word(self.bus, addr, word as u32);
