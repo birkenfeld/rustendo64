@@ -427,7 +427,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
     fn debug_read(&self, phys_addr: u64, res: u32) {
         if self.get_regs().check_debug_mem(phys_addr, false) {
             println!("{}", self.get_debug_color().paint(
-                format!("   {:#10x}   Bus read:  {:#10x} :  {:#10x}",
+                format!("  {:#10x}   Bus read:  {:#10x} :  {:#10x}",
                         self.get_regs().pc as u32, phys_addr, res)));
         }
     }
@@ -436,7 +436,7 @@ pub trait R4300<'c> where Self: Sized + fmt::Debug {
     fn debug_write(&self, phys_addr: u64, word: u32) {
         if self.get_regs().check_debug_mem(phys_addr, true) {
             println!("{}", self.get_debug_color().paint(
-                format!("   {:#10x}   Bus write: {:#10x} <- {:#10x}",
+                format!("  {:#10x}   Bus write: {:#10x} <- {:#10x}",
                         self.get_regs().pc as u32, phys_addr, word)));
         }
     }

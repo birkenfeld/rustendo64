@@ -10,7 +10,7 @@ use byteorder::{ByteOrder, BigEndian, LittleEndian};
 #[cfg(debug_assertions)]
 use ansi_term;
 
-use cp2::Cp2;
+use cp2::{Cp2, format_vec};
 use tables::{SimdTables, RECIPROCAL_ROM};
 use bus::{Bus, RamAccess};
 use bus::mem_map::*;
@@ -172,14 +172,14 @@ impl<'c> R4300<'c> for Rsp {
             MF => {
                 let reg_addr = COP0_REG_MAP[instr.rd()];
                 let data = self.read_word_raw(bus, reg_addr);
-                dprintln!(self, "{} cp0[{:2}] :  {:#18x}", INDENT, instr.rd(), data);
+                dprintln!(self, "{} cp0[{:02}] :  {:#18x}", INDENT, instr.rd(), data);
                 self.debug_read(reg_addr as u64, data);
                 self.write_gpr(instr.rt(), data as i32 as u64);
             }
             MT => {
                 let reg_addr = COP0_REG_MAP[instr.rd()];
                 let data = self.read_gpr(instr.rt()) as u32;
-                dprintln!(self, "{} cp0[{:2}] <- {:#18x}", INDENT, instr.rd(), data);
+                dprintln!(self, "{} cp0[{:02}] <- {:#18x}", INDENT, instr.rd(), data);
                 self.write_word_raw(bus, reg_addr, data);
             }
             _  => self.bug(format!("#UD CP0: I {:#b} -- {:?}", instr.0, instr))
@@ -213,7 +213,7 @@ impl<'c> R4300<'c> for Rsp {
                 } else {
                     vec.extract(lo) as u64
                 };
-                dprintln!(self, "{} cp2[v{:2},{}] :  {:#18x}", INDENT, instr.rd(), element, res);
+                dprintln!(self, "{} $v{:02}[{:02}] :   {:#6x}", INDENT, instr.rd(), element, res);
                 self.write_gpr(instr.rt(), res);
             },
             MT => {
@@ -229,7 +229,7 @@ impl<'c> R4300<'c> for Rsp {
                 } else {
                     vec = vec.replace(lo, reg);
                 }
-                dprintln!(self, "{} cp2[v{:2},{}] <- {:#18x}", INDENT, instr.rd(), element, reg);
+                dprintln!(self, "{} $v{:02}[{:02}] <-  {:#6x}", INDENT, instr.rd(), element, reg);
                 self.write_vec(instr.rd(), vec);
             },
             c  => {
@@ -902,19 +902,27 @@ impl Rsp {
                 match vf {
                     VLF_B => {
                         let data = self.load_mem(bus, addr);
+                        dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
+                                  INDENT, instr.vt(), index, data, addr);
                         self.cp2.vec[instr.vt()][index ^ 1] = data;
                     }
                     VLF_S => {
                         let data = self.load_mem(bus, addr);
+                        dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
+                                  INDENT, instr.vt(), index, data, addr);
                         LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index..], data);
                     }
                     VLF_L => {
                         let data: u32 = self.load_mem(bus, addr);
+                        dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
+                                  INDENT, instr.vt(), index, data, addr);
                         LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index..], (data >> 16) as u16);
                         LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index+2..], data as u16);
                     }
                     VLF_D => {
                         let data: u64 = self.load_mem(bus, addr);
+                        dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
+                                  INDENT, instr.vt(), index, data, addr);
                         LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index..], (data >> 48) as u16);
                         LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index+2..], (data >> 32) as u16);
                         LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index+4..], (data >> 16) as u16);
@@ -1289,9 +1297,13 @@ impl Rsp {
     fn vec_binop<F>(&mut self, instr: Instruction, func: F)
         where F: Fn(i16x8, i16x8, &mut Self) -> i16x8
     {
-        let s1 = self.read_vec(instr.vs());
-        let s2 = self.read_and_shuffle_vec(instr.vt(), instr.vel());
-        let res = func(s1, s2, self);
+        let vs = self.read_vec(instr.vs());
+        let vt = self.read_and_shuffle_vec(instr.vt(), instr.vel());
+        dprintln!(self, "{} $v{:02}     :  {}", INDENT, instr.vs(), format_vec(vs));
+        dprintln!(self, "{} $v{:02}{:-4} :  {}", INDENT, instr.vt(),
+                  VEC_EL_SPEC[instr.vel()], format_vec(vt));
+        let res = func(vs, vt, self);
+        dprintln!(self, "{} $v{:02}     <- {}", INDENT, instr.vd(), format_vec(res));
         self.write_vec(instr.vd(), res);
     }
 
@@ -1301,8 +1313,11 @@ impl Rsp {
         let vt_el = self.read_vec(instr.vt()).extract(instr.vs() as u32 & 0x7);
         let vt = self.read_and_shuffle_vec(instr.vt(), instr.vel());
         let vd = self.read_vec(instr.vd());
+        dprintln!(self, "{} $v{:02}[{:02}] :  {}", INDENT, instr.vt(), instr.vs(), vt_el);
         let res_el = func(vt, vt_el, self);
-        self.write_vec(instr.vd(), vd.replace(instr.vel() as u32 & 0x7, res_el));
+        let res = vd.replace(instr.vel() as u32 & 0x7, res_el);
+        dprintln!(self, "{} $v{:02}     <- {}", INDENT, instr.vd(), format_vec(res));
+        self.write_vec(instr.vd(), res);
     }
 
     fn read_vec(&self, index: usize) -> i16x8 {

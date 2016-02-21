@@ -293,7 +293,7 @@ pub const VEC_REG_NAMES: [&'static str; 32] = [
     "$v24", "$v25", "$v26", "$v27", "$v28", "$v29", "$v30", "$v31"];
 
 pub const VEC_EL_SPEC: [&'static str; 16] = [
-    "", "[0q]", "[1q]", "[0h]", "[1h]", "[2h]", "[3h]", "?",
+    "", "", "[0q]", "[1q]", "[0h]", "[1h]", "[2h]", "[3h]",
     "[0]", "[1]", "[2]", "[3]", "[4]", "[5]", "[6]", "[7]"];
 
 #[derive(Clone, Copy, Default)]
@@ -546,7 +546,7 @@ impl fmt::Debug for Instruction {
         }
         macro_rules! vinsm {
             ($name:expr, $a1:tt, $a2:tt, $a3:tt, $a4:tt) => {
-                write!(f, "{:7} {}{}, {}({})", $name, aexp!($a1), aexp!($a2),
+                write!(f, "{:7} {}[{}], {}({})", $name, aexp!($a1), aexp!($a2),
                        aexp!($a3), aexp!($a4)) }
         }
         /// For unknown opcodes, write the full word in hex.
