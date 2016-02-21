@@ -2,7 +2,7 @@ use std::cmp::max;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use mi;
-use IoResult;
+use bus::IoResult;
 use mem_map::*;
 use ui::{UiChannel, UiOutput};
 

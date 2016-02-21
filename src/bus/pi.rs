@@ -2,7 +2,8 @@ use std::cmp::min;
 use byteorder::{BigEndian, ByteOrder};
 
 use mi;
-use {IoResult, RamAccess};
+use bus::IoResult;
+use mem::RamAccess;
 use mem_map::*;
 use util::bit_set;
 

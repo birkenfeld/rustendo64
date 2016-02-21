@@ -1,5 +1,6 @@
 use mi;
-use {IoResult, RamAccess};
+use bus::IoResult;
+use mem::RamAccess;
 use mem_map::*;
 use ui::{UiChannel, UiOutput};
 

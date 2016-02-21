@@ -4,8 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use rdp;
 
 use mi;
+use bus::IoResult;
+use mem::RamAccess;
 use mem_map::*;
-use {IoResult, RamAccess};
 use util::{bit_set, clear_or_set_bit};
 
 pub struct SpRegs {

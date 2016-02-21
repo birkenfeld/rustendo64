@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 
-use IoResult;
+use bus::IoResult;
 use mem_map::*;
 use util::{bit_set, clear_or_set_bit};
 

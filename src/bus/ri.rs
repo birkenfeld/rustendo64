@@ -1,4 +1,4 @@
-use IoResult;
+use bus::IoResult;
 use mem_map::*;
 
 #[derive(Default, Debug)]
