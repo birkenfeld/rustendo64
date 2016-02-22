@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use simd::{u8x16, i16x8};
 use simd::x86::sse2::{Sse2I8x16, Sse2I16x8, Sse2I32x4};
 use simd::x86::ssse3::Ssse3U8x16;
-use byteorder::{ByteOrder, BigEndian, LittleEndian};
+use byteorder::{ByteOrder, BigEndian};
 #[cfg(debug_assertions)]
 use ansi_term;
 
@@ -197,12 +197,13 @@ impl<'c> R4300<'c> for Rsp {
     fn dispatch_cop2_op(&mut self, _: &mut RspBus, instr: Instruction) {
         match instr.cop_op() {
             CF => {
-                // TODO: check rd range (0-2)
-                let flo = self.read_flags(instr.rd(), LO);
-                let fhi = self.read_flags(instr.rd(), HI);
-                let fcomb = flo.packs(fhi);
-                let res = fcomb.move_mask() as i32 as u64;
-                self.write_gpr(instr.rt(), res);
+                if instr.rd() < 3 {
+                    let flo = self.read_flags(instr.rd(), LO);
+                    let fhi = self.read_flags(instr.rd(), HI);
+                    let fcomb = flo.packs(fhi);
+                    let res = fcomb.move_mask() as i32 as u64;
+                    self.write_gpr(instr.rt(), res);
+                }
             },
             MF => {
                 let vec = self.read_vec(instr.vs());
@@ -272,7 +273,7 @@ impl<'c> R4300<'c> for Rsp {
                         8  => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_HI],
                         9  => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_MD],
                         10 => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_LO],
-                        _  => self.cp2.vec[instr.vd()] = [0; 16],
+                        _  => self.cp2.vec[instr.vd()] = i16x8::splat(0),
                     },
                     _     => self.bug(format!("#UD CP2: I {:#b} -- {:?}", instr.0, instr))
                 }
@@ -368,40 +369,48 @@ impl Rsp {
                 let shift = vf as u64 & 0b11;
                 let addr = self.aligned_offset_shift(instr, shift, 1);
                 // NOTE: the patent says this is restricted to 1 << shift.
-                // Games seem to use any values.
-                let index = self.restricted_vel_ls(instr, 1);
-                /* TODO: optimize these with SIMD operations! */
+                // Games seem to use any value.  This will panic when
+                // index + size_of_load > 16.
+                let el = self.restricted_vel_ls(instr, 1);
+                let vel = el as u32 >> 1;
+                let mut vec = self.cp2.vec[instr.vt()];
                 match vf {
                     VLS_B => {
-                        let data = self.load_mem(bus, addr);
+                        let byte: u8 = self.load_mem(bus, addr);
                         dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
-                                  INDENT, instr.vt(), index, data, addr);
-                        self.cp2.vec[instr.vt()][index ^ 1] = data;
+                                  INDENT, instr.vt(), el, byte, addr);
+                        let data = if el & 1 == 0 {
+                            (vec.extract(vel) as u16 & 0x00ff) | (byte as u16) << 8
+                        } else {
+                            (vec.extract(vel) as u16 & 0xff00) | (byte as u16)
+                        };
+                        vec = vec.replace(vel, data as i16);
                     }
                     VLS_S => {
-                        let data = self.load_mem(bus, addr);
+                        let data: u16 = self.load_mem(bus, addr);
                         dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
-                                  INDENT, instr.vt(), index, data, addr);
-                        LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index..], data);
+                                  INDENT, instr.vt(), el, data, addr);
+                        vec = vec.replace(vel, data as i16);
                     }
                     VLS_L => {
                         let data: u32 = self.load_mem(bus, addr);
                         dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
-                                  INDENT, instr.vt(), index, data, addr);
-                        LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index..], (data >> 16) as u16);
-                        LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index+2..], data as u16);
+                                  INDENT, instr.vt(), el, data, addr);
+                        vec = vec.replace(vel,     (data >> 16) as i16)
+                                 .replace(vel + 1, data as i16);
                     }
                     VLS_D => {
                         let data: u64 = self.load_mem(bus, addr);
                         dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
-                                  INDENT, instr.vt(), index, data, addr);
-                        LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index..], (data >> 48) as u16);
-                        LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index+2..], (data >> 32) as u16);
-                        LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index+4..], (data >> 16) as u16);
-                        LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index+6..], data as u16);
+                                  INDENT, instr.vt(), el, data, addr);
+                        vec = vec.replace(vel,     (data >> 48) as i16)
+                                 .replace(vel + 1, (data >> 32) as i16)
+                                 .replace(vel + 2, (data >> 16) as i16)
+                                 .replace(vel + 3, data as i16);
                     }
                     _ => unreachable!()
                 }
+                self.cp2.vec[instr.vt()] = vec;
             },
             VLS_Q | VLS_R => {
                 // Load left/right part of quadword into part of the vector.
@@ -413,7 +422,7 @@ impl Rsp {
                 BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, aligned_addr));
                 BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, aligned_addr + 8));
                 let val = u8x16::load(&buffer, 0);
-                let reg = u8x16::load(&self.cp2.vec[instr.vt()], 0);
+                let reg = self.read_vec_u8(instr.vt());
                 let result = if vf == VLS_Q {
                     let mask = self.tables.keep_swap_r[offset as usize];
                     let shift = self.tables.shift_swap_l[offset as usize];
@@ -424,7 +433,7 @@ impl Rsp {
                     let shift = self.tables.shift_swap_r[16 - offset as usize];
                     (reg & mask) | val.shuffle_bytes(shift)
                 };
-                result.store(&mut self.cp2.vec[instr.vt()], 0);
+                self.write_vec_u8(instr.vt(), result);
                 dprintln!(self, "{} $v{:02}     <- {} :  mem @ {:#x}",
                           INDENT, instr.vt(), format_vec(self.read_vec(instr.vt())), addr);
             },
@@ -491,36 +500,40 @@ impl Rsp {
                 // indexed by element.  Other parts are unaffected.
                 let shift = vf as u64 & 0b11;
                 let addr = self.aligned_offset_shift(instr, shift, 1);
-                // NOTE: the patent says this is restricted to 1 << shift.
-                // Games seem to use any values.
-                let index = self.restricted_vel_ls(instr, 1);
+                let el = self.restricted_vel_ls(instr, 1);
+                let vel = el as u32 >> 1;
+                let vec = self.cp2.vec[instr.vt()].to_u16();
                 match vf {
                     VLS_B => {
-                        let data = self.cp2.vec[instr.vt()][index ^ 1];
+                        let byte = if el & 1 == 0 {
+                            (vec.extract(vel) >> 8) as u8
+                        } else {
+                            (vec.extract(vel) as u8)
+                        };
                         dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
-                                  INDENT, instr.vt(), index, data, addr);
-                        self.store_mem(bus, addr, data);
+                                  INDENT, instr.vt(), el, byte, addr);
+                        self.store_mem(bus, addr, byte);
                     }
                     VLS_S => {
-                        let data = LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index..]);
+                        let data = vec.extract(vel);
                         dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
-                                  INDENT, instr.vt(), index, data, addr);
+                                  INDENT, instr.vt(), el, data, addr);
                         self.store_mem(bus, addr, data);
                     }
                     VLS_L => {
-                        let data = (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index..]) as u32) << 16 |
-                                    LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+2..]) as u32;
+                        let data = (vec.extract(vel)     as u32) << 16 |
+                                    vec.extract(vel + 1) as u32;
                         dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
-                                  INDENT, instr.vt(), index, data, addr);
+                                  INDENT, instr.vt(), el, data, addr);
                         self.store_mem(bus, addr, data);
                     }
                     VLS_D => {
-                        let data = (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index..]) as u64) << 48 |
-                                   (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+2..]) as u64) << 32 |
-                                   (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+4..]) as u64) << 16 |
-                                    LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+6..]) as u64;
+                        let data = (vec.extract(vel)     as u64) << 48 |
+                                   (vec.extract(vel + 1) as u64) << 32 |
+                                   (vec.extract(vel + 2) as u64) << 16 |
+                                    vec.extract(vel + 3) as u64;
                         dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
-                                  INDENT, instr.vt(), index, data, addr);
+                                  INDENT, instr.vt(), el, data, addr);
                         self.store_mem(bus, addr, data);
                     }
                     _    => unreachable!()
@@ -536,7 +549,7 @@ impl Rsp {
                 BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, aligned_addr));
                 BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, aligned_addr + 8));
                 let val = u8x16::load(&buffer, 0);
-                let reg = u8x16::load(&self.cp2.vec[instr.vt()], 0);
+                let reg = self.read_vec_u8(instr.vt());
                 let result = if vf == VLS_Q {
                     let mask = self.tables.keep_l[offset as usize];
                     let shift = self.tables.shift_r[offset as usize];
@@ -594,7 +607,7 @@ impl Rsp {
                 // Store bytes from vector, starting at element and wrapping around.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 let el = self.restricted_vel_ls(instr, 1);  // any value allowed
-                let vec = u8x16::load(&self.cp2.vec[instr.vt()], 0);
+                let vec = self.read_vec_u8(instr.vt());
                 let vec = vec.shuffle_bytes(self.tables.rot_swap_l[el]);
                 let mut buffer = [0_u8; 16];
                 vec.store(&mut buffer, 0);
@@ -649,36 +662,48 @@ impl Rsp {
     }
 
     fn read_vec(&self, index: usize) -> i16x8 {
-        unsafe { mem::transmute(u8x16::load(&self.cp2.vec[index], 0)) }
+        self.cp2.vec[index]
+    }
+
+    fn read_vec_u8(&self, index: usize) -> u8x16 {
+        unsafe { mem::transmute_copy(&self.cp2.vec[index]) }
     }
 
     fn read_and_shuffle_vec(&self, index: usize, elements: usize) -> i16x8 {
-        let vec = u8x16::load(&self.cp2.vec[index], 0);
-        let vec = vec.shuffle_bytes(self.tables.el_shuf[elements]);
+        let vec = self.read_vec_u8(index).shuffle_bytes(self.tables.el_shuf[elements]);
         unsafe { mem::transmute(vec) }
     }
 
     fn write_vec(&mut self, index: usize, value: i16x8) {
-        let res: u8x16 = unsafe {  mem::transmute(value) };
-        res.store(&mut self.cp2.vec[index], 0);
+        self.cp2.vec[index] = value;
+    }
+
+    fn write_vec_u8(&mut self, index: usize, value: u8x16) {
+        self.cp2.vec[index] = unsafe { mem::transmute(value) };
     }
 
     pub fn read_acc(&self, index: usize) -> i16x8 {
-        unsafe { mem::transmute(u8x16::load(&self.cp2.acc[index], 0)) }
+        self.cp2.acc[index]
     }
 
     pub fn write_acc(&mut self, index: usize, value: i16x8) {
-        let res: u8x16 = unsafe {  mem::transmute(value) };
-        res.store(&mut self.cp2.acc[index], 0);
+        self.cp2.acc[index] = value;
     }
 
     pub fn read_flags(&self, index: usize, offset: usize) -> i16x8 {
-        unsafe { mem::transmute(u8x16::load(&self.cp2.flags[index], offset)) }
+        if offset == 0 {
+            self.cp2.flags[index].0
+        } else {
+            self.cp2.flags[index].1
+        }
     }
 
     pub fn write_flags(&mut self, index: usize, offset: usize, value: i16x8) {
-        let res: u8x16 = unsafe {  mem::transmute(value) };
-        res.store(&mut self.cp2.flags[index], offset);
+        if offset == 0 {
+            self.cp2.flags[index].0 = value;
+        } else {
+            self.cp2.flags[index].1 = value;
+        }
     }
 
     pub fn get_cp2(&mut self) -> &mut Cp2 {

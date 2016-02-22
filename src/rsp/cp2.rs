@@ -1,6 +1,5 @@
 use std::fmt;
 use simd::i16x8;
-use byteorder::{ByteOrder, LittleEndian};
 
 const NUM_VREGS: usize = 32;
 
@@ -8,7 +7,7 @@ pub const VCO: usize = 0;
 pub const VCC: usize = 1;
 pub const VCE: usize = 2;
 pub const HI:  usize = 0;
-pub const LO:  usize = 16;
+pub const LO:  usize = 1;
 
 pub const ACC_HI:  usize = 0;
 pub const ACC_MD:  usize = 1;
@@ -16,10 +15,9 @@ pub const ACC_LO:  usize = 2;
 
 #[allow(dead_code)]
 pub struct Cp2 {
-    /* TODO: is it faster to store them as SIMD types? */
-    pub vec:     [[u8; 16]; NUM_VREGS],
-    pub flags:   [[u8; 32]; 3],
-    pub acc:     [[u8; 16]; 3],
+    pub vec:     [i16x8; NUM_VREGS],
+    pub flags:   [(i16x8, i16x8); 3],
+    pub acc:     [i16x8; 3],
 
     pub div_out: i16,
     pub div_in:  i16,
@@ -29,9 +27,9 @@ pub struct Cp2 {
 impl Default for Cp2 {
     fn default() -> Self {
         Cp2 {
-            vec:     [[0; 16]; NUM_VREGS],
-            flags:   [[0; 32]; 3],
-            acc:     [[0; 16]; 3],
+            vec:     [i16x8::splat(0); NUM_VREGS],
+            flags:   [(i16x8::splat(0), i16x8::splat(0)); 3],
+            acc:     [i16x8::splat(0); 3],
             div_out: 0,
             div_in:  0,
             dp_flag: 0,
@@ -45,25 +43,17 @@ impl fmt::Debug for Cp2 {
             try!(write!(f, " "));
             for col in 0..4 {
                 let i = row + col * 8;
-                try!(write!(f, " {:02} = {} |", i, format_vec_array(&self.vec[i])));
+                try!(write!(f, " {:02} = {} |", i, format_vec(self.vec[i])));
             }
             try!(write!(f, "\n"));
         }
-        // XXX flags, acc
-        write!(f, "")
+        try!(write!(f, " "));
+        const N: [&'static str; 3] = ["hi", "md", "lo"];
+        for i in 0..3 {
+            try!(write!(f, " {} = {} |", N[i], format_vec(self.acc[i])));
+        }
+        write!(f, "\n")
     }
-}
-
-pub fn format_vec_array(v: &[u8; 16]) -> String {
-    format!("{:4x} {:4x} {:4x} {:4x} {:4x} {:4x} {:4x} {:4x}",
-            LittleEndian::read_u16(&v[0..]),
-            LittleEndian::read_u16(&v[2..]),
-            LittleEndian::read_u16(&v[4..]),
-            LittleEndian::read_u16(&v[6..]),
-            LittleEndian::read_u16(&v[8..]),
-            LittleEndian::read_u16(&v[10..]),
-            LittleEndian::read_u16(&v[12..]),
-            LittleEndian::read_u16(&v[14..]))
 }
 
 pub fn format_vec(v: i16x8) -> String {
