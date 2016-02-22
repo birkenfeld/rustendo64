@@ -9,6 +9,7 @@ extern crate rustendo64_util as util;
 mod rsp;
 mod cp2;
 mod vops;
+mod mops;
 mod tables;
 
 pub use self::rsp::Rsp;

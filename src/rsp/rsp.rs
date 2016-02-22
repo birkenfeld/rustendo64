@@ -11,7 +11,8 @@ use byteorder::{ByteOrder, BigEndian, LittleEndian};
 use ansi_term;
 
 use vops;
-use cp2::{Cp2, format_vec, HI, LO, ACC_HI, ACC_MD, ACC_LO};
+use mops;
+use cp2::{Cp2, ACC_HI, ACC_MD, ACC_LO, HI, LO};
 use tables::SimdTables;
 use bus::{Bus, RamAccess};
 use bus::mem_map::*;
@@ -19,6 +20,8 @@ use r4k::{R4300, R4300Common, MemFmt};
 use r4k::instruction::*;
 use r4k::debug::DebugSpecList;
 use util::bit_set;
+#[cfg(debug_assertions)]
+use cp2::format_vec;
 
 /// Maps RSP CP0 register indices to bus addresses.
 pub const COP0_REG_MAP: [u32; 16] = [
@@ -265,13 +268,11 @@ impl<'c> R4300<'c> for Rsp {
                     VRCPH | VRSQH => self.vec_elop(instr, vops::vrcph_vrsqh),
                     VRCP | VRCPL | VRSQ | VRSQL => self.vec_elop(instr, vops::vrcp_vrsqh),
                     VEQ | VGE | VLT | VNE => self.vec_binop(instr, vops::vcmp),
-                    VSAR  => {
-                        match instr.vel() {
-                            8  => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_HI],
-                            9  => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_MD],
-                            10 => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_LO],
-                            _  => self.cp2.vec[instr.vd()] = [0; 16],
-                        }
+                    VSAR  => match instr.vel() {
+                        8  => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_HI],
+                        9  => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_MD],
+                        10 => self.cp2.vec[instr.vd()] = self.cp2.acc[ACC_LO],
+                        _  => self.cp2.vec[instr.vd()] = [0; 16],
                     },
                     _     => self.bug(format!("#UD CP2: I {:#b} -- {:?}", instr.0, instr))
                 }
@@ -359,9 +360,9 @@ impl Rsp {
     }
 
     fn mem_load_vec(&mut self, bus: &RspBus, instr: Instruction) {
-        let vf = instr.vec_fmt();
+        let vf = instr.vls_fmt();
         match vf {
-            VLF_B | VLF_S | VLF_L | VLF_D => {
+            VLS_B | VLS_S | VLS_L | VLS_D => {
                 // Load byte/hword/word/dword into part of the vector
                 // indexed by element.  Other parts are unaffected.
                 let shift = vf as u64 & 0b11;
@@ -371,26 +372,26 @@ impl Rsp {
                 let index = self.restricted_vel_ls(instr, 1);
                 /* TODO: optimize these with SIMD operations! */
                 match vf {
-                    VLF_B => {
+                    VLS_B => {
                         let data = self.load_mem(bus, addr);
                         dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
                                   INDENT, instr.vt(), index, data, addr);
                         self.cp2.vec[instr.vt()][index ^ 1] = data;
                     }
-                    VLF_S => {
+                    VLS_S => {
                         let data = self.load_mem(bus, addr);
                         dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
                                   INDENT, instr.vt(), index, data, addr);
                         LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index..], data);
                     }
-                    VLF_L => {
+                    VLS_L => {
                         let data: u32 = self.load_mem(bus, addr);
                         dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
                                   INDENT, instr.vt(), index, data, addr);
                         LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index..], (data >> 16) as u16);
                         LittleEndian::write_u16(&mut self.cp2.vec[instr.vt()][index+2..], data as u16);
                     }
-                    VLF_D => {
+                    VLS_D => {
                         let data: u64 = self.load_mem(bus, addr);
                         dprintln!(self, "{} $v{:02}[{:02}] <- {:#18x} :  mem @ {:#x}",
                                   INDENT, instr.vt(), index, data, addr);
@@ -402,19 +403,18 @@ impl Rsp {
                     _ => unreachable!()
                 }
             },
-            VLF_Q | VLF_R => {
+            VLS_Q | VLS_R => {
                 // Load left/right part of quadword into part of the vector.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 self.restricted_vel_ls(instr, 16);  // ensure zero
                 let offset = addr & 0b1111;
                 let aligned_addr = addr & !0b1111;
                 let mut buffer = [0_u8; 16];
-                // XXX: implement load_from for u8x16?
                 BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, aligned_addr));
                 BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, aligned_addr + 8));
                 let val = u8x16::load(&buffer, 0);
                 let reg = u8x16::load(&self.cp2.vec[instr.vt()], 0);
-                let result = if vf == VLF_Q {
+                let result = if vf == VLS_Q {
                     let mask = self.tables.keep_swap_r[offset as usize];
                     let shift = self.tables.shift_swap_l[offset as usize];
                     (reg & mask) | val.shuffle_bytes(shift)
@@ -428,114 +428,40 @@ impl Rsp {
                 dprintln!(self, "{} $v{:02}     <- {} :  mem @ {:#x}",
                           INDENT, instr.vt(), format_vec(self.read_vec(instr.vt())), addr);
             },
-            VLF_P | VLF_U => {
+            VLS_P | VLS_U => {
                 // Load packed 8-bit signed/unsigned into 16-bit vectors.
                 let addr = self.aligned_offset_shift(instr, 3, 1);
                 self.restricted_vel_ls(instr, 16);  // ensure zero
-                let dword: u64 = self.load_mem(bus, addr);
-                let result = if vf == VLF_P {
-                    i16x8::new(
-                        ((dword >> 48) & 0xff00) as i16,
-                        ((dword >> 40) & 0xff00) as i16,
-                        ((dword >> 32) & 0xff00) as i16,
-                        ((dword >> 24) & 0xff00) as i16,
-                        ((dword >> 16) & 0xff00) as i16,
-                        ((dword >> 8)  & 0xff00) as i16,
-                        ( dword        & 0xff00) as i16,
-                        ((dword << 8)  & 0xff00) as i16,
-                    )
+                let dword = self.load_mem(bus, addr);
+                let result = if vf == VLS_P {
+                    mops::pack_signed(dword)
                 } else {
-                    i16x8::new(
-                        ((dword >> 49) & 0x7f80) as i16,
-                        ((dword >> 41) & 0x7f80) as i16,
-                        ((dword >> 33) & 0x7f80) as i16,
-                        ((dword >> 25) & 0x7f80) as i16,
-                        ((dword >> 17) & 0x7f80) as i16,
-                        ((dword >> 9)  & 0x7f80) as i16,
-                        ((dword >> 1)  & 0x7f80) as i16,
-                        ((dword << 7)  & 0x7f80) as i16,
-                    )
+                    mops::pack_unsigned(dword)
                 };
                 self.write_vec(instr.vt(), result);
             },
-            VLF_H => {
+            VLS_H => {
                 // Load packed bytes from 2 dwords with 2-byte stride into 16-bit vectors.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 // unaligned is allowed, but we load from aligned
                 let aligned_addr = addr & !15;
                 self.restricted_vel_ls(instr, 16);  // ensure zero
-                let dw1: u64 = self.load_mem(bus, aligned_addr);
-                let dw2: u64 = self.load_mem(bus, aligned_addr + 8);
-                let result = if addr & 1 == 0 {
-                    i16x8::new(
-                        ((dw1 >> 49) & 0x7f80) as i16,
-                        ((dw1 >> 33) & 0x7f80) as i16,
-                        ((dw1 >> 17) & 0x7f80) as i16,
-                        ((dw1 >> 1)  & 0x7f80) as i16,
-                        ((dw2 >> 49) & 0x7f80) as i16,
-                        ((dw2 >> 33) & 0x7f80) as i16,
-                        ((dw2 >> 17) & 0x7f80) as i16,
-                        ((dw2 >> 1)  & 0x7f80) as i16
-                    )
-                } else {
-                    i16x8::new(
-                        ((dw1 >> 41) & 0x7f80) as i16,
-                        ((dw1 >> 25) & 0x7f80) as i16,
-                        ((dw1 >> 9)  & 0x7f80) as i16,
-                        ((dw1 << 7)  & 0x7f80) as i16,
-                        ((dw2 >> 41) & 0x7f80) as i16,
-                        ((dw2 >> 25) & 0x7f80) as i16,
-                        ((dw2 >> 9)  & 0x7f80) as i16,
-                        ((dw2 << 7)  & 0x7f80) as i16
-                    )
-                };
+                let dw1 = self.load_mem(bus, aligned_addr);
+                let dw2 = self.load_mem(bus, aligned_addr + 8);
+                let result = mops::pack_unsigned_alternate(dw1, dw2, addr & 1);
                 self.write_vec(instr.vt(), result);
             },
-            VLF_F => {
+            VLS_F => {
                 // Load bytes from 2 dwords with 4-byte stride into 16-bit vectors.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 let aligned_addr = addr & !15;
                 let el = self.restricted_vel_ls(instr, 8);  // ensure 0 or 8
-                let dw1: u64 = self.load_mem(bus, aligned_addr);
-                let dw2: u64 = self.load_mem(bus, aligned_addr + 8);
-                let v1;
-                let v2;
-                let v3;
-                let v4;
-                match addr & 3 {
-                    0 => {
-                        v1 = ((dw1 >> 49) & 0x7f80) as i16;
-                        v2 = ((dw1 >> 17) & 0x7f80) as i16;
-                        v3 = ((dw2 >> 49) & 0x7f80) as i16;
-                        v4 = ((dw2 >> 17) & 0x7f80) as i16;
-                    },
-                    1 => {
-                        v1 = ((dw1 >> 41) & 0x7f80) as i16;
-                        v2 = ((dw1 >> 9)  & 0x7f80) as i16;
-                        v3 = ((dw2 >> 41) & 0x7f80) as i16;
-                        v4 = ((dw2 >> 9)  & 0x7f80) as i16;
-                    },
-                    2 => {
-                        v1 = ((dw1 >> 33) & 0x7f80) as i16;
-                        v2 = ((dw1 >> 1)  & 0x7f80) as i16;
-                        v3 = ((dw2 >> 33) & 0x7f80) as i16;
-                        v4 = ((dw2 >> 1)  & 0x7f80) as i16;
-                    },
-                    _ => {
-                        v1 = ((dw1 >> 25) & 0x7f80) as i16;
-                        v2 = ((dw1 << 7)  & 0x7f80) as i16;
-                        v3 = ((dw2 >> 25) & 0x7f80) as i16;
-                        v4 = ((dw2 << 7)  & 0x7f80) as i16;
-                    }
-                }
-                let result = if el == 0 {
-                    i16x8::new(0, 0, 0, 0, v1, v2, v3, v4)
-                } else {
-                    i16x8::new(v1, v2, v3, v4, 0, 0, 0, 0)
-                };
+                let dw1 = self.load_mem(bus, aligned_addr);
+                let dw2 = self.load_mem(bus, aligned_addr + 8);
+                let result = mops::pack_unsigned_fourths(dw1, dw2, addr & 3, el == 0);
                 self.write_vec(instr.vt(), result);
             },
-            VLF_T => {
+            VLS_T => {
                 // Load 16-bit elements into up to 8 different vectors
                 let addr = self.aligned_offset_shift(instr, 4, 16);
                 let el = self.restricted_vel_ls(instr, 2);
@@ -549,7 +475,7 @@ impl Rsp {
                 for i in 0..min(8, 32 - vt) {
                     let vec = self.read_vec(vt + i);
                     self.write_vec(vt + i, vec.replace((i as u32 + 8 - vel) % 8,
-                                                       // This is actually ok!
+                                                       // BigEndian is actually correct!
                                                        BigEndian::read_i16(&buffer[i*2..])));
                 }
             }
@@ -558,9 +484,9 @@ impl Rsp {
     }
 
     fn mem_store_vec(&mut self, bus: &mut RspBus, instr: Instruction) {
-        let vf = instr.vec_fmt();
+        let vf = instr.vls_fmt();
         match vf {
-            VLF_B | VLF_S | VLF_L | VLF_D => {
+            VLS_B | VLS_S | VLS_L | VLS_D => {
                 // Store byte/hword/word/dword part of the vector
                 // indexed by element.  Other parts are unaffected.
                 let shift = vf as u64 & 0b11;
@@ -569,26 +495,26 @@ impl Rsp {
                 // Games seem to use any values.
                 let index = self.restricted_vel_ls(instr, 1);
                 match vf {
-                    VLF_B => {
+                    VLS_B => {
                         let data = self.cp2.vec[instr.vt()][index ^ 1];
                         dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
                                   INDENT, instr.vt(), index, data, addr);
                         self.store_mem(bus, addr, data);
                     }
-                    VLF_S => {
+                    VLS_S => {
                         let data = LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index..]);
                         dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
                                   INDENT, instr.vt(), index, data, addr);
                         self.store_mem(bus, addr, data);
                     }
-                    VLF_L => {
+                    VLS_L => {
                         let data = (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index..]) as u32) << 16 |
                                     LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+2..]) as u32;
                         dprintln!(self, "{} $v{:02}[{:02}] :  {:#18x} -> mem @ {:#x}",
                                   INDENT, instr.vt(), index, data, addr);
                         self.store_mem(bus, addr, data);
                     }
-                    VLF_D => {
+                    VLS_D => {
                         let data = (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index..]) as u64) << 48 |
                                    (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+2..]) as u64) << 32 |
                                    (LittleEndian::read_u16(&self.cp2.vec[instr.vt()][index+4..]) as u64) << 16 |
@@ -600,7 +526,7 @@ impl Rsp {
                     _    => unreachable!()
                 }
             },
-            VLF_Q | VLF_R => {
+            VLS_Q | VLS_R => {
                 // Store part of the vector into left/right part of quadword.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 self.restricted_vel_ls(instr, 16);  // ensure zero
@@ -611,10 +537,9 @@ impl Rsp {
                 BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, aligned_addr + 8));
                 let val = u8x16::load(&buffer, 0);
                 let reg = u8x16::load(&self.cp2.vec[instr.vt()], 0);
-                let result = if vf == VLF_Q {
+                let result = if vf == VLS_Q {
                     let mask = self.tables.keep_l[offset as usize];
                     let shift = self.tables.shift_r[offset as usize];
-                    // XXX first shift or first swap?
                     (val & mask) | reg.shuffle_bytes(self.tables.bswap).shuffle_bytes(shift)
                 } else {
                     // XXX: panics when offset == 0
@@ -630,126 +555,42 @@ impl Rsp {
                 self.store_mem(bus, aligned_addr, dw1);
                 self.store_mem(bus, aligned_addr + 8, dw2);
             },
-            VLF_P | VLF_U => {
+            VLS_P | VLS_U => {
                 // Store packed 8-bit signed/unsigned from 16-bit vectors.
                 let addr = self.aligned_offset_shift(instr, 3, 1);
                 self.restricted_vel_ls(instr, 16);  // ensure zero
                 let vec = self.read_vec(instr.vt());
-                let dword = if vf == VLF_P {
-                    ((vec.extract(0) as u64) & 0xff00) << 48 |
-                    ((vec.extract(1) as u64) & 0xff00) << 40 |
-                    ((vec.extract(2) as u64) & 0xff00) << 32 |
-                    ((vec.extract(3) as u64) & 0xff00) << 24 |
-                    ((vec.extract(4) as u64) & 0xff00) << 16 |
-                    ((vec.extract(5) as u64) & 0xff00) << 8  |
-                    ((vec.extract(6) as u64) & 0xff00)       |
-                    ((vec.extract(7) as u64) & 0xff00) >> 8
+                let dword = if vf == VLS_P {
+                    mops::unpack_signed(vec)
                 } else {
-                    ((vec.extract(0) as u64) & 0x7f80) << 49 |
-                    ((vec.extract(1) as u64) & 0x7f80) << 41 |
-                    ((vec.extract(2) as u64) & 0x7f80) << 33 |
-                    ((vec.extract(3) as u64) & 0x7f80) << 25 |
-                    ((vec.extract(4) as u64) & 0x7f80) << 17 |
-                    ((vec.extract(5) as u64) & 0x7f80) << 9  |
-                    ((vec.extract(6) as u64) & 0x7f80) << 1  |
-                    ((vec.extract(7) as u64) & 0x7f80) >> 7
+                    mops::unpack_unsigned(vec)
                 };
                 self.store_mem(bus, addr, dword);
             },
-            VLF_H => {
+            VLS_H => {
                 // Store bytes to 2 dwords with 2-byte stride from 16-bit vectors.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 // unaligned is allowed, but we load from aligned
                 let aligned_addr = addr & !15;
                 self.restricted_vel_ls(instr, 16);  // ensure zero
                 let vec = self.read_vec(instr.vt());
-                let (dw1, dw2) = if addr & 1 == 0 {
-                    (
-                        ((vec.extract(0) as u64) & 0x7f80) << 49 |
-                        ((vec.extract(1) as u64) & 0x7f80) << 33 |
-                        ((vec.extract(2) as u64) & 0x7f80) << 17 |
-                        ((vec.extract(3) as u64) & 0x7f80) << 1,
-                        ((vec.extract(4) as u64) & 0x7f80) << 49 |
-                        ((vec.extract(5) as u64) & 0x7f80) << 33 |
-                        ((vec.extract(6) as u64) & 0x7f80) << 17 |
-                        ((vec.extract(7) as u64) & 0x7f80) << 1
-                    )
-                } else {
-                    (
-                        ((vec.extract(0) as u64) & 0x7f80) << 41 |
-                        ((vec.extract(1) as u64) & 0x7f80) << 25 |
-                        ((vec.extract(2) as u64) & 0x7f80) << 9  |
-                        ((vec.extract(3) as u64) & 0x7f80) >> 7,
-                        ((vec.extract(4) as u64) & 0x7f80) << 41 |
-                        ((vec.extract(5) as u64) & 0x7f80) << 25 |
-                        ((vec.extract(6) as u64) & 0x7f80) << 9  |
-                        ((vec.extract(7) as u64) & 0x7f80) >> 7
-                    )
-                };
+                let (dw1, dw2) = mops::unpack_unsigned_alternate(vec, addr & 1);
                 self.store_mem(bus, aligned_addr, dw1);
                 self.store_mem(bus, aligned_addr + 8, dw2);
             },
-            VLF_F => {
+            VLS_F => {
                 // Store bytes to 2 dwords with 4-byte stride from 16-bit vectors.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 let aligned_addr = addr & !15;
                 let el = self.restricted_vel_ls(instr, 8);  // ensure 0 or 8
                 let vec = self.read_vec(instr.vt());
-                let mut dw1: u64 = self.load_mem(bus, aligned_addr);
-                let mut dw2: u64 = self.load_mem(bus, aligned_addr + 8);
-                let v1;
-                let v2;
-                let v3;
-                let v4;
-                if el == 0 {
-                    v1 = vec.extract(4);
-                    v2 = vec.extract(5);
-                    v3 = vec.extract(6);
-                    v4 = vec.extract(7);
-                } else {
-                    v1 = vec.extract(0);
-                    v2 = vec.extract(1);
-                    v3 = vec.extract(2);
-                    v4 = vec.extract(3);
-                }
-                match addr & 3 {
-                    0 => {
-                        dw1 = (dw1 & 0x00ffffff_00ffffff) |
-                              (((v1 as u64) & 0x7f80) << 49) |
-                              (((v2 as u64) & 0x7f80) << 17);
-                        dw2 = (dw2 & 0x00ffffff_00ffffff) |
-                              (((v3 as u64) & 0x7f80) << 49) |
-                              (((v4 as u64) & 0x7f80) << 17);
-                    },
-                    1 => {
-                        dw1 = (dw1 & 0xff00ffff_ff00ffff) |
-                              (((v1 as u64) & 0x7f80) << 41) |
-                              (((v2 as u64) & 0x7f80) << 9);
-                        dw2 = (dw2 & 0xff00ffff_ff00ffff) |
-                              (((v3 as u64) & 0x7f80) << 41) |
-                              (((v4 as u64) & 0x7f80) << 9);
-                    },
-                    2 => {
-                        dw1 = (dw1 & 0xffff00ff_ffff00ff) |
-                              (((v1 as u64) & 0x7f80) << 33) |
-                              (((v2 as u64) & 0x7f80) << 1);
-                        dw2 = (dw2 & 0xffff00ff_ffff00ff) |
-                              (((v3 as u64) & 0x7f80) << 33) |
-                              (((v4 as u64) & 0x7f80) << 1);
-                    },
-                    _ => {
-                        dw1 = (dw1 & 0xffffff00_ffffff00) |
-                              (((v1 as u64) & 0x7f80) << 25) |
-                              (((v2 as u64) & 0x7f80) >> 7);
-                        dw2 = (dw2 & 0xffffff00_ffffff00) |
-                              (((v3 as u64) & 0x7f80) << 25) |
-                              (((v4 as u64) & 0x7f80) >> 7);
-                    }
-                }
+                let dw1 = self.load_mem(bus, aligned_addr);
+                let dw2 = self.load_mem(bus, aligned_addr + 8);
+                let (dw1, dw2) = mops::unpack_unsigned_fourths(vec, dw1, dw2, addr & 3, el == 0);
                 self.store_mem(bus, aligned_addr, dw1);
                 self.store_mem(bus, aligned_addr + 8, dw2);
             },
-            VLF_W => {
+            VLS_W => {
                 // Store bytes from vector, starting at element and wrapping around.
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 let el = self.restricted_vel_ls(instr, 1);  // any value allowed
@@ -760,7 +601,7 @@ impl Rsp {
                 self.store_mem(bus, addr, BigEndian::read_u64(&buffer[0..]));
                 self.store_mem(bus, addr + 8, BigEndian::read_u64(&buffer[8..]));
             },
-            VLF_T => {
+            VLS_T => {
                 // Store 16-bit elements from up to 8 different vectors
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 let el = self.restricted_vel_ls(instr, 1);  // any value allowed

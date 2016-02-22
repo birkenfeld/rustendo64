@@ -253,18 +253,18 @@ pub const FMT_W:   u32 = 0b010100;
 pub const FMT_L:   u32 = 0b010101;
 
 // Vector load/store formats
-pub const VLF_B:   u32 = 0b00000;
-pub const VLF_S:   u32 = 0b00001;
-pub const VLF_L:   u32 = 0b00010;
-pub const VLF_D:   u32 = 0b00011;
-pub const VLF_Q:   u32 = 0b00100;
-pub const VLF_R:   u32 = 0b00101;
-pub const VLF_P:   u32 = 0b00110;
-pub const VLF_U:   u32 = 0b00111;
-pub const VLF_H:   u32 = 0b01000;
-pub const VLF_F:   u32 = 0b01001;
-pub const VLF_W:   u32 = 0b01010;
-pub const VLF_T:   u32 = 0b01011;
+pub const VLS_B:   u32 = 0b00000;
+pub const VLS_S:   u32 = 0b00001;
+pub const VLS_L:   u32 = 0b00010;
+pub const VLS_D:   u32 = 0b00011;
+pub const VLS_Q:   u32 = 0b00100;
+pub const VLS_R:   u32 = 0b00101;
+pub const VLS_P:   u32 = 0b00110;
+pub const VLS_U:   u32 = 0b00111;
+pub const VLS_H:   u32 = 0b01000;
+pub const VLS_F:   u32 = 0b01001;
+pub const VLS_W:   u32 = 0b01010;
+pub const VLS_T:   u32 = 0b01011;
 
 
 // Register names for disassembling
@@ -388,7 +388,7 @@ impl Instruction {
     }
 
     /// Vector format -- present in RSP vector load/store instrs.
-    pub fn vec_fmt(self) -> u32 {
+    pub fn vls_fmt(self) -> u32 {
         (self.0 >> 11) & 0b11111
     }
 
@@ -822,34 +822,34 @@ impl fmt::Debug for Instruction {
                     _     => unknown!(),
                 },
             },
-            LWC2    => match self.vec_fmt() {
-                VLF_B => vinsm!("lbv", vt, vel_ls, voff, base),
-                VLF_S => vinsm!("lsv", vt, vel_ls, voff, base),
-                VLF_L => vinsm!("llv", vt, vel_ls, voff, base),
-                VLF_D => vinsm!("ldv", vt, vel_ls, voff, base),
-                VLF_Q => vinsm!("lqv", vt, vel_ls, voff, base),
-                VLF_R => vinsm!("lrv", vt, vel_ls, voff, base),
-                VLF_P => vinsm!("lpv", vt, vel_ls, voff, base),
-                VLF_U => vinsm!("luv", vt, vel_ls, voff, base),
-                VLF_H => vinsm!("lhv", vt, vel_ls, voff, base),
-                VLF_F => vinsm!("lfv", vt, vel_ls, voff, base),
-                VLF_T => vinsm!("ltv", vt, vel_ls, voff, base),
+            LWC2    => match self.vls_fmt() {
+                VLS_B => vinsm!("lbv", vt, vel_ls, voff, base),
+                VLS_S => vinsm!("lsv", vt, vel_ls, voff, base),
+                VLS_L => vinsm!("llv", vt, vel_ls, voff, base),
+                VLS_D => vinsm!("ldv", vt, vel_ls, voff, base),
+                VLS_Q => vinsm!("lqv", vt, vel_ls, voff, base),
+                VLS_R => vinsm!("lrv", vt, vel_ls, voff, base),
+                VLS_P => vinsm!("lpv", vt, vel_ls, voff, base),
+                VLS_U => vinsm!("luv", vt, vel_ls, voff, base),
+                VLS_H => vinsm!("lhv", vt, vel_ls, voff, base),
+                VLS_F => vinsm!("lfv", vt, vel_ls, voff, base),
+                VLS_T => vinsm!("ltv", vt, vel_ls, voff, base),
                 // lwv doesn't exist
                 _     => unknown!(),
             },
-            SWC2    => match self.vec_fmt() {
-                VLF_B => vinsm!("sbv", vt, vel_ls, voff, base),
-                VLF_S => vinsm!("ssv", vt, vel_ls, voff, base),
-                VLF_L => vinsm!("slv", vt, vel_ls, voff, base),
-                VLF_D => vinsm!("sdv", vt, vel_ls, voff, base),
-                VLF_Q => vinsm!("sqv", vt, vel_ls, voff, base),
-                VLF_R => vinsm!("srv", vt, vel_ls, voff, base),
-                VLF_P => vinsm!("spv", vt, vel_ls, voff, base),
-                VLF_U => vinsm!("suv", vt, vel_ls, voff, base),
-                VLF_H => vinsm!("shv", vt, vel_ls, voff, base),
-                VLF_F => vinsm!("sfv", vt, vel_ls, voff, base),
-                VLF_W => vinsm!("swv", vt, vel_ls, voff, base),
-                VLF_T => vinsm!("stv", vt, vel_ls, voff, base),
+            SWC2    => match self.vls_fmt() {
+                VLS_B => vinsm!("sbv", vt, vel_ls, voff, base),
+                VLS_S => vinsm!("ssv", vt, vel_ls, voff, base),
+                VLS_L => vinsm!("slv", vt, vel_ls, voff, base),
+                VLS_D => vinsm!("sdv", vt, vel_ls, voff, base),
+                VLS_Q => vinsm!("sqv", vt, vel_ls, voff, base),
+                VLS_R => vinsm!("srv", vt, vel_ls, voff, base),
+                VLS_P => vinsm!("spv", vt, vel_ls, voff, base),
+                VLS_U => vinsm!("suv", vt, vel_ls, voff, base),
+                VLS_H => vinsm!("shv", vt, vel_ls, voff, base),
+                VLS_F => vinsm!("sfv", vt, vel_ls, voff, base),
+                VLS_W => vinsm!("swv", vt, vel_ls, voff, base),
+                VLS_T => vinsm!("stv", vt, vel_ls, voff, base),
                 _     => unknown!(),
             },
             _       => unknown!(),
