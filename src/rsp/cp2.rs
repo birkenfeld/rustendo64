@@ -4,6 +4,16 @@ use byteorder::{ByteOrder, LittleEndian};
 
 const NUM_VREGS: usize = 32;
 
+pub const VCO: usize = 0;
+pub const VCC: usize = 1;
+pub const VCE: usize = 2;
+pub const HI:  usize = 0;
+pub const LO:  usize = 16;
+
+pub const ACC_HI:  usize = 0;
+pub const ACC_MD:  usize = 1;
+pub const ACC_LO:  usize = 2;
+
 #[allow(dead_code)]
 pub struct Cp2 {
     /* TODO: is it faster to store them as SIMD types? */

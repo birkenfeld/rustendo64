@@ -6,8 +6,9 @@ extern crate rustendo64_r4k as r4k;
 extern crate rustendo64_bus as bus;
 extern crate rustendo64_util as util;
 
-mod cp2;
 mod rsp;
+mod cp2;
+mod vops;
 mod tables;
 
 pub use self::rsp::Rsp;
