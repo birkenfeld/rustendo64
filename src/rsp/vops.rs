@@ -1,4 +1,4 @@
-use simd::{i16x8, bool16ix8, u16x8, i32x4};
+use simd::{i16x8, bool16ix8, i32x4};
 use simd::x86::sse2::{Sse2I16x8, Sse2U16x8, Sse2I32x4};
 
 use rsp::Rsp;
@@ -9,13 +9,38 @@ use r4k::instruction::*;
 // Helpers
 
 #[inline(always)]
-pub fn zero() -> i16x8 {
+fn zero() -> i16x8 {
     i16x8::splat(0)
 }
 
 #[inline(always)]
-pub fn frombool(x: bool16ix8) -> i16x8 {
+fn frombool(x: bool16ix8) -> i16x8 {
     x.select(i16x8::splat(-1), i16x8::splat(0))
+}
+
+trait I16Ext {
+    // Add/sub/mul the i16 items as u16
+    fn addsu(self, other: Self) -> Self;
+    fn subsu(self, other: Self) -> Self;
+    fn mulhiu(self, other: Self) -> Self;
+    // Shift right logical (default is arithmetic)
+    fn srli(self, shift: u32) -> Self;
+    // Compare ops that result not in bools
+    fn i_eq(self, other: Self) -> Self;
+    fn i_ne(self, other: Self) -> Self;
+    fn i_gt(self, other: Self) -> Self;
+    fn i_lt(self, other: Self) -> Self;
+}
+
+impl I16Ext for i16x8 {
+    fn addsu(self, other: Self)  -> Self { self.to_u16().adds(other.to_u16()).to_i16() }
+    fn subsu(self, other: Self)  -> Self { self.to_u16().subs(other.to_u16()).to_i16() }
+    fn mulhiu(self, other: Self) -> Self { self.to_u16().mulhi(other.to_u16()).to_i16() }
+    fn srli(self, shift: u32)  -> Self { (self.to_u16() >> shift).to_i16() }
+    fn i_eq(self, other: Self) -> Self { frombool(self.eq(other)) }
+    fn i_ne(self, other: Self) -> Self { frombool(self.ne(other)) }
+    fn i_gt(self, other: Self) -> Self { frombool(self.gt(other)) }
+    fn i_lt(self, other: Self) -> Self { frombool(self.lt(other)) }
 }
 
 #[allow(dead_code)]
@@ -45,7 +70,7 @@ fn uclamp_acc(val: i16x8, acc_md: i16x8, acc_hi: i16x8) -> i16x8 {
     let md_sign_check = hi_negative.eq(md_negative);
     let clamp_mask = hi_sign_check & md_sign_check;
 
-    let clamped_val = frombool(hi_negative.eq(zero()));
+    let clamped_val = hi_negative.i_eq(zero());
     // Note, this is a 8x16 select while the C code uses a 16x8 blendv.  Still
     // works as intended since simd booleans have all bits set to 1 when true.
     let res = clamp_mask.select(val, clamped_val);
@@ -69,9 +94,9 @@ pub fn vadd(vs: i16x8, vt: i16x8, _: u32, rsp: &mut Rsp) -> i16x8 {
 }
 
 pub fn vaddc(vs: i16x8, vt: i16x8, _: u32, rsp: &mut Rsp) -> i16x8 {
-    let sat_sum = vs.to_u16().adds(vt.to_u16()).to_i16();
+    let sat_sum = vs.addsu(vt);
     let unsat_sum = vs + vt;
-    let sn = frombool(sat_sum.ne(unsat_sum));
+    let sn = sat_sum.i_ne(unsat_sum);
     rsp.write_flags(VCO, HI, zero());
     rsp.write_flags(VCO, LO, sn);
     rsp.write_acc(ACC_LO, unsat_sum);
@@ -84,17 +109,17 @@ pub fn vsub(vs: i16x8, vt: i16x8, _: u32, rsp: &mut Rsp) -> i16x8 {
     let sat_diff = vt.subs(carry);
     rsp.write_acc(ACC_LO, vs - unsat_diff);
     let vd = vs.subs(sat_diff);
-    let overflow = frombool(sat_diff.gt(unsat_diff));
+    let overflow = sat_diff.i_gt(unsat_diff);
     rsp.write_flags(VCO, HI, zero());
     rsp.write_flags(VCO, LO, zero());
     vd.adds(overflow)
 }
 
 pub fn vsubc(vs: i16x8, vt: i16x8, _: u32, rsp: &mut Rsp) -> i16x8 {
-    let sat_udiff = vs.to_u16().subs(vt.to_u16()).to_i16();
-    let equal = frombool(vs.eq(vt));
-    let sat_udiff_zero = frombool(sat_udiff.eq(zero()));
-    let eq = frombool(equal.eq(zero()));
+    let sat_udiff = vs.subsu(vt);
+    let equal = vs.i_eq(vt);
+    let sat_udiff_zero = sat_udiff.i_eq(zero());
+    let eq = equal.i_eq(zero());
     let sn = !equal & sat_udiff_zero;
     let result = vs - vt;
     rsp.write_flags(VCO, HI, eq);
@@ -105,16 +130,16 @@ pub fn vsubc(vs: i16x8, vt: i16x8, _: u32, rsp: &mut Rsp) -> i16x8 {
 
 pub fn vmulx(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
     let lo = vs * vt;
-    let sign1 = ((lo.to_u16() >> 15) as u16x8).to_i16();
+    let sign1 = lo.srli(15);
     let lo = lo + lo;
     let round = i16x8::splat(1 << 15);
     let hi = vs.mulhi(vt);
-    let sign2 = ((lo.to_u16() >> 15) as u16x8).to_i16();
+    let sign2 = lo.srli(15);
     rsp.write_acc(ACC_LO, round + lo);
     let sign1 = sign1 + sign2;
 
     let hi = hi << 1;
-    let eq = frombool(vs.eq(vt));
+    let eq = vs.i_eq(vt);
     let neq = eq;
     let accmd = sign1 + hi;
     rsp.write_acc(ACC_MD, accmd);
@@ -135,7 +160,7 @@ pub fn vmulx(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
 
 pub fn vmxdn(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
     let lo = vs * vt;
-    let hi = vs.to_u16().mulhi(vt.to_u16()).to_i16();
+    let hi = vs.mulhiu(vt);
     let sign = vt >> 15;
     let vs = vs & sign;
     let hi = hi - vs;
@@ -145,17 +170,17 @@ pub fn vmxdn(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
         let acc_md = rsp.read_acc(ACC_MD);
         let acc_hi = rsp.read_acc(ACC_HI);
 
-        let overflow_mask = acc_lo.to_u16().adds(lo.to_u16()).to_i16();
+        let overflow_mask = acc_lo.addsu(lo);
         let acc_lo = acc_lo + lo;
 
-        let overflow_mask = frombool(acc_lo.ne(overflow_mask));
+        let overflow_mask = acc_lo.i_ne(overflow_mask);
 
         let hi = hi - overflow_mask;
 
-        let overflow_mask = acc_md.to_u16().adds(hi.to_u16()).to_i16();
+        let overflow_mask = acc_md.addsu(hi);
         let acc_md = acc_md + hi;
 
-        let overflow_mask = frombool(acc_md.ne(overflow_mask));
+        let overflow_mask = acc_md.i_ne(overflow_mask);
 
         let acc_hi = acc_hi + (hi >> 15);
         let acc_hi = acc_hi - overflow_mask;
@@ -180,10 +205,10 @@ pub fn vmxdh(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
         let acc_md = rsp.read_acc(ACC_MD);
         let acc_hi = rsp.read_acc(ACC_HI);
 
-        let overflow_mask = acc_md.to_u16().adds(lo.to_u16()).to_i16();
+        let overflow_mask = acc_md.addsu(lo);
         let acc_md = acc_md + lo;
 
-        let overflow_mask = frombool(acc_md.ne(overflow_mask));
+        let overflow_mask = acc_md.i_ne(overflow_mask);
 
         let hi = hi - overflow_mask;
         let acc_hi = acc_hi + hi;
@@ -201,23 +226,23 @@ pub fn vmxdh(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
 }
 
 pub fn vmxdl(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
-    let hi = vs.to_u16().mulhi(vt.to_u16()).to_i16();
+    let hi = vs.mulhiu(vt);
 
     if op == VMADL {
         let acc_lo = rsp.read_acc(ACC_LO);
         let acc_md = rsp.read_acc(ACC_MD);
         let acc_hi = rsp.read_acc(ACC_HI);
 
-        let overflow_mask = acc_lo.to_u16().adds(hi.to_u16()).to_i16();
+        let overflow_mask = acc_lo.addsu(hi);
         let acc_lo = acc_lo + hi;
 
-        let overflow_mask = frombool(acc_lo.ne(overflow_mask));
+        let overflow_mask = acc_lo.i_ne(overflow_mask);
         let hi = zero() - overflow_mask;
 
-        let overflow_mask = acc_md.to_u16().adds(hi.to_u16()).to_i16();
+        let overflow_mask = acc_md.addsu(hi);
         let acc_md = acc_md + hi;
 
-        let overflow_mask = frombool(acc_md.ne(overflow_mask));
+        let overflow_mask = acc_md.i_ne(overflow_mask);
         let acc_hi = acc_hi - overflow_mask;
 
         rsp.write_acc(ACC_LO, acc_lo);
@@ -234,7 +259,7 @@ pub fn vmxdl(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
 
 pub fn vmxdm(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
     let lo = vs * vt;
-    let hi = vs.to_u16().mulhi(vt.to_u16()).to_i16();
+    let hi = vs.mulhiu(vt);
     let sign = vs >> 15;
     let vt = vt & sign;
     let hi = hi - vt;
@@ -244,17 +269,17 @@ pub fn vmxdm(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
         let acc_md = rsp.read_acc(ACC_MD);
         let acc_hi = rsp.read_acc(ACC_HI);
 
-        let overflow_mask = acc_lo.to_u16().adds(lo.to_u16()).to_i16();
+        let overflow_mask = acc_lo.addsu(lo);
         let acc_lo = acc_lo + lo;
 
-        let overflow_mask = frombool(acc_lo.ne(overflow_mask));
+        let overflow_mask = acc_lo.i_ne(overflow_mask);
 
         let hi = hi - overflow_mask;
 
-        let overflow_mask = acc_md.to_u16().adds(hi.to_u16()).to_i16();
+        let overflow_mask = acc_md.addsu(hi);
         let acc_md = acc_md + hi;
 
-        let overflow_mask = frombool(acc_md.ne(overflow_mask));
+        let overflow_mask = acc_md.i_ne(overflow_mask);
 
         let acc_hi = acc_hi + (hi >> 15);
         let acc_hi = acc_hi - overflow_mask;
@@ -280,25 +305,25 @@ pub fn vmacx(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
     let hi = vs.mulhi(vt);
 
     let md = hi << 1;
-    let carry = ((lo.to_u16() >> 15) as u16x8).to_i16();
+    let carry = lo.srli(15);
     let hi = hi >> 15;
     let md = md | carry;
     let lo: i16x8 = lo << 1;
 
-    let overflow_mask = acc_lo.to_u16().adds(lo.to_u16()).to_i16();
+    let overflow_mask = acc_lo.addsu(lo);
     let acc_lo = acc_lo + lo;
 
-    let overflow_mask = frombool(acc_lo.ne(overflow_mask));
+    let overflow_mask = acc_lo.i_ne(overflow_mask);
 
     let md: i16x8 = md - overflow_mask;
-    let carry = frombool(md.eq(zero()));
+    let carry = md.i_eq(zero());
     let carry = carry & overflow_mask;
     let hi = hi - carry;
 
-    let overflow_mask = acc_md.to_u16().adds(md.to_u16()).to_i16();
+    let overflow_mask = acc_md.addsu(md);
     let acc_md = acc_md + md;
 
-    let overflow_mask = frombool(acc_md.ne(overflow_mask));
+    let overflow_mask = acc_md.i_ne(overflow_mask);
 
     let acc_hi = acc_hi + hi;
     let acc_hi = acc_hi - overflow_mask;
@@ -307,7 +332,7 @@ pub fn vmacx(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
         let overflow_hi_mask: i16x8 = acc_hi >> 15;
         let overflow_md_mask = acc_md >> 15;
         let md = overflow_md_mask | acc_md;
-        let overflow_mask = frombool(acc_hi.gt(zero()));
+        let overflow_mask = acc_hi.i_gt(zero());
         let md = !overflow_hi_mask & md;
         overflow_mask | md
     } else {
@@ -320,7 +345,7 @@ pub fn vmacx(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
 }
 
 pub fn vabs(vs: i16x8, vt: i16x8, _: u32, rsp: &mut Rsp) -> i16x8 {
-    let vs_zero = frombool(vs.eq(zero()));
+    let vs_zero = vs.i_eq(zero());
     let sign_lt = vs >> 15;
     let vd = !vs_zero & vt;
     let vd = vd ^ sign_lt;
@@ -379,13 +404,13 @@ pub fn vch(vs: i16x8, vt: i16x8, _: u32, rsp: &mut Rsp) -> i16x8 {
     let diff = vs - sign_negvt;
     let diff_zero = diff.eq(zero());
 
-    let vt_neg = frombool(vt.lt(zero()));
+    let vt_neg = vt.i_lt(zero());
     let diff_lez = diff.gt(zero());
-    let diff_gez = diff_lez | diff_zero;
-    let diff_lez = !diff_lez;
+    let diff_gez = frombool(diff_lez | diff_zero);
+    let diff_lez = frombool(!diff_lez);
 
-    let ge = sign_bool.select(vt_neg, frombool(diff_gez));
-    let le = sign_bool.select(frombool(diff_lez), vt_neg);
+    let ge = sign_bool.select(vt_neg, diff_gez);
+    let le = sign_bool.select(diff_lez, vt_neg);
 
     let vce_bool = diff.eq(sign);
     let vce = frombool(vce_bool) & sign;
@@ -418,17 +443,17 @@ pub fn vcl(vs: i16x8, vt: i16x8, _: u32, rsp: &mut Rsp) -> i16x8 {
     let sign_negvt = sign_negvt - sign;
 
     let diff = vs - sign_negvt;
-    let ncarry = vs.to_u16().adds(vt.to_u16()).to_i16();
-    let ncarry = frombool(diff.eq(ncarry));
-    let nvce = frombool(vce.eq(zero()));
-    let diff_zero = frombool(diff.eq(zero()));
+    let ncarry = vs.addsu(vt);
+    let ncarry = diff.i_eq(ncarry);
+    let nvce = vce.i_eq(zero());
+    let diff_zero = diff.i_eq(zero());
 
     let le_case1 = (diff_zero & ncarry) & nvce;
     let le_case2 = (diff_zero | ncarry) & vce;
     let le_eq = le_case1 | le_case2;
 
-    let ge_eq = vt.to_u16().subs(vs.to_u16()).to_i16();
-    let ge_eq = frombool(ge_eq.eq(zero()));
+    let ge_eq = vt.subsu(vs);
+    let ge_eq = ge_eq.i_eq(zero());
 
     let do_le = !eq & sign;
     let le_eq = do_le & le_eq;
@@ -467,7 +492,7 @@ pub fn vcr(vs: i16x8, vt: i16x8, _: u32, rsp: &mut Rsp) -> i16x8 {
 
     let diff_gez = vs | sign;
     let diff_gez = diff_gez.min(vt);
-    let ge = frombool(diff_gez.eq(vt));
+    let ge = diff_gez.i_eq(vt);
 
     let sign_notvt = vt ^ sign;
 
@@ -505,12 +530,12 @@ pub fn vcmp(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
     let eq = rsp.read_flags(VCO, HI);
     let sign = rsp.read_flags(VCO, LO);
 
-    let equal = frombool(vs.eq(vt));
+    let equal = vs.i_eq(vt);
 
     let mut le;
     match op {
         VGE => {
-            let gt = frombool(vs.gt(vt));
+            let gt = vs.i_gt(vt);
             let equalsign = eq & sign;
             let equal = !equalsign & equal;
             le = gt | equal;
@@ -524,7 +549,7 @@ pub fn vcmp(vs: i16x8, vt: i16x8, op: u32, rsp: &mut Rsp) -> i16x8 {
             le = !eq & equal;
         }
         VLT => {
-            let lt = frombool(vs.lt(vt));
+            let lt = vs.i_lt(vt);
             let equal = eq & equal;
             let equal = sign & equal;
             le = lt | equal;
