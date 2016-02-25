@@ -1,6 +1,20 @@
-use simd::i16x8;
+use byteorder::{BigEndian, ByteOrder};
+use simd::{i16x8, u8x16};
 
 // Helpers for the vector <-> memory load/stores.
+
+pub fn u8_from_qword((dw1, dw2): (u64, u64)) -> u8x16 {
+    let mut buffer = [0_u8; 16];
+    BigEndian::write_u64(&mut buffer[0..], dw1);
+    BigEndian::write_u64(&mut buffer[8..], dw2);
+    u8x16::load(&buffer, 0)
+}
+
+pub fn qword_from_u8(vec: u8x16) -> (u64, u64) {
+    let mut buffer = [0_u8; 16];
+    vec.store(&mut buffer, 0);
+    (BigEndian::read_u64(&buffer[0..]), BigEndian::read_u64(&buffer[8..]))
+}
 
 pub fn pack_signed(dword: u64) -> i16x8 {
     i16x8::new(
@@ -50,7 +64,7 @@ pub fn unpack_unsigned(vec: i16x8) -> u64 {
     ((vec.extract(7) as u64) & 0x7f80) >> 7
 }
 
-pub fn pack_unsigned_alternate(dw1: u64, dw2: u64, offset: u64) -> i16x8 {
+pub fn pack_unsigned_alternate((dw1, dw2): (u64, u64), offset: u64) -> i16x8 {
     if offset == 0 {
         i16x8::new(
             ((dw1 >> 49) & 0x7f80) as i16,
@@ -102,7 +116,7 @@ pub fn unpack_unsigned_alternate(vec: i16x8, offset: u64) -> (u64, u64) {
     }
 }
 
-pub fn pack_unsigned_fourths(dw1: u64, dw2: u64, offset: u64, lower: bool) -> i16x8 {
+pub fn pack_unsigned_fourths((dw1, dw2): (u64, u64), offset: u64, lower: bool) -> i16x8 {
     let v1;
     let v2;
     let v3;
@@ -141,7 +155,7 @@ pub fn pack_unsigned_fourths(dw1: u64, dw2: u64, offset: u64, lower: bool) -> i1
     }
 }
 
-pub fn unpack_unsigned_fourths(vec: i16x8, dw1: u64, dw2: u64, offset: u64,
+pub fn unpack_unsigned_fourths(vec: i16x8, (dw1, dw2): (u64, u64), offset: u64,
                                lower: bool) -> (u64, u64) {
     let v1;
     let v2;

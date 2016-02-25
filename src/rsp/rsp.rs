@@ -6,7 +6,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use simd::{u8x16, i16x8};
 use simd::x86::sse2::{Sse2I8x16, Sse2I16x8, Sse2I32x4};
 use simd::x86::ssse3::Ssse3U8x16;
-use byteorder::{ByteOrder, BigEndian};
 #[cfg(debug_assertions)]
 use ansi_term;
 
@@ -360,6 +359,15 @@ impl Rsp {
         vel_ls
     }
 
+    fn load_qword(&mut self, bus: &RspBus, addr: u64) -> (u64, u64) {
+        (self.load_mem(bus, addr), self.load_mem(bus, addr + 8))
+    }
+
+    fn store_qword(&mut self, bus: &mut RspBus, addr: u64, dw1: u64, dw2: u64) {
+        self.store_mem(bus, addr, dw1);
+        self.store_mem(bus, addr + 8, dw2);
+    }
+
     fn mem_load_vec(&mut self, bus: &RspBus, instr: Instruction) {
         let vf = instr.vls_fmt();
         match vf {
@@ -418,10 +426,7 @@ impl Rsp {
                 self.restricted_vel_ls(instr, 16);  // ensure zero
                 let offset = addr & 0b1111;
                 let aligned_addr = addr & !0b1111;
-                let mut buffer = [0_u8; 16];
-                BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, aligned_addr));
-                BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, aligned_addr + 8));
-                let val = u8x16::load(&buffer, 0);
+                let val = mops::u8_from_qword(self.load_qword(bus, aligned_addr));
                 let reg = self.read_vec_u8(instr.vt());
                 let result = if vf == VLS_Q {
                     let mask = self.tables.keep_swap_r[offset as usize];
@@ -455,9 +460,8 @@ impl Rsp {
                 // unaligned is allowed, but we load from aligned
                 let aligned_addr = addr & !15;
                 self.restricted_vel_ls(instr, 16);  // ensure zero
-                let dw1 = self.load_mem(bus, aligned_addr);
-                let dw2 = self.load_mem(bus, aligned_addr + 8);
-                let result = mops::pack_unsigned_alternate(dw1, dw2, addr & 1);
+                let qword = self.load_qword(bus, aligned_addr);
+                let result = mops::pack_unsigned_alternate(qword, addr & 1);
                 self.write_vec(instr.vt(), result);
             },
             VLS_F => {
@@ -465,9 +469,8 @@ impl Rsp {
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 let aligned_addr = addr & !15;
                 let el = self.restricted_vel_ls(instr, 8);  // ensure 0 or 8
-                let dw1 = self.load_mem(bus, aligned_addr);
-                let dw2 = self.load_mem(bus, aligned_addr + 8);
-                let result = mops::pack_unsigned_fourths(dw1, dw2, addr & 3, el == 0);
+                let qword = self.load_qword(bus, aligned_addr);
+                let result = mops::pack_unsigned_fourths(qword, addr & 3, el == 0);
                 self.write_vec(instr.vt(), result);
             },
             VLS_T => {
@@ -475,17 +478,16 @@ impl Rsp {
                 let addr = self.aligned_offset_shift(instr, 4, 16);
                 let el = self.restricted_vel_ls(instr, 2);
                 let vel = el as u32 >> 1;  // element in the vector (0..7)
-                let mut buffer = [0_u8; 16];
-                BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, addr));
-                BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, addr + 8));
+                let val = mops::u8_from_qword(self.load_qword(bus, addr));
                 // if the first vector is e.g. 30, we only do two elements
                 // (others require vt to be divisible by 8)
                 let vt = instr.vt();
                 for i in 0..min(8, 32 - vt) {
-                    let vec = self.read_vec(vt + i);
-                    self.write_vec(vt + i, vec.replace((i as u32 + 8 - vel) % 8,
-                                                       // BigEndian is actually correct!
-                                                       BigEndian::read_i16(&buffer[i*2..])));
+                    let vindex = 2 * ((i as u32 + 8 - vel) % 8);
+                    let vec = self.read_vec_u8(vt + i);
+                    let vec = vec.replace(vindex,     val.extract(i as u32 * 2))
+                                 .replace(vindex + 1, val.extract(i as u32 * 2 + 1));
+                    self.write_vec_u8(vt + i, vec);
                 }
             }
             _ => self.bug(format!("Unimplemented vector load format: {}", vf))
@@ -545,10 +547,7 @@ impl Rsp {
                 self.restricted_vel_ls(instr, 16);  // ensure zero
                 let offset = addr & 0b1111;
                 let aligned_addr = addr & !0b1111;
-                let mut buffer = [0_u8; 16];
-                BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, aligned_addr));
-                BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, aligned_addr + 8));
-                let val = u8x16::load(&buffer, 0);
+                let val = mops::u8_from_qword(self.load_qword(bus, aligned_addr));
                 let reg = self.read_vec_u8(instr.vt());
                 let result = if vf == VLS_Q {
                     let mask = self.tables.keep_l[offset as usize];
@@ -560,13 +559,10 @@ impl Rsp {
                     let shift = self.tables.shift_l[16 - offset as usize];
                     (val & mask) | reg.shuffle_bytes(self.tables.bswap).shuffle_bytes(shift)
                 };
-                result.store(&mut buffer, 0);
-                let dw1 = BigEndian::read_u64(&buffer[0..]);
-                let dw2 = BigEndian::read_u64(&buffer[8..]);
+                let (dw1, dw2) = mops::qword_from_u8(result);
                 dprintln!(self, "{} $v{:02}     :  {:#18x}{:016x} -> mem @ {:#x}",
                           INDENT, instr.vt(), dw1, dw2, addr);
-                self.store_mem(bus, aligned_addr, dw1);
-                self.store_mem(bus, aligned_addr + 8, dw2);
+                self.store_qword(bus, aligned_addr, dw1, dw2);
             },
             VLS_P | VLS_U => {
                 // Store packed 8-bit signed/unsigned from 16-bit vectors.
@@ -588,8 +584,7 @@ impl Rsp {
                 self.restricted_vel_ls(instr, 16);  // ensure zero
                 let vec = self.read_vec(instr.vt());
                 let (dw1, dw2) = mops::unpack_unsigned_alternate(vec, addr & 1);
-                self.store_mem(bus, aligned_addr, dw1);
-                self.store_mem(bus, aligned_addr + 8, dw2);
+                self.store_qword(bus, aligned_addr, dw1, dw2);
             },
             VLS_F => {
                 // Store bytes to 2 dwords with 4-byte stride from 16-bit vectors.
@@ -597,11 +592,9 @@ impl Rsp {
                 let aligned_addr = addr & !15;
                 let el = self.restricted_vel_ls(instr, 8);  // ensure 0 or 8
                 let vec = self.read_vec(instr.vt());
-                let dw1 = self.load_mem(bus, aligned_addr);
-                let dw2 = self.load_mem(bus, aligned_addr + 8);
-                let (dw1, dw2) = mops::unpack_unsigned_fourths(vec, dw1, dw2, addr & 3, el == 0);
-                self.store_mem(bus, aligned_addr, dw1);
-                self.store_mem(bus, aligned_addr + 8, dw2);
+                let qword = self.load_qword(bus, aligned_addr);
+                let (dw1, dw2) = mops::unpack_unsigned_fourths(vec, qword, addr & 3, el == 0);
+                self.store_qword(bus, aligned_addr, dw1, dw2);
             },
             VLS_W => {
                 // Store bytes from vector, starting at element and wrapping around.
@@ -609,27 +602,25 @@ impl Rsp {
                 let el = self.restricted_vel_ls(instr, 1);  // any value allowed
                 let vec = self.read_vec_u8(instr.vt());
                 let vec = vec.shuffle_bytes(self.tables.rot_swap_l[el]);
-                let mut buffer = [0_u8; 16];
-                vec.store(&mut buffer, 0);
-                self.store_mem(bus, addr, BigEndian::read_u64(&buffer[0..]));
-                self.store_mem(bus, addr + 8, BigEndian::read_u64(&buffer[8..]));
+                let (dw1, dw2) = mops::qword_from_u8(vec);
+                self.store_qword(bus, addr, dw1, dw2);
             },
             VLS_T => {
                 // Store 16-bit elements from up to 8 different vectors
                 let addr = self.aligned_offset_shift(instr, 4, 1);
                 let el = self.restricted_vel_ls(instr, 1);  // any value allowed
                 let vel = el as u32 >> 1;  // element in the vector (0..7)
-                let mut buffer = [0_u8; 16];
-                BigEndian::write_u64(&mut buffer[0..], self.load_mem(bus, addr));
-                BigEndian::write_u64(&mut buffer[8..], self.load_mem(bus, addr + 8));
+                let mut val = mops::u8_from_qword(self.load_qword(bus, addr));
                 // if the first vector is e.g. 30, we only do two elements
                 let vt = instr.vt();
                 for i in 0..min(8, 32 - vt) {
-                    let vec = self.read_vec(vt + i);
-                    BigEndian::write_i16(&mut buffer[i*2..], vec.extract((i as u32 + 8 - vel) % 8));
+                    let vindex = 2 * ((i as u32 + 8 - vel) % 8);
+                    let vec = self.read_vec_u8(vt + i);
+                    val = val.replace(i as u32 * 2,     vec.extract(vindex))
+                             .replace(i as u32 * 2 + 1, vec.extract(vindex + 1));
                 }
-                self.store_mem(bus, addr, BigEndian::read_u64(&buffer[0..]));
-                self.store_mem(bus, addr + 8, BigEndian::read_u64(&buffer[8..]));
+                let (dw1, dw2) = mops::qword_from_u8(val);
+                self.store_qword(bus, addr, dw1, dw2);
             }
             _ => self.bug(format!("Unimplemented vector store format: {}", vf))
         }
