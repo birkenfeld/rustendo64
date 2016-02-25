@@ -1,8 +1,8 @@
 use std::cmp::min;
 use std::fmt;
 use std::mem;
-use std::sync::{Arc, Condvar, Mutex, RwLock};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::Ordering;
 use simd::{u8x16, i16x8};
 use simd::x86::sse2::{Sse2I8x16, Sse2I16x8, Sse2I32x4};
 use simd::x86::ssse3::Ssse3U8x16;
@@ -13,7 +13,7 @@ use vops;
 use mops;
 use cp2::{Cp2, ACC_HI, ACC_MD, ACC_LO, HI, LO};
 use tables::SimdTables;
-use bus::{Bus, RamAccess};
+use bus::{Bus, RamAccess, RspSync};
 use bus::mem_map::*;
 use r4k::{R4300, R4300Common, MemFmt};
 use r4k::instruction::*;
@@ -47,8 +47,7 @@ pub struct Rsp {
     regs:      R4300Common,
     cp2:       Cp2,
     broke:     bool,
-    run_bit:   Arc<AtomicBool>,
-    run_cond:  Arc<Condvar>,
+    sync :     Arc<RspSync>,
     tables:    SimdTables,
 }
 
@@ -56,7 +55,6 @@ pub type RspBus<'c> = Bus<'c, &'c RwLock<Box<[u32]>>, &'c mut [u32]>;
 
 #[cfg(debug_assertions)]
 pub const INDENT: &'static str = "                                       ";
-
 
 impl fmt::Debug for Rsp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -283,35 +281,31 @@ impl<'c> R4300<'c> for Rsp {
 
 impl Rsp {
     #[cfg(debug_assertions)]
-    pub fn new(debug: DebugSpecList, run_bit: Arc<AtomicBool>, run_cond: Arc<Condvar>) -> Self {
-        let mut rsp = Rsp {
-            regs:      R4300Common::default(),
-            cp2:       Cp2::default(),
-            broke:     false,
-            run_bit:   run_bit,
-            run_cond:  run_cond,
-            tables:    SimdTables::new()
-        };
+    pub fn new(debug: DebugSpecList, sync: Arc<RspSync>) -> Self {
+        let mut rsp = Rsp::new_no_debug(sync);
         rsp.mut_regs().debug_specs = debug;
         rsp
     }
 
     #[cfg(not(debug_assertions))]
-    pub fn new(_: DebugSpecList, run_bit: Arc<AtomicBool>, run_cond: Arc<Condvar>) -> Self {
+    pub fn new(_: DebugSpecList, sync: Arc<RspSync>) -> Self {
+        Rsp::new_no_debug(sync)
+    }
+
+    fn new_no_debug(sync: Arc<RspSync>) -> Self {
         Rsp {
             regs:      R4300Common::default(),
             cp2:       Cp2::default(),
             broke:     false,
-            run_bit:   run_bit,
-            run_cond:  run_cond,
+            sync:      sync,
             tables:    SimdTables::new()
         }
     }
 
     pub fn wait_for_start(&self) {
-        while !self.run_bit.load(Ordering::SeqCst) {
+        while !self.sync.run_bit.load(Ordering::SeqCst) {
             let mutex = Mutex::new(());
-            let _ = self.run_cond.wait(mutex.lock().unwrap()).unwrap();
+            let _ = self.sync.run_cond.wait(mutex.lock().unwrap()).unwrap();
         }
     }
 

@@ -1,5 +1,4 @@
-use std::sync::{Arc, Condvar, RwLock};
-use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::thread;
 use crossbeam;
@@ -28,8 +27,7 @@ impl N64 {
                debug_cpu: DebugSpecList,
                debug_rsp: DebugSpecList) -> N64
     {
-        let rsp_sync_bit = Arc::new(AtomicBool::new(false));
-        let rsp_sync_cond = Arc::new(Condvar::new());
+        let rsp_sync = Arc::new(bus::RspSync::default());
         let ui = if ui_opts.no_ui {
             ui::init_ui::<ui::NullInterface>(ui_opts)
         } else {
@@ -38,8 +36,8 @@ impl N64 {
         N64 {
             ui: ui,
             cpu: cpu::Cpu::new(debug_cpu),
-            rsp: rsp::Rsp::new(debug_rsp, rsp_sync_bit.clone(), rsp_sync_cond.clone()),
-            ifs: bus::BusInterfaces::new(pif_rom, cart_rom, rsp_sync_bit, rsp_sync_cond),
+            rsp: rsp::Rsp::new(debug_rsp, rsp_sync.clone()),
+            ifs: bus::BusInterfaces::new(pif_rom, cart_rom, rsp_sync),
             ram: RwLock::new(vec![0; RDRAM_SIZE/4].into_boxed_slice()),
             spram: RwLock::new(vec![0; SP_RAM_SIZE/4].into_boxed_slice()),
         }

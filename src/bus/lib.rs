@@ -16,3 +16,4 @@ pub mod mem_map;
 
 pub use mem::RamAccess;
 pub use bus::{Bus, BusInterfaces};
+pub use bus::RspSync;

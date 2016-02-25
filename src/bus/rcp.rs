@@ -1,10 +1,10 @@
-use std::sync::{Arc, Condvar};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use rdp;
 
 use mi;
-use bus::IoResult;
+use bus::{IoResult, RspSync};
 use mem::RamAccess;
 use mem_map::*;
 use util::{bit_set, clear_or_set_bit};
@@ -20,12 +20,11 @@ pub struct SpRegs {
     reg_pc:        u32,
     reg_ibist:     u32,
 
-    run_bit:       Arc<AtomicBool>,
-    run_cond:      Arc<Condvar>,
+    sync:          Arc<RspSync>,
 }
 
 impl SpRegs {
-    pub fn new(run_bit: Arc<AtomicBool>, run_cond: Arc<Condvar>) -> SpRegs {
+    pub fn new(sync: Arc<RspSync>) -> SpRegs {
         SpRegs {
             reg_mem_addr:  0,
             reg_dram_addr: 0,
@@ -36,8 +35,7 @@ impl SpRegs {
             reg_dma_busy:  0,
             reg_pc:        0,
             reg_ibist:     0,
-            run_bit:       run_bit,
-            run_cond:      run_cond,
+            sync:          sync,
         }
     }
 
@@ -86,11 +84,11 @@ impl SpRegs {
             SP_REG_STATUS     => {
                 if bit_set(word, 0) {
                     // println!("RSP: starting.");
-                    self.run_bit.store(true, Ordering::SeqCst);
-                    self.run_cond.notify_all();
+                    self.sync.run_bit.store(true, Ordering::SeqCst);
+                    self.sync.run_cond.notify_all();
                 }
                 if bit_set(word, 1) {
-                    self.run_bit.store(false, Ordering::SeqCst);
+                    self.sync.run_bit.store(false, Ordering::SeqCst);
                 }
                 // halt
                 clear_or_set_bit(&mut self.reg_status, 0, word, 0, 1);

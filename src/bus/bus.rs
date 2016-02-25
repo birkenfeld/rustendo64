@@ -23,6 +23,22 @@ macro_rules! lw {
 
 pub type IoResult<T> = Result<T, &'static str>;
 
+pub struct RspSync {
+    pub run_bit:   AtomicBool,
+    pub dma_bit:   AtomicBool,
+    pub run_cond:  Condvar,
+}
+
+impl Default for RspSync {
+    fn default() -> Self {
+        RspSync {
+            run_bit:  AtomicBool::default(),
+            dma_bit:  AtomicBool::default(),
+            run_cond: Condvar::new(),
+        }
+    }
+}
+
 pub struct BusInterfaces {
     // The MI is unlocked here since it is used by everyone for interrupts,
     // so it only stores registers and uses atomics for them.
@@ -41,12 +57,10 @@ pub struct BusInterfaces {
 
 impl BusInterfaces {
     pub fn new(pif_rom: Box<[u8]>, cart_rom: Box<[u8]>,
-               rsp_run_bit: Arc<AtomicBool>, rsp_run_cond: Arc<Condvar>)
-               -> BusInterfaces
-    {
+               rsp_sync: Arc<RspSync>) -> BusInterfaces {
         BusInterfaces {
             mi: Mi::default(),
-            sp: RwLock::new(SpRegs::new(rsp_run_bit, rsp_run_cond)),
+            sp: RwLock::new(SpRegs::new(rsp_sync)),
             dp: RwLock::new(DpRegs::default()),
             vi: RwLock::new(Vi::default()),
             ai: RwLock::new(Ai::default()),

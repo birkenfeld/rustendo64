@@ -546,7 +546,7 @@ impl<'r, 'c, C: R4300<'c>> Debugger<'r, 'c, C> {
 
     fn dump(&self, gpr: bool, cp0: bool, cp1: bool) -> bool {
         if gpr {
-            println!("CPU dump:\n{:?}", self.cpu);
+            println!("{} dump:\n{:?}", self.cpu.get_desc(), self.cpu);
         }
         if cp0 {
             println!("CP0 dump:");
