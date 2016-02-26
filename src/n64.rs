@@ -4,6 +4,7 @@ use std::thread;
 use crossbeam;
 
 use ui;
+use ui_mod;
 use cpu;
 use rdp;
 use rsp;
@@ -31,7 +32,7 @@ impl N64 {
         let ui = if ui_opts.no_ui {
             ui::init_ui::<ui::NullInterface>(ui_opts)
         } else {
-            ui::init_ui::<ui::minifb::MinifbInterface>(ui_opts)
+            ui::init_ui::<ui_mod::Interface>(ui_opts)
         };
         N64 {
             ui: ui,

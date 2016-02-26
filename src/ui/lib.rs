@@ -1,14 +1,8 @@
-extern crate minifb as minifb_crate;
-extern crate cpal;
-
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::process;
 use std::thread;
-
-// Lives in this crate for now.
-pub mod minifb;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum Depth {

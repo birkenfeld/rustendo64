@@ -40,3 +40,6 @@ path = "src/util"
 
 [dependencies.rustendo64-ui]
 path = "src/ui"
+
+[dependencies.rustendo64-ui-minifb]
+path = "src/ui/minifb"

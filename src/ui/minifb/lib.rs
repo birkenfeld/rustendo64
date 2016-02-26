@@ -1,17 +1,18 @@
+extern crate rustendo64_ui as ui;
+extern crate minifb as minifb_crate;
+extern crate cpal;
+
+use minifb_crate::{Window, WindowOptions, Scale, Key, KeyRepeat};
+
 use std::ops::DerefMut;
 use std::thread;
 use std::time;
 
-use minifb_crate::{Window, WindowOptions, Scale, Key, KeyRepeat};
-use cpal;
-
-use {Interface, UiMessage, UiReceiver, UiSender, Options, VideoMode, Depth};
-
-pub struct MinifbInterface {
-    receiver: UiReceiver,
+pub struct Interface {
+    receiver: ui::UiReceiver,
     title: String,
     video: Option<Window>,
-    video_mode: VideoMode,
+    video_mode: ui::VideoMode,
     video_reopen: bool,
     audio_dev: Option<cpal::Endpoint>,
     audio_src: Option<cpal::Voice>,
@@ -21,14 +22,14 @@ pub struct MinifbInterface {
     audio_underflowed: bool,
 }
 
-impl Interface for MinifbInterface {
-    fn new(opts: Options, receiver: UiReceiver, sender: UiSender) -> Self {
-        thread::spawn(move || MinifbInterface::ping_thread(sender));
-        MinifbInterface {
+impl ui::Interface for Interface {
+    fn new(opts: ui::Options, receiver: ui::UiReceiver, sender: ui::UiSender) -> Self {
+        thread::spawn(move || Interface::ping_thread(sender));
+        Interface {
             receiver: receiver,
             title: format!("Rustendo64_gb: {}", opts.win_title),
             video: None,
-            video_mode: VideoMode::default(),
+            video_mode: ui::VideoMode::default(),
             video_reopen: false,
             audio_dev: cpal::get_default_endpoint(),
             audio_src: None,
@@ -42,23 +43,23 @@ impl Interface for MinifbInterface {
     fn run(&mut self) {
         while let Ok(msg) = self.receiver.recv() {
             match msg {
-                UiMessage::Update => if self.update() { break; },
-                UiMessage::VideoMode(vm) => self.set_mode(vm),
-                UiMessage::Video(v) => self.display(v),
-                UiMessage::Audio(f, v) => self.play(f, v),
+                ui::UiMessage::Update => if self.update() { break; },
+                ui::UiMessage::VideoMode(vm) => self.set_mode(vm),
+                ui::UiMessage::Video(v) => self.display(v),
+                ui::UiMessage::Audio(f, v) => self.play(f, v),
             }
         }
         println!("Interface closed.");
     }
 }
 
-impl MinifbInterface {
-    fn ping_thread(sender: UiSender) {
+impl Interface {
+    fn ping_thread(sender: ui::UiSender) {
         // Just ping the UI every now and then to update the input state.
         loop {
             thread::sleep(time::Duration::from_millis(10));
             // This will exit when the channel is broken.
-            sender.send(UiMessage::Update);
+            sender.send(ui::UiMessage::Update);
         }
     }
 
@@ -131,12 +132,12 @@ impl MinifbInterface {
         quit
     }
 
-    fn set_mode(&mut self, mode: VideoMode) {
+    fn set_mode(&mut self, mode: ui::VideoMode) {
         if mode == self.video_mode {
             return;
         }
         drop(self.video.take());
-        if mode.width == 0 || mode.height == 0 || mode.depth == Depth::Blank {
+        if mode.width == 0 || mode.height == 0 || mode.depth == ui::Depth::Blank {
             self.video_reopen = false;
         } else {
             self.video_reopen = true;
@@ -166,7 +167,7 @@ impl MinifbInterface {
         }
 
         if let Some(ref mut win) = self.video {
-            if self.video_mode.depth == Depth::Rgb32 {
+            if self.video_mode.depth == ui::Depth::Rgb32 {
                 if buffer.len() == self.video_mode.width * self.video_mode.height {
                     for w in &mut buffer {
                         *w >>= 8;
@@ -175,7 +176,7 @@ impl MinifbInterface {
                 } else {
                     println!("Video: frame buffer size != screen size.");
                 }
-            } else if self.video_mode.depth == Depth::Rgb16 {
+            } else if self.video_mode.depth == ui::Depth::Rgb16 {
                 if buffer.len() == self.video_mode.width * self.video_mode.height / 2 {
                     let mut buf32 = vec![0; buffer.len() * 2];
                     for i in 0..buffer.len() {

@@ -1,5 +1,5 @@
 [package]
-name = "rustendo64-ui"
+name = "rustendo64-ui-minifb"
 version = "0.1.0"
 authors = ["Georg Brandl <georg@python.org>"]
 license = "MIT/Apache-2.0"
@@ -13,3 +13,8 @@ debug = true
 codegen-units = 2
 
 [dependencies]
+minifb = "0.4.0"
+cpal = "0.2.9"
+
+[dependencies.rustendo64-ui]
+path = ".."
