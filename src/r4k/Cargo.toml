@@ -15,6 +15,4 @@ codegen-units = 2
 [dependencies]
 nom = "1.1.0"
 ansi_term = "0.7.0"
-
-[dependencies.rustyline]
-git = "https://github.com/birkenfeld/rustyline"
+rustyline = "0.2.2"
