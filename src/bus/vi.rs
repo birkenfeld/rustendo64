@@ -122,7 +122,8 @@ impl Vi {
             _    => unreachable!()
         };
         self.update_vram();
-        // println!("Video: {}+{}x{}, {} bit color",
+        // println!("Video: ({}) {}+{}x{}, {} bit color",
+        //          self.reg_width,
         //          self.frame_hskip, self.frame_width, self.frame_height,
         //          self.vram_pixelsize * 8);
         // TODO: dont show skip
@@ -138,9 +139,11 @@ impl Vi {
 
     pub fn update_vram(&mut self) {
         self.vram_start = self.reg_origin as usize / 4;
-        self.vram_end   = self.vram_start +
-            (self.reg_width as usize) * self.frame_height *
-            self.vram_pixelsize / 4;
+        let tot_pixels = (self.frame_width + self.frame_hskip) * self.frame_height;
+        self.vram_end   = self.vram_start + tot_pixels * self.vram_pixelsize / 4;
+        if tot_pixels % 2 == 1 {
+            self.vram_end += 1;
+        }
         // println!("VRAM: {:#x} to {:#x}", self.vram_start, self.vram_end);
     }
 }
