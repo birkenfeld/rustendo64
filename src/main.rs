@@ -11,7 +11,7 @@ extern crate rustendo64_rdp as rdp;
 extern crate rustendo64_ui as ui;
 extern crate rustendo64_util as util;
 
-extern crate rustendo64_ui_glium as ui_mod;
+extern crate rustendo64_ui_minifb as ui_mod;
 
 mod n64;
 

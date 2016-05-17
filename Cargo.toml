@@ -41,8 +41,8 @@ path = "src/util"
 [dependencies.rustendo64-ui]
 path = "src/ui"
 
-# [dependencies.rustendo64-ui-minifb]
-# path = "src/ui/minifb"
+[dependencies.rustendo64-ui-minifb]
+path = "src/ui/minifb"
 
-[dependencies.rustendo64-ui-glium]
-path = "src/ui/glium"
+# [dependencies.rustendo64-ui-glium]
+# path = "src/ui/glium"

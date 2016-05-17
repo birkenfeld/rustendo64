@@ -4,7 +4,7 @@ use std::mem;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::Ordering;
 use simd::{u8x16, i16x8};
-use simd::x86::sse2::{Sse2I8x16, Sse2I16x8, Sse2I32x4};
+use simd::x86::sse2::{Sse2I8x16, Sse2I16x8};
 use simd::x86::ssse3::Ssse3U8x16;
 #[cfg(debug_assertions)]
 use ansi_term;
@@ -13,7 +13,7 @@ use vops;
 use mops;
 use cp2::{Cp2, ACC_HI, ACC_MD, ACC_LO, HI, LO};
 use tables::SimdTables;
-use bus::{Bus, RamAccess, RspSync};
+use bus::{Bus, RspSync};
 use bus::mem_map::*;
 use r4k::{R4300, R4300Common, MemFmt};
 use r4k::instruction::*;
